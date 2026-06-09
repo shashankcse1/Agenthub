@@ -1,0 +1,87 @@
+
+============================================================
+Preflight
+============================================================
+[PASS] ripgrep available
+[PASS] Python runtime selected: /usr/bin/python3
+
+============================================================
+UI Frontend Expert Review
+============================================================
+[PASS] Default error pages are present
+[PASS] Accessibility conformance report baseline is present
+[PASS] No external font provider references
+[PASS] CSP includes baseline hardening directives
+[PASS] No innerHTML sinks in app.js
+[PASS] Accessibility baseline elements are present
+[PASS] API base validation helper present
+[PASS] Production confirmation guard present
+[PASS] Safe DOM table rendering helpers present
+Security smoke checks completed successfully.
+[PASS] Frontend security smoke checks
+[PASS] Default 404 page present
+[PASS] Default 500 page present
+[PASS] Accessibility conformance report present
+[PASS] Skip link exists
+[PASS] Focus-visible styles exist
+[PASS] Live region semantics exist
+
+============================================================
+Ethical Hacker Review (Safe Pattern Checks)
+============================================================
+[PASS] No frontend innerHTML sinks
+[PASS] No frontend eval usage
+[PASS] No frontend document.write usage
+[PASS] No JS Function constructor usage
+[PASS] No Python eval usage
+[PASS] No Python exec usage
+[PASS] No shell=True subprocess in backend
+[PASS] No unsafe yaml.load
+[PASS] No obvious hardcoded private key blocks
+[PASS] No obvious hardcoded cloud secret tokens
+
+============================================================
+Python Expert Review
+============================================================
+[PASS] Python syntax compile check
+........................................................................ [ 54%]
+.............................................................            [100%]
+133 passed in 5.07s
+[PASS] Backend pytest suite (deep mode)
+[PASS] Bandit security scan
+/Users/sk/Library/Python/3.9/lib/python/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+No known vulnerabilities found, 7 ignored
+[PASS] Dependency vulnerability audit
+[PASS] Semgrep OWASP Top 10 scan
+
+============================================================
+Vulnerability Expert Review
+============================================================
+[PASS] CSP present in frontend index
+[PASS] Referrer policy present
+[PASS] No wildcard CORS policy literals in backend app
+2026-06-05 21:47:54,205 INFO app.services.control_coverage control_coverage_build_completed total_routes=122 uncovered_routes=0
+Control coverage check passed. Covered routes: 122
+[PASS] Control coverage checker
+
+============================================================
+PAM Review (Privilege Access Management)
+============================================================
+[PASS] Session secret non-dev validation present
+[PASS] Day-0 validator checks SESSION_TOKEN_SECRET
+[PASS] Session issuance policy enforcement present
+[PASS] Cross-actor session issuance requires dual approval
+[PASS] Agent Owner registration scope check present
+[PASS] Module operations enforce Agent Owner scope
+[PASS] Discovery endpoints restricted from Agent Owner global read
+[PASS] Cost live endpoint has owner scoping logic
+[PASS] Compliance evidence endpoints restricted to admin/auditor
+
+============================================================
+Summary
+============================================================
+Passes : 37
+Warnings: 0
+Fails  : 0
+Result: REVIEW PASSED

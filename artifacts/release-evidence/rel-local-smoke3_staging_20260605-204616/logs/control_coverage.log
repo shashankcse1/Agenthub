@@ -1,0 +1,2 @@
+2026-06-05 20:46:34,536 INFO app.services.control_coverage control_coverage_build_completed total_routes=117 uncovered_routes=0
+Control coverage check passed. Covered routes: 117

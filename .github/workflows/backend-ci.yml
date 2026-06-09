@@ -1,0 +1,175 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - "frontend/index.html"
+      - "frontend/app.js"
+      - "frontend/styles.css"
+      - "frontend/404.html"
+      - "frontend/500.html"
+      - "frontend/security-checklist.md"
+      - "frontend/accessibility-conformance-wcag22aa.md"
+      - "frontend/scripts/security_smoke.sh"
+      - "frontend/scripts/openai_gateway_ops_smoke.sh"
+      - "scripts/full_stack_expert_review.sh"
+      - "scripts/release_evidence_bundle.sh"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/index.html"
+      - "frontend/app.js"
+      - "frontend/styles.css"
+      - "frontend/404.html"
+      - "frontend/500.html"
+      - "frontend/security-checklist.md"
+      - "frontend/accessibility-conformance-wcag22aa.md"
+      - "frontend/scripts/security_smoke.sh"
+      - "frontend/scripts/openai_gateway_ops_smoke.sh"
+      - "scripts/full_stack_expert_review.sh"
+      - "scripts/release_evidence_bundle.sh"
+      - ".github/workflows/backend-ci.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/agenthub
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in $(seq 1 60); do
+            if pg_isready -h localhost -p 5432 -U postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "PostgreSQL did not become ready in time"
+          exit 1
+
+      - name: Ensure test database exists
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'agenthub'" | grep -q 1 || \
+          PGPASSWORD=postgres psql -h localhost -U postgres -d postgres -c "CREATE DATABASE agenthub"
+
+      - name: Run migrations
+        run: python -m alembic upgrade head
+
+      - name: Check control coverage tagging
+        run: python ./scripts/check_control_coverage.py
+
+      - name: Run frontend security smoke checks
+        run: bash ../frontend/scripts/security_smoke.sh
+
+      - name: Run frontend OpenAI gateway wiring smoke checks
+        run: bash ../frontend/scripts/openai_gateway_ops_smoke.sh | tee /tmp/openai-gateway-wiring-smoke.log
+
+      - name: Start API for runtime smoke
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/backend-api.log 2>&1 &
+          echo $! > /tmp/backend-api.pid
+          for i in $(seq 1 30); do
+            if curl -s --max-time 2 http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API did not become healthy in time"
+          tail -n 80 /tmp/backend-api.log || true
+          exit 1
+
+      - name: Run runtime smoke e2e
+        run: bash ./scripts/smokee2e.sh
+
+      - name: Run runtime OpenAI gateway ops smoke checks
+        run: RUN_API_CHECKS=1 API_BASE=http://127.0.0.1:8000 bash ../frontend/scripts/openai_gateway_ops_smoke.sh | tee /tmp/openai-gateway-runtime-smoke.log
+
+      - name: Stop API after smoke
+        if: always()
+        run: |
+          if [[ -f /tmp/backend-api.pid ]]; then
+            kill "$(cat /tmp/backend-api.pid)" || true
+          fi
+
+      - name: Show API log on failure
+        if: failure()
+        run: tail -n 120 /tmp/backend-api.log || true
+
+      - name: Upload smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/backend-api.log
+            /tmp/openai-gateway-wiring-smoke.log
+            /tmp/openai-gateway-runtime-smoke.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Repeat tests for flake detection
+        run: RUNS=3 make test-repeat
+
+      - name: Generate release evidence bundle
+        if: always()
+        run: |
+          cd ..
+          STRICT_FLAG=""
+          if [[ "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == release/* || "${GITHUB_REF_NAME}" == hotfix/* ]]; then
+            STRICT_FLAG="--strict"
+            echo "Strict evidence mode enabled for ref: ${GITHUB_REF_NAME}"
+          fi
+          bash scripts/release_evidence_bundle.sh \
+            --release-id "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --env staging \
+            --owner "github-actions" \
+            ${STRICT_FLAG}
+          LATEST_BUNDLE="$(ls -td artifacts/release-evidence/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}_staging_* | head -n 1)"
+          echo "RELEASE_BUNDLE_PATH=$LATEST_BUNDLE" >> "$GITHUB_ENV"
+
+      - name: Upload release evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.RELEASE_BUNDLE_PATH }}
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" />
+    <meta name="referrer" content="no-referrer" />
+    <title>404 | AgentHub</title>
+    <style>
+      :root {
+        --bg: #e8edf4;
+        --card: rgba(255, 255, 255, 0.92);
+        --ink: #10243a;
+        --soft: #516176;
+        --line: rgba(16, 36, 58, 0.16);
+        --accent: #0f4c81;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Avenir Next", "Gill Sans", "Trebuchet MS", sans-serif;
+        background: radial-gradient(circle at 10% 0%, #f5f8fc 0, #e8edf4 42%, #d9e2ef 100%);
+        color: var(--ink);
+        display: grid;
+        place-items: center;
+        padding: 20px;
+      }
+      .card {
+        width: min(680px, 100%);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--card);
+        padding: 28px;
+      }
+      h1 { margin: 0 0 10px; font-size: 2rem; }
+      p { margin: 0 0 12px; color: var(--soft); line-height: 1.6; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+      a {
+        text-decoration: none;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        color: var(--ink);
+        background: #fff;
+      }
+      a.primary {
+        background: linear-gradient(145deg, var(--accent), #0a365d);
+        border-color: transparent;
+        color: #fff;
+      }
+      .mono {
+        font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <article class="card" role="main" aria-labelledby="title404">
+      <p class="mono">HTTP 404</p>
+      <h1 id="title404">Page not found</h1>
+      <p>The page you requested is unavailable or has moved. If you received this link from an email or bookmark, verify the URL and try again.</p>
+      <p class="mono">Reference: NAV-404</p>
+      <div class="actions">
+        <a class="primary" href="./index.html">Return to Dashboard</a>
+        <a href="./500.html">Incident Guidance</a>
+      </div>
+    </article>
+  </body>
+</html>

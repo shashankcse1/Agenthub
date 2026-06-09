@@ -1,0 +1,3 @@
+.runtime/*.log
+.runtime/*.pid
+.runtime/day0_admin_credentials_meta.env

@@ -1,0 +1,5 @@
+Release ID: rel-local-smoke
+Environment: staging
+Owner: unknown
+Generated At: 20260605-204522
+Workspace: /Users/sk/Desktop/untitled folder/new design

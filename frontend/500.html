@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Service Incident | AgentHub</title>
+    <style>
+      :root {
+        --bg: #e8edf4;
+        --card: rgba(255, 255, 255, 0.94);
+        --ink: #10243a;
+        --soft: #516176;
+        --line: rgba(16, 36, 58, 0.16);
+        --danger: #b3261e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Avenir Next", "Gill Sans", "Trebuchet MS", sans-serif;
+        background: radial-gradient(circle at 10% 0%, #f5f8fc 0, #e8edf4 42%, #d9e2ef 100%);
+        color: var(--ink);
+        display: grid;
+        place-items: center;
+        padding: 20px;
+      }
+      .card {
+        width: min(760px, 100%);
+        border: 1px solid rgba(179, 38, 30, 0.28);
+        border-radius: 16px;
+        background: var(--card);
+        padding: 28px;
+      }
+      h1 { margin: 0 0 10px; font-size: 2rem; }
+      p { margin: 0 0 12px; color: var(--soft); line-height: 1.6; }
+      .alert {
+        border: 1px solid rgba(179, 38, 30, 0.35);
+        background: rgba(255, 232, 230, 0.8);
+        border-radius: 12px;
+        padding: 10px 12px;
+        color: var(--danger);
+        margin-bottom: 12px;
+      }
+      ul { margin: 10px 0 0; padding-left: 20px; color: var(--soft); }
+      li { margin-bottom: 8px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+      a {
+        text-decoration: none;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        color: var(--ink);
+        background: #fff;
+      }
+      .mono {
+        font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <article class="card" role="main" aria-labelledby="title500">
+      <p class="mono">HTTP 500</p>
+      <h1 id="title500">Service incident in progress</h1>
+      <div class="alert">Core platform services are currently degraded. Engineering response is active.</div>
+      <p>If your operation is time-sensitive, suspend write actions until service status returns to healthy.</p>
+      <ul>
+        <li>Retry read-only requests after 60 seconds.</li>
+        <li>Capture your incident reference from the app banner for support.</li>
+        <li>Escalate through your internal on-call process for production impact.</li>
+      </ul>
+      <div class="actions">
+        <a href="./index.html">Back to Dashboard</a>
+        <a href="./404.html">Route Error Guidance</a>
+      </div>
+    </article>
+  </body>
+</html>

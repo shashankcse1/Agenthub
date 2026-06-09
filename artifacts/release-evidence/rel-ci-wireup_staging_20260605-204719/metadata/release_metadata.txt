@@ -1,0 +1,5 @@
+Release ID: rel-ci-wireup
+Environment: staging
+Owner: unknown
+Generated At: 20260605-204719
+Workspace: /Users/sk/Desktop/untitled folder/new design

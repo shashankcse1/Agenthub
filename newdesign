@@ -1,0 +1,15 @@
+# Multi-Agent Platform Documents
+
+Date: 2026-06-02
+
+This workspace now contains two finalized, source-neutral deliverables:
+
+1. Product Design Document
+- File: product-design-document.md
+- Focus: requirements, UX, workflows, APIs, data model, roadmap, risks
+
+2. Architecture Document
+- File: architecture-document.md
+- Focus: system architecture, components, discovery pipeline, runtime security, reliability, deployment
+
+Use these two files as the implementation baseline.
