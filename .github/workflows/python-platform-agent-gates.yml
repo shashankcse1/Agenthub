@@ -1,0 +1,73 @@
+name: Python Platform Agent Gates
+
+on:
+  push:
+    paths:
+      - 'archive/python-platform/**'
+      - 'scripts/verify_python_clean_arch_structure.sh'
+      - 'scripts/verify_python_api_contract_artifacts.sh'
+      - 'scripts/run_agent_clean_arch_gates_python.sh'
+      - '.github/workflows/python-platform-agent-gates.yml'
+  pull_request:
+    paths:
+      - 'archive/python-platform/**'
+      - 'scripts/verify_python_clean_arch_structure.sh'
+      - 'scripts/verify_python_api_contract_artifacts.sh'
+      - 'scripts/run_agent_clean_arch_gates_python.sh'
+      - '.github/workflows/python-platform-agent-gates.yml'
+
+jobs:
+  python-platform-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python platform dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ./archive/python-platform[dev]
+
+      - name: Verify clean architecture and contract artifacts
+        run: |
+          bash scripts/verify_python_clean_arch_structure.sh
+          bash scripts/verify_python_api_contract_artifacts.sh
+
+      - name: Run python-platform tests
+        working-directory: archive/python-platform
+        run: python -m pytest -q
+
+      - name: Run integrated gate
+        run: bash scripts/run_agent_clean_arch_gates_python.sh
+
+  python-platform-container-fail-closed-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Docker availability
+        id: docker-check
+        run: |
+          if docker info >/dev/null 2>&1; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run container fail-closed smoke
+        if: steps.docker-check.outputs.available == 'true'
+        run: bash archive/python-platform/scripts/container_fail_closed_smoke.sh
+
+      - name: Skip notice when Docker unavailable
+        if: steps.docker-check.outputs.available != 'true'
+        run: echo "Skipping container fail-closed smoke because Docker is unavailable on this runner"

@@ -1,0 +1,29 @@
+services:
+  python-platform-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_NAME:-newdesign/python-platform:local}
+    container_name: python-platform-api
+    env_file:
+      - .env
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    environment:
+      APP_ENV: ${APP_ENV:-prod}
+      ALLOW_BASIC_AUTH: ${ALLOW_BASIC_AUTH:-false}
+      JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET:-replace-with-strong-secret}
+      JWT_ISSUER: ${JWT_ISSUER:-newdesign-platform}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-newdesign-platform-api}
+      AUDIT_SIGNING_SECRET: ${AUDIT_SIGNING_SECRET:-replace-with-strong-audit-secret}
+      EVIDENCE_STORAGE_MODE: ${EVIDENCE_STORAGE_MODE:-append_jsonl}
+      EVIDENCE_STORE_PATH: ${EVIDENCE_STORE_PATH:-/tmp/agent_platform_evidence.jsonl}
+      EVIDENCE_RETENTION_DAYS: ${EVIDENCE_RETENTION_DAYS:-30}
+      EVIDENCE_LEGAL_HOLD_ENABLED: ${EVIDENCE_LEGAL_HOLD_ENABLED:-false}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

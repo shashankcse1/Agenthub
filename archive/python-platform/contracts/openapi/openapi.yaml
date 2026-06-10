@@ -1,0 +1,213 @@
+openapi: 3.0.3
+info:
+  title: Python Agentic Platform API
+  version: 0.1.0
+paths:
+  /api/v1/health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Healthy
+  /api/v1/policy/preview:
+    post:
+      summary: Preview policy decision
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionPreviewRequest'
+      responses:
+        '200':
+          description: Decision result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionPreviewResponse'
+        '401':
+          description: Authentication required
+        '403':
+          description: Forbidden role or scope
+  /api/v1/evidence/events:
+    get:
+      summary: List audit evidence events
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Audit evidence events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEvent'
+        '403':
+          description: Forbidden role or scope
+  /api/v1/evidence/export:
+    post:
+      summary: Export signed audit evidence bundle
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Signed evidence bundle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceBundle'
+        '403':
+          description: Forbidden role or scope
+  /api/v1/evidence/verify:
+    post:
+      summary: Verify signed evidence bundle integrity
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvidenceBundle'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceVerificationResponse'
+        '403':
+          description: Forbidden role or scope
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    basicAuth:
+      type: http
+      scheme: basic
+  schemas:
+    DecisionPreviewRequest:
+      type: object
+      required: [trace_id, actor_id, actor_role, tenant_id, environment, action, target]
+      properties:
+        trace_id:
+          type: string
+          minLength: 1
+        actor_id:
+          type: string
+          minLength: 1
+        actor_role:
+          type: string
+          minLength: 1
+        tenant_id:
+          type: string
+          minLength: 1
+        environment:
+          type: string
+          minLength: 1
+        action:
+          type: string
+          minLength: 1
+        target:
+          type: string
+          minLength: 1
+    DecisionPreviewResponse:
+      type: object
+      required: [outcome, reason, policy_trace_id, policy_version]
+      properties:
+        outcome:
+          type: string
+          enum: [ALLOW, WARN, CHALLENGE, DENY]
+        reason:
+          type: string
+        policy_trace_id:
+          type: string
+        policy_version:
+          type: string
+    AuditEvent:
+      type: object
+      required: [created_at, prev_event_hash, event_hash, event_type, decision_description, trace_id, actor_fingerprint, tenant_id, action, target_scope, target_fingerprint, outcome, reason, policy_trace_id, policy_version, pii_redaction]
+      properties:
+        created_at:
+          type: string
+        prev_event_hash:
+          type: string
+        event_hash:
+          type: string
+        event_type:
+          type: string
+        decision_description:
+          type: string
+        trace_id:
+          type: string
+        actor_fingerprint:
+          type: string
+        tenant_id:
+          type: string
+        action:
+          type: string
+        target_scope:
+          type: string
+        target_fingerprint:
+          type: string
+        outcome:
+          type: string
+        reason:
+          type: string
+        policy_trace_id:
+          type: string
+        policy_version:
+          type: string
+        pii_redaction:
+          type: string
+    EvidenceBundle:
+      type: object
+      required: [exported_by, exporter_role, event_count, signature_algorithm, chain_head, signature, events]
+      properties:
+        exported_by:
+          type: string
+        exporter_role:
+          type: string
+        event_count:
+          type: integer
+        signature_algorithm:
+          type: string
+        chain_head:
+          type: string
+        signature:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEvent'
+    EvidenceVerificationResponse:
+      type: object
+      required: [valid]
+      properties:
+        valid:
+          type: boolean

@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-platform-api
+  labels:
+    app: python-platform-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-platform-api
+  template:
+    metadata:
+      labels:
+        app: python-platform-api
+    spec:
+      containers:
+        - name: python-platform-api
+          image: newdesign/python-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: ALLOW_BASIC_AUTH
+              value: "false"
+            - name: JWT_ISSUER
+              value: newdesign-platform
+            - name: JWT_AUDIENCE
+              value: newdesign-platform-api
+            - name: JWT_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: python-platform-secrets
+                  key: JWT_SIGNING_SECRET
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: ["ALL"]

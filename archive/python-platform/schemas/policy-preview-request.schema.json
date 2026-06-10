@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://newdesign.local/schemas/python-policy-preview-request.schema.json",
+  "title": "PythonPolicyPreviewRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trace_id", "actor_id", "actor_role", "tenant_id", "environment", "action", "target"],
+  "properties": {
+    "trace_id": { "type": "string", "minLength": 1 },
+    "actor_id": { "type": "string", "minLength": 1 },
+    "actor_role": { "type": "string", "minLength": 1 },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "environment": { "type": "string", "minLength": 1 },
+    "action": { "type": "string", "minLength": 1 },
+    "target": { "type": "string", "minLength": 1 }
+  }
+}
