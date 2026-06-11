@@ -3,10 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 INDEX_FILE="$ROOT_DIR/index.html"
+ROUTING_VIEW_FILE="$ROOT_DIR/views/routing-gateway.html"
 APP_FILE="$ROOT_DIR/app.js"
 
 API_BASE="${API_BASE:-http://127.0.0.1:8000}"
 RUN_API_CHECKS="${RUN_API_CHECKS:-0}"
+AUDITOR_ID="${AUDITOR_ID:-smoke-gateway-auditor}"
 
 fail() {
   echo "[FAIL] $1"
@@ -29,13 +31,15 @@ require_token() {
 
 validate_ui_wiring() {
   require_file "$INDEX_FILE"
+  require_file "$ROUTING_VIEW_FILE"
   require_file "$APP_FILE"
 
-  require_token 'id="loadGatewayGovernanceEvidence"' "$INDEX_FILE"
-  require_token 'id="exportGatewayGovernanceEvidence"' "$INDEX_FILE"
-  require_token 'id="gatewayGovernanceEvidenceForm"' "$INDEX_FILE"
-  require_token 'id="gatewayGovernanceEvidenceTable"' "$INDEX_FILE"
-  pass "Gateway governance evidence card exists in index.html"
+  require_token 'id="viewsRoot"' "$INDEX_FILE"
+  require_token 'id="loadGatewayGovernanceEvidence"' "$ROUTING_VIEW_FILE"
+  require_token 'id="exportGatewayGovernanceEvidence"' "$ROUTING_VIEW_FILE"
+  require_token 'id="gatewayGovernanceEvidenceForm"' "$ROUTING_VIEW_FILE"
+  require_token 'id="gatewayGovernanceEvidenceTable"' "$ROUTING_VIEW_FILE"
+  pass "Gateway governance evidence card exists in routing-gateway view"
 
   require_token 'function renderGatewayGovernanceEvidenceSummary' "$APP_FILE"
   require_token 'function getGatewayGovernanceEvidenceFilters' "$APP_FILE"
@@ -50,7 +54,7 @@ validate_ui_wiring() {
 query_audit_endpoint() {
   local action_type="$1"
   local response
-  response="$(curl -sS -H 'X-Actor-Role: Auditor' "$API_BASE/audit/events?action_type=${action_type}&limit=5")" || {
+  response="$(curl -sS -H 'X-Actor-Role: Auditor' -H "X-Actor-Id: $AUDITOR_ID" "$API_BASE/audit/events?action_type=${action_type}&limit=5")" || {
     fail "Audit query failed for action_type=${action_type}. Ensure backend is running at API_BASE=$API_BASE"
   }
 
@@ -69,6 +73,7 @@ query_governance_export_endpoint() {
   response="$(curl -sS -X POST \
     -H 'Content-Type: application/json' \
     -H 'X-Actor-Role: Auditor' \
+    -H "X-Actor-Id: $AUDITOR_ID" \
     -d '{"decision_outcome":"allow","limit_per_action":20,"bundle_label":"smoke-gateway-gov"}' \
     "$API_BASE/gateway/governance/evidence/export")" || {
     fail "Gateway governance evidence export call failed. Ensure backend is running at API_BASE=$API_BASE"

@@ -1,0 +1,391 @@
+<section id="security" class="view">
+          <article class="card">
+            <h3>Security Runbook Snapshot</h3>
+            <ul class="checklist">
+              <li>Header identity mode must remain disabled in non-local environments.</li>
+              <li>MFA optional flag requires time-boxed approval and weekly review.</li>
+              <li>Raw workload token exposure must remain local/test only.</li>
+              <li>Rate-limit alerts and startup insecure warnings must be monitored.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Residual Risk Register</h3>
+            <p>
+              See
+              <a href="../backend/docs/security/residual-and-accepted-risk-register.md" target="_blank" rel="noreferrer">
+                risk register
+              </a>
+              for current accepted and residual risks.
+            </p>
+          </article>
+          <div class="card security-console-tabs">
+            <button class="ghost active" type="button" data-security-console="users">Users</button>
+            <button class="ghost" type="button" data-security-console="groups">Groups</button>
+            <button class="ghost" type="button" data-security-console="teams">Teams</button>
+          </div>
+
+          <article id="securityConsoleUsers" class="card security-console active">
+            <div class="card-head">
+              <h3>Directory Users</h3>
+              <button id="loadDirectoryUsers" class="ghost" type="button">Load</button>
+            </div>
+            <p class="mono">Unlock clears login lockout state for a selected directory user and records an audit event.</p>
+            <form id="directoryUserForm" class="form-grid">
+              <label>User ID<input name="user_id" required placeholder="jane.doe" /></label>
+              <label>Display Name<input name="display_name" required placeholder="Jane Doe" /></label>
+              <label>Email<input name="email" type="email" required placeholder="jane.doe@example.com" /></label>
+              <label>Password<input name="password" type="password" minlength="12" placeholder="Set password (required on create)" /></label>
+              <label>
+                Role
+                <select name="role_name">
+                  <option>Master Admin</option>
+                  <option>Platform Admin</option>
+                  <option>Auditor</option>
+                  <option>Security Approver</option>
+                  <option>Release Manager</option>
+                  <option>Agent Owner</option>
+                  <option>AI Ops Approver</option>
+                </select>
+              </label>
+              <label>
+                Status
+                <select name="status">
+                  <option value="active" selected>active</option>
+                  <option value="inactive">inactive</option>
+                </select>
+              </label>
+              <button type="submit" class="primary">Create / Update User</button>
+            </form>
+            <p id="directoryUserResult" class="mono"></p>
+            <div class="inline-actions directory-search-row">
+              <input id="directoryUserSearch" type="text" placeholder="Search user id, name, email, role" />
+              <button id="searchDirectoryUsers" class="ghost" type="button">Search</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Directory users</caption>
+                <thead>
+                  <tr><th>User ID</th><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Lock Status</th><th>Lock / Unlock</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="directoryUsersTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Directory user audit events</caption>
+                <thead>
+                  <tr><th>Time</th><th>Action</th><th>Actor</th><th>Outcome</th><th>Trace</th></tr>
+                </thead>
+                <tbody id="directoryUserAuditTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article id="securityConsoleGroups" class="card security-console">
+            <div class="card-head">
+              <h3>Directory Groups</h3>
+              <button id="loadDirectoryGroups" class="ghost" type="button">Load Groups</button>
+            </div>
+            <form id="directoryGroupForm" class="form-grid">
+              <label>Group ID<input name="group_id" required placeholder="grp-platform" /></label>
+              <label>Group Name<input name="display_name" required placeholder="Platform Group" /></label>
+              <label class="wide-field">Description<input name="description" maxlength="500" placeholder="Group description" /></label>
+              <p id="directoryGroupDescriptionCount" class="mono">0 / 500</p>
+              <label>
+                Status
+                <select name="status">
+                  <option value="active" selected>active</option>
+                  <option value="inactive">inactive</option>
+                </select>
+              </label>
+              <button type="submit" class="primary">Create / Update Group</button>
+            </form>
+            <p id="directoryGroupResult" class="mono"></p>
+            <div class="inline-actions directory-search-row">
+              <input id="directoryGroupSearch" type="text" placeholder="Search group id, name, description" />
+              <button id="searchDirectoryGroups" class="ghost" type="button">Search</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Directory groups</caption>
+                <thead>
+                  <tr><th>Group ID</th><th>Name</th><th>Status</th><th>Description</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="directoryGroupsTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Directory group audit events</caption>
+                <thead>
+                  <tr><th>Time</th><th>Action</th><th>Actor</th><th>Outcome</th><th>Trace</th></tr>
+                </thead>
+                <tbody id="directoryGroupAuditTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article id="securityConsoleTeams" class="card security-console">
+            <div class="card-head">
+              <h3>Directory Teams</h3>
+              <button id="loadDirectoryTeams" class="ghost" type="button">Load Teams</button>
+            </div>
+            <form id="directoryTeamForm" class="form-grid">
+              <label>Team ID<input name="team_id" required placeholder="team-cloud" /></label>
+              <label>Team Name<input name="display_name" required placeholder="Cloud Engineering" /></label>
+              <label class="wide-field">Description<input name="description" maxlength="500" placeholder="Team description" /></label>
+              <p id="directoryTeamDescriptionCount" class="mono">0 / 500</p>
+              <label>
+                Status
+                <select name="status">
+                  <option value="active" selected>active</option>
+                  <option value="inactive">inactive</option>
+                </select>
+              </label>
+              <button type="submit" class="primary">Create / Update Team</button>
+            </form>
+            <p id="directoryTeamResult" class="mono"></p>
+            <div class="inline-actions directory-search-row">
+              <input id="directoryTeamSearch" type="text" placeholder="Search team id, name, description" />
+              <button id="searchDirectoryTeams" class="ghost" type="button">Search</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Directory teams</caption>
+                <thead>
+                  <tr><th>Team ID</th><th>Name</th><th>Status</th><th>Description</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="directoryTeamsTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Directory team audit events</caption>
+                <thead>
+                  <tr><th>Time</th><th>Action</th><th>Actor</th><th>Outcome</th><th>Trace</th></tr>
+                </thead>
+                <tbody id="directoryTeamAuditTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Membership Management</h3>
+              <button id="loadDirectoryMemberships" class="ghost" type="button">Load Memberships</button>
+            </div>
+            <form id="directoryMembershipForm" class="form-grid">
+              <label>User ID<input name="user_id" required placeholder="jane.doe" /></label>
+              <label>Group ID<input name="group_id" placeholder="grp-platform" /></label>
+              <label>Team ID<input name="team_id" placeholder="team-cloud" /></label>
+              <div class="inline-row">
+                <button type="button" id="addGroupMembership" class="primary">Add To Group</button>
+                <button type="button" id="addTeamMembership" class="primary">Add To Team</button>
+              </div>
+            </form>
+            <p id="directoryMembershipResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Group memberships</caption>
+                <thead>
+                  <tr><th>Group ID</th><th>User ID</th><th>Created By</th><th>Created At</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="directoryGroupMembershipsTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Team memberships</caption>
+                <thead>
+                  <tr><th>Team ID</th><th>User ID</th><th>Created By</th><th>Created At</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="directoryTeamMembershipsTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Session Policy Governance</h3>
+              <div class="inline-actions">
+                <button id="loadSessionPolicy" class="ghost" type="button">Load Policy</button>
+                <button id="loadSessionPolicyRevisions" class="ghost" type="button">Load Revisions</button>
+              </div>
+            </div>
+            <form id="sessionPolicyForm" class="form-grid">
+              <label class="wide-field">Policy Description<input name="description" maxlength="500" placeholder="Describe policy intent, scope, and guardrails" /></label>
+              <p id="sessionPolicyDescriptionCount" class="mono">0 / 500</p>
+              <label>Session Read Roles<input name="session_read_roles" value="Master Admin,Platform Admin,Security Approver,Auditor" /></label>
+              <label>Session Issuer Roles<input name="session_issuer_roles" value="Master Admin,Platform Admin,Release Manager" /></label>
+              <label>Issuable Session Roles<input name="issuable_session_roles" value="Master Admin,Platform Admin,Security Approver,Release Manager,Agent Owner,Auditor,AI Ops Approver" /></label>
+              <label>Cross-Actor Dual Approval Roles<input name="cross_actor_dual_approval_roles" value="Platform Admin,Security Approver" /></label>
+              <label>Required Approver Role<input name="dual_approval_required_approver_role" value="Security Approver" /></label>
+              <label>Privileged MFA Reauth Minutes<input name="privileged_mfa_reauth_minutes" type="number" min="1" max="1440" value="30" /></label>
+              <button type="submit" class="primary">Save Session Policy</button>
+            </form>
+            <form id="sessionPolicyRollbackForm" class="form-grid">
+              <label>Revision ID<input name="revision_id" placeholder="apr-..." /></label>
+              <label>Change Reason<input name="change_reason" value="operator rollback" /></label>
+              <button id="rollbackSessionPolicy" type="submit" class="ghost">Rollback to Revision</button>
+            </form>
+            <p id="sessionPolicyResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Session policy revisions</caption>
+                <thead>
+                  <tr><th>Revision</th><th>Description</th><th>Changed By</th><th>Reason</th><th>Created</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="sessionPolicyRevisionsTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>SSO Provider Lifecycle</h3>
+            </div>
+            <form id="ssoProviderCreateForm" class="form-grid">
+              <label>Tenant ID<select name="tenant_id" data-tenant-select data-tenant-selected="tenant-platform" required><option value="" disabled hidden selected>Loading tenants...</option></select></label>
+              <label>
+                Protocol
+                <select name="protocol_type">
+                  <option value="OIDC" selected>OIDC</option>
+                  <option value="SAML">SAML</option>
+                </select>
+              </label>
+              <label>Issuer / Entity ID<input name="issuer_or_entity_id" required value="https://idp.example.com" /></label>
+              <label>JWKS / Metadata URL<input name="jwks_or_metadata_url" required value="https://idp.example.com/.well-known/openid-configuration" /></label>
+              <label>SCIM Base URL<input name="scim_base_url" required value="https://idp.example.com/scim/v2" /></label>
+              <label>Role Mapping Rules JSON<input name="role_mapping_rules" value='{"groups":{"platform-admins":"Platform Admin"}}' /></label>
+              <label>MFA Required Roles JSON<input name="mfa_required_roles" value='["Platform Admin","Security Approver"]' /></label>
+              <label>Session Policy ID<input name="session_policy_id" value="default" /></label>
+              <button type="submit" class="primary">Create SSO Provider</button>
+            </form>
+            <form id="ssoProviderUpdateForm" class="form-grid">
+              <label>Provider ID<input name="provider_id" placeholder="provider-id" /></label>
+              <label>JWKS / Metadata URL<input name="jwks_or_metadata_url" placeholder="Optional" /></label>
+              <label>SCIM Base URL<input name="scim_base_url" placeholder="Optional" /></label>
+              <label>Role Mapping Rules JSON<input name="role_mapping_rules" placeholder='{"groups":{"auditors":"Auditor"}}' /></label>
+              <label>MFA Required Roles JSON<input name="mfa_required_roles" placeholder='["Security Approver"]' /></label>
+              <label>Session Policy ID<input name="session_policy_id" placeholder="default" /></label>
+              <label>Status<input name="status" placeholder="active" /></label>
+              <div class="inline-row">
+                <button type="submit" class="ghost">Update Provider</button>
+                <button id="testSsoProvider" type="button" class="ghost">Test Provider</button>
+                <button id="syncScimProvider" type="button" class="ghost">Run SCIM Sync</button>
+              </div>
+            </form>
+            <p id="ssoProviderResult" class="mono"></p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Role Binding Validation</h3>
+            </div>
+            <form id="roleBindingValidateForm" class="form-grid">
+              <label>
+                Role
+                <select name="role_name">
+                  <option>Master Admin</option>
+                  <option>Platform Admin</option>
+                  <option>Auditor</option>
+                  <option>Security Approver</option>
+                  <option>Release Manager</option>
+                  <option>Agent Owner</option>
+                  <option>AI Ops Approver</option>
+                </select>
+              </label>
+              <label>Resource Pattern<input name="resource_pattern" required value="/gateway/routes/*" /></label>
+              <label>Action<input name="action" required value="read" /></label>
+              <button type="submit" class="primary">Validate Binding</button>
+            </form>
+            <form id="roleBindingExplainForm" class="form-grid">
+              <label>Role (for evidence)<input name="role_name" value="Platform Admin" /></label>
+              <label class="wide-field">Actions CSV<input name="actions_csv" value="auth.session.read,auth.session.issue,auth.basic_fallback.enable" /></label>
+              <label class="wide-field">Resource Patterns CSV<input name="resource_patterns_csv" value="/auth/sessions/{session_id},/auth/sessions,/auth/basic/config/{config_id}/enable-temporary" /></label>
+              <div class="inline-row">
+                <button type="submit" class="ghost">Run Explainability Matrix</button>
+                <button id="loadRoleBindingEvidence" type="button" class="ghost">Load Evidence</button>
+              </div>
+            </form>
+            <p id="roleBindingValidateResult" class="mono"></p>
+            <pre id="roleBindingExplainDetails" class="mono"></pre>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Role binding explainability matrix</caption>
+                <thead>
+                  <tr><th>Role</th><th>Action</th><th>Resource</th><th>Decision</th><th>Reason</th></tr>
+                </thead>
+                <tbody id="roleBindingExplainTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Role binding evidence events</caption>
+                <thead>
+                  <tr><th>Time</th><th>Actor</th><th>Role</th><th>Outcome</th><th>Trace</th></tr>
+                </thead>
+                <tbody id="roleBindingEvidenceTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Session and Break-Glass Controls</h3>
+            </div>
+            <form id="issueSessionForm" class="form-grid">
+              <label>Actor ID<input name="actor_id" value="ui-operator" /></label>
+              <label>
+                Actor Role
+                <select name="actor_role">
+                  <option>Master Admin</option>
+                  <option>Platform Admin</option>
+                  <option>Security Approver</option>
+                  <option>Release Manager</option>
+                  <option>Auditor</option>
+                  <option>Agent Owner</option>
+                  <option>AI Ops Approver</option>
+                </select>
+              </label>
+              <label>TTL Minutes<input name="ttl_minutes" type="number" min="5" max="1440" value="60" /></label>
+              <label>Idle Timeout Minutes<input name="idle_timeout_minutes" type="number" min="5" max="240" value="30" /></label>
+              <label>
+                MFA Verified
+                <select name="mfa_verified">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+              <button type="submit" class="primary">Issue Session</button>
+            </form>
+            <form id="sessionLookupForm" class="form-grid">
+              <label>Session ID<input name="session_id" placeholder="session-id" /></label>
+              <div class="inline-row">
+                <button id="loadGovernedSession" type="button" class="ghost">Load Session</button>
+                <button id="reauthGovernedSession" type="button" class="ghost">Reauth Session</button>
+              </div>
+            </form>
+            <form id="basicAuthConfigForm" class="form-grid">
+              <label>Config ID (for update)<input name="config_id" placeholder="basic-auth-config-id" /></label>
+              <label>Tenant ID<select name="tenant_id" data-tenant-select data-tenant-optional data-tenant-selected="tenant-platform"><option value="">All tenants</option></select></label>
+              <label>Environment<input name="environment" value="prod" /></label>
+              <label>Allowed User Groups JSON<input name="allowed_user_groups" value='["platform-admins"]' /></label>
+              <label>IP Allowlist JSON<input name="ip_allowlist" value='["10.0.0.0/8"]' /></label>
+              <label>Max Enable Duration Minutes<input name="max_enable_duration_minutes" type="number" min="1" max="480" value="60" /></label>
+              <button type="submit" class="ghost">Create / Update Basic Auth Config</button>
+            </form>
+            <form id="basicAuthToggleForm" class="form-grid">
+              <label>Config ID<input name="config_id" required placeholder="basic-auth-config-id" /></label>
+              <label>Break-Glass Reason<input name="break_glass_reason" value="controlled incident response" /></label>
+              <label>Duration Minutes<input name="duration_minutes" type="number" min="1" max="480" value="30" /></label>
+              <div class="inline-row">
+                <button id="enableBasicAuthTemporary" type="button" class="ghost">Enable Temporary</button>
+                <button id="disableBasicAuthTemporary" type="button" class="ghost">Disable</button>
+              </div>
+            </form>
+            <p id="sessionGovernanceResult" class="mono"></p>
+            <pre id="sessionGovernanceDetails" class="mono"></pre>
+            <p id="basicAuthResult" class="mono"></p>
+          </article>
+        </section>

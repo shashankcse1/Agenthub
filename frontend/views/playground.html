@@ -1,0 +1,299 @@
+<section id="playground" class="view">
+          <article class="card">
+            <div class="card-head">
+              <h3>Playground Studio</h3>
+              <div class="inline-actions">
+                <button id="loadPlaygroundTestSets" class="ghost" type="button">Load Test Sets</button>
+                <button id="runPlaygroundPrompt" class="primary" type="button">Run Prompt</button>
+                <button id="judgePlaygroundPrompt" class="ghost" type="button">Judge Prompt</button>
+                <button id="retryPlaygroundPrompt" class="ghost" type="button">Retry Prompt</button>
+              </div>
+            </div>
+            <p class="mono">Compose a text prompt, attach voice or video files, judge candidate models, and retry with the best result. Media is packaged as prompt context for the backend run.</p>
+            <form id="playgroundRunForm" class="form-grid">
+              <label class="wide-field">Prompt Text<textarea name="prompt_text" rows="6" required placeholder="Describe the agent task, constraints, expected output, and safety checks.">Draft a support response for a customer escalation.</textarea></label>
+              <label>Selected Model<input name="selected_model" required value="gpt-4o-mini" placeholder="gpt-4o-mini" /></label>
+              <label>Candidate Models<input name="candidate_models" value="gpt-4o-mini,gpt-4o" placeholder="gpt-4o-mini,gpt-4o" /></label>
+              <label>Team IDs<input name="team_ids" placeholder="team-platform,team-support" /></label>
+              <label>Group IDs<input name="group_ids" placeholder="grp-platform,grp-support" /></label>
+              <label>Projected Extra Cost (cents)<input name="projected_additional_cost_cents" type="number" min="0" step="1" value="25" /></label>
+              <label>
+                Live Stream Preview
+                <select name="live_stream">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+              <label>Video Attachment<input id="playgroundVideoInput" type="file" accept="video/*" /></label>
+              <label>Voice Attachment<input id="playgroundVoiceInput" type="file" accept="audio/*" /></label>
+              <button id="togglePlaygroundMic" type="button" class="ghost">Turn On Mike</button>
+              <p id="playgroundMicStatus" class="mono">Microphone off.</p>
+            </form>
+            <div class="card-head config-actions">
+              <h4>Prompt Judge</h4>
+              <div class="inline-actions">
+                <button id="applyPlaygroundWinner" class="ghost" type="button">Apply Winner</button>
+                <button id="clearPlaygroundStream" class="ghost" type="button">Clear Stream</button>
+              </div>
+            </div>
+            <p id="playgroundResult" class="mono"></p>
+            <p id="playgroundJudgeSummary" class="mono"></p>
+            <div id="playgroundAttachmentList" class="attachment-list"></div>
+            <pre id="playgroundLiveStreamLog" class="mono live-stream-log" aria-live="polite"></pre>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Playground judge results</caption>
+                <thead>
+                  <tr><th>Model</th><th>Latency</th><th>Cost</th><th>Quality</th><th>Action</th></tr>
+                </thead>
+                <tbody id="playgroundJudgeTable"></tbody>
+              </table>
+            </div>
+            <div class="card-head config-actions">
+              <h4>Prompt Registry</h4>
+              <div class="inline-actions">
+                <button id="loadPromptRegistryItems" class="ghost" type="button">Load Registry</button>
+                <button id="loadPromptRegistryVersions" class="ghost" type="button">Load Versions</button>
+                <button id="deletePromptRegistryItem" class="ghost" type="button">Delete Selected</button>
+              </div>
+            </div>
+            <form id="promptRegistryForm" class="form-grid">
+              <input type="hidden" name="prompt_registry_id" />
+              <label class="wide-field">Registry Name<input name="name" required placeholder="customer-escalation-v1" /></label>
+              <label class="wide-field">Description<textarea name="description" rows="2" placeholder="Purpose, owner, and allowed use cases."></textarea></label>
+              <label class="wide-field">Labels<input name="labels" placeholder="support, safety, production" /></label>
+              <label class="wide-field">Prompt Text<textarea name="prompt_text" rows="6" required placeholder="The prompt body to govern and version."></textarea></label>
+              <label>Change Reason<input name="change_reason" value="updated" placeholder="updated" /></label>
+              <button type="submit" class="primary">Save Registry Item</button>
+            </form>
+            <form id="promptRegistryPromotionForm" class="form-grid">
+              <input type="hidden" name="prompt_registry_id" />
+              <label>Target Environment
+                <select name="target_environment">
+                  <option value="dev">dev</option>
+                  <option value="staging">staging</option>
+                  <option value="prod">prod</option>
+                </select>
+              </label>
+              <label>Promotion Reason<input name="reason" value="promote" placeholder="release approved prompt" /></label>
+              <label>Approval Ticket<input name="approval_ticket" placeholder="CHG-1234" /></label>
+              <label>Require Render Validation
+                <select name="require_render_validation">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+              <label class="wide-field">Render Variables (one per line as <code>key=value</code>)
+                <textarea name="render_variables" rows="4" placeholder="ticket_id=INC-42&#10;customer_tier=gold"></textarea>
+              </label>
+              <div class="inline-actions">
+                <button id="previewPromptRegistryPromotion" type="button" class="ghost">Preview Promotion</button>
+                <button type="submit" class="primary">Promote Prompt</button>
+              </div>
+            </form>
+            <p id="promptRegistryResult" class="mono"></p>
+            <p id="promptRegistryPromotionResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Prompt registry items</caption>
+                <thead>
+                  <tr><th>Name</th><th>Version</th><th>Status</th><th>Labels</th><th>Updated</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="promptRegistryTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Prompt registry versions</caption>
+                <thead>
+                  <tr><th>Version</th><th>Reason</th><th>Created By</th><th>Created At</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="promptRegistryVersionsTable"></tbody>
+              </table>
+            </div>
+            <div class="card-head config-actions">
+              <h4>Run History</h4>
+              <div class="inline-actions">
+                <button id="loadPlaygroundRuns" class="ghost" type="button">Load History</button>
+                <button id="loadSelectedPlaygroundRun" class="ghost" type="button">Load Selected</button>
+              </div>
+            </div>
+            <form id="playgroundRunHistoryFilters" class="form-grid">
+              <label>Run ID<input name="run_id" placeholder="Optional run id" /></label>
+              <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="25" /></label>
+              <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+              <button type="submit" class="ghost">Apply Filters</button>
+            </form>
+            <p id="playgroundRunHistoryResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Playground run history</caption>
+                <thead>
+                  <tr><th>Run ID</th><th>Model</th><th>Status</th><th>Policy</th><th>Cost</th><th>Created</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="playgroundRunTable"></tbody>
+              </table>
+            </div>
+            <div class="card-head config-actions">
+              <h4>Feedback Loop</h4>
+              <div class="inline-actions">
+                <button id="loadPlaygroundRunFeedback" class="ghost" type="button">Load Feedback</button>
+              </div>
+            </div>
+            <form id="playgroundFeedbackForm" class="form-grid">
+              <input type="hidden" name="run_id" />
+              <label>Trace ID<input name="trace_id" placeholder="trace-run-id" /></label>
+              <label>Rating<input name="rating" type="number" min="1" max="5" step="1" value="4" /></label>
+              <label>Quality Score<input name="quality_score" type="number" min="0" max="1" step="0.01" value="0.8" /></label>
+              <label class="wide-field">Comment<textarea name="comment" rows="3" placeholder="What worked, what failed, and why."></textarea></label>
+              <button type="submit" class="primary">Save Feedback</button>
+            </form>
+            <p id="playgroundFeedbackResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Playground run feedback</caption>
+                <thead>
+                  <tr><th>Trace</th><th>Rating</th><th>Quality</th><th>Comment</th><th>Created</th></tr>
+                </thead>
+                <tbody id="playgroundRunFeedbackTable"></tbody>
+              </table>
+            </div>
+            <div class="card-head config-actions">
+              <h4>Quality Triage Queue</h4>
+              <div class="inline-actions">
+                <button id="loadPlaygroundQualityTriage" class="ghost" type="button">Load Triage Queue</button>
+              </div>
+            </div>
+            <form id="playgroundQualityTriageForm" class="form-grid">
+              <label>Max Quality Score<input name="max_quality_score" type="number" min="0" max="1" step="0.01" value="0.8" /></label>
+              <label>Max Rating<input name="max_rating" type="number" min="1" max="5" step="1" value="3" /></label>
+              <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+              <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+              <button type="submit" class="ghost">Apply Queue Filters</button>
+            </form>
+            <p id="playgroundQualityTriageResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Playground quality triage queue</caption>
+                <thead>
+                  <tr><th>Priority</th><th>Run</th><th>Trace</th><th>Model</th><th>Rating</th><th>Quality</th><th>Reason</th><th>Comment</th><th>Created</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="playgroundQualityTriageTable"></tbody>
+              </table>
+            </div>
+            <div class="card-head config-actions">
+              <h4>Quality Escalations</h4>
+              <div class="inline-actions">
+                <button id="loadPlaygroundQualityEscalations" class="ghost" type="button">Load Escalations</button>
+              </div>
+            </div>
+            <form id="playgroundQualityEscalationCreateForm" class="form-grid">
+              <label>Feedback ID<input name="feedback_id" placeholder="feedback id from triage queue" required /></label>
+              <label>Severity
+                <select name="severity">
+                  <option value="critical">critical</option>
+                  <option value="high" selected>high</option>
+                  <option value="medium">medium</option>
+                  <option value="low">low</option>
+                </select>
+              </label>
+              <label>Priority
+                <select name="priority_tag">
+                  <option value="p0">p0</option>
+                  <option value="p1" selected>p1</option>
+                  <option value="p2">p2</option>
+                </select>
+              </label>
+              <label>SLA Minutes<input name="sla_target_minutes" type="number" min="15" max="10080" step="1" value="60" /></label>
+              <label>Assigned Team<input name="assigned_team" value="ai-trust-ops" /></label>
+              <label>Escalation Channel<input name="escalation_channel" value="security-ops" /></label>
+              <label>External Ticket<input name="external_ticket_ref" placeholder="INC-991" /></label>
+              <label class="wide-field">Escalation Reason<textarea name="escalation_reason" rows="2" placeholder="Describe risk impact and why escalation is required." required></textarea></label>
+              <button type="submit" class="primary">Create Escalation</button>
+            </form>
+            <form id="playgroundQualityEscalationFiltersForm" class="form-grid">
+              <label>Status
+                <select name="status">
+                  <option value="open" selected>open</option>
+                  <option value="acknowledged">acknowledged</option>
+                  <option value="resolved">resolved</option>
+                  <option value="">all</option>
+                </select>
+              </label>
+              <label>Priority
+                <select name="priority_tag">
+                  <option value="">all</option>
+                  <option value="p0">p0</option>
+                  <option value="p1">p1</option>
+                  <option value="p2">p2</option>
+                </select>
+              </label>
+              <label>Assigned Team<input name="assigned_team" placeholder="ai-trust-ops" /></label>
+              <label>Overdue Only
+                <select name="overdue_only">
+                  <option value="false" selected>false</option>
+                  <option value="true">true</option>
+                </select>
+              </label>
+              <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+              <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+              <button type="submit" class="ghost">Apply Escalation Filters</button>
+            </form>
+            <form id="playgroundQualityEscalationResolveForm" class="form-grid">
+              <label>Escalation ID<input name="escalation_id" required placeholder="pqe-..." /></label>
+              <label class="wide-field">Resolution Note<textarea name="resolution_note" rows="2" placeholder="Describe final disposition and corrective action."></textarea></label>
+              <label>Notify Channel<input name="notify_channel" value="security-ops" /></label>
+              <label>Notify Destination<input name="notify_destination" placeholder="pagerduty://ai-trust-ops" /></label>
+              <label>Notify Prefix<input name="notify_message_prefix" value="Playground escalation alert" /></label>
+              <div class="inline-actions">
+                <button id="acknowledgePlaygroundQualityEscalation" type="button" class="ghost">Acknowledge Escalation</button>
+                <button id="notifyPlaygroundQualityEscalation" type="button" class="ghost">Notify Channel</button>
+                <button type="submit" class="primary">Resolve Escalation</button>
+              </div>
+            </form>
+            <p id="playgroundQualityEscalationResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Playground quality escalations</caption>
+                <thead>
+                  <tr><th>Status</th><th>Priority</th><th>Severity</th><th>Escalation ID</th><th>Feedback</th><th>Run</th><th>Due At</th><th>Assigned Team</th><th>Ticket</th><th>Reason</th></tr>
+                </thead>
+                <tbody id="playgroundQualityEscalationTable"></tbody>
+              </table>
+            </div>
+            <div class="card-head config-actions">
+              <h4>Quality Analytics Rollups</h4>
+              <div class="inline-actions">
+                <button id="loadPlaygroundQualityRollups" class="ghost" type="button">Load Rollups</button>
+              </div>
+            </div>
+            <form id="playgroundQualityRollupsForm" class="form-grid">
+              <label>Window Hours<input name="window_hours" type="number" min="24" max="2160" step="1" value="168" /></label>
+              <label>Bucket Hours<input name="bucket_hours" type="number" min="1" max="168" step="1" value="24" /></label>
+              <label>Provider ID<input name="provider_id" placeholder="openai" /></label>
+              <label>Route Policy ID<input name="route_policy_id" placeholder="snapshot-..." /></label>
+              <label>Model Name<input name="model_name" placeholder="openai/gpt-4o-mini" /></label>
+              <label>Limit<input name="limit" type="number" min="1" max="5000" step="1" value="500" /></label>
+              <button type="submit" class="ghost">Apply Rollup Filters</button>
+            </form>
+            <p id="playgroundQualityRollupsResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Playground quality analytics rollups</caption>
+                <thead>
+                  <tr><th>Bucket Start</th><th>Bucket End</th><th>Provider</th><th>Route</th><th>Model</th><th>Samples</th><th>Avg Quality</th><th>Avg Rating</th><th>Critical</th><th>Elevated</th></tr>
+                </thead>
+                <tbody id="playgroundQualityRollupsTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Playground test sets</caption>
+                <thead>
+                  <tr><th>Test Set ID</th><th>Name</th><th>Cases</th></tr>
+                </thead>
+                <tbody id="playgroundTestSetsTable"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>

@@ -1,0 +1,129 @@
+<section id="observability" class="view">
+          <article class="card observability-hero">
+            <div class="card-head observability-hero-head">
+              <div>
+                <p class="eyebrow">Trace, Logs, and Schema Health</p>
+                <h3>Observability Console</h3>
+              </div>
+              <div class="inline-actions">
+                <button id="refreshObservability" class="ghost" type="button">Refresh Console</button>
+              </div>
+            </div>
+            <p class="mono observability-intro">
+              Search a trace ID, inspect recent audit-backed logs, and review schema conformance without leaving the platform.
+            </p>
+            <div class="observability-links">
+              <a href="#observabilityTraceCard">Trace lookup</a>
+              <a href="#observabilityLogsCard">Log explorer</a>
+              <a href="#observabilitySchemaCard">Schema health</a>
+            </div>
+          </article>
+
+          <div class="card-grid observability-metrics">
+            <article class="card metric">
+              <h3>Trace Status</h3>
+              <p class="metric-value" id="observabilityTraceStatus">Ready</p>
+            </article>
+            <article class="card metric">
+              <h3>Log Window</h3>
+              <p class="metric-value" id="observabilityLogsStatus">Ready</p>
+            </article>
+            <article class="card metric">
+              <h3>Schema Coverage</h3>
+              <p class="metric-value" id="observabilitySchemaStatus">Ready</p>
+            </article>
+          </div>
+
+          <div class="observability-grid">
+            <article id="observabilityTraceCard" class="card observability-panel">
+              <div class="card-head">
+                <h3>Trace Lookup</h3>
+                <button id="loadObservabilityTrace" class="ghost" type="button">Lookup</button>
+              </div>
+              <form id="observabilityTraceForm" class="form-grid observability-form">
+                <label class="wide-field">Trace ID<input name="trace_id" required placeholder="trace-..." /></label>
+              </form>
+              <p id="observabilityTraceResult" class="mono"></p>
+              <div class="observability-summary" id="observabilityTraceSummary"></div>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Trace lookup details</caption>
+                  <thead>
+                    <tr><th>Field</th><th>Value</th></tr>
+                  </thead>
+                  <tbody id="observabilityTraceTable"></tbody>
+                </table>
+              </div>
+            </article>
+
+            <article id="observabilityLogsCard" class="card observability-panel">
+              <div class="card-head">
+                <h3>Log Explorer</h3>
+                <button id="loadObservabilityLogs" class="ghost" type="button">Load Logs</button>
+              </div>
+              <form id="observabilityLogsForm" class="form-grid observability-form">
+                <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="25" /></label>
+                <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+                <label>Since (hours)<input name="since_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+                <label>
+                  Redact Sensitive
+                  <select name="redact_sensitive">
+                    <option value="false" selected>false</option>
+                    <option value="true">true</option>
+                  </select>
+                </label>
+                <label>Actor ID<input name="actor_id" placeholder="ui-operator" /></label>
+                <label>Trace ID<input name="trace_id" placeholder="trace-..." /></label>
+                <label>Action<input name="action_type" placeholder="agentic_certification_override" /></label>
+                <label>Resource Type<input name="resource_type" placeholder="agent" /></label>
+                <label>Resource ID<input name="resource_id" placeholder="agent-id" /></label>
+                <label>Decision Outcome<input name="decision_outcome" placeholder="approved" /></label>
+                <label class="wide-field">Search<input name="search" placeholder="keyword across actor, action, resource, trace, and outcome" /></label>
+              </form>
+              <p id="observabilityLogsResult" class="mono"></p>
+              <div class="table-wrap observability-table-wrap">
+                <table>
+                  <caption class="sr-only">Observability logs</caption>
+                  <thead>
+                    <tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Resource Type</th><th>Resource ID</th><th>Outcome</th><th>Trace</th><th>Actions</th></tr>
+                  </thead>
+                  <tbody id="observabilityLogsTable"></tbody>
+                </table>
+              </div>
+            </article>
+
+            <article id="observabilitySchemaCard" class="card observability-panel">
+              <div class="card-head">
+                <h3>Schema Health</h3>
+                <button id="loadObservabilitySchema" class="ghost" type="button">Check Schema</button>
+              </div>
+              <p id="observabilitySchemaResult" class="mono"></p>
+              <div class="observability-summary" id="observabilitySchemaSummary"></div>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Observability schema missing field counts</caption>
+                  <thead>
+                    <tr><th>Required Field</th><th>Missing Count</th></tr>
+                  </thead>
+                  <tbody id="observabilitySchemaTable"></tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="card observability-panel">
+              <div class="card-head">
+                <h3>Observability Request Map</h3>
+                <p class="mono">Endpoint links remain available for quick navigation and troubleshooting.</p>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Observability endpoint request map</caption>
+                  <thead>
+                    <tr><th>Method</th><th>Endpoint</th><th>Purpose</th><th>Link</th></tr>
+                  </thead>
+                  <tbody id="observabilityRequestMapTable"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </section>

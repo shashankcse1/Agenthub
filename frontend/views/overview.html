@@ -1,0 +1,81 @@
+<section id="overview" class="view active">
+          <article class="card overview-welcome">
+            <div class="card-head">
+              <h3>Operator Workspace</h3>
+              <span id="overviewSessionBadge" class="status-pill idle">Signed in</span>
+            </div>
+            <p class="overview-intro">
+              Signed in as <strong id="overviewLoggedInUser">Ui Operator</strong>
+              (<span id="overviewLoggedInContext">Master Admin @ LOCAL</span>).
+              Jump to a priority console below or use search in the header.
+            </p>
+            <div class="quick-start-chips" aria-label="Quick navigation">
+              <button class="chip quick-start-chip" type="button" data-view="playground">Playground</button>
+              <button class="chip quick-start-chip" type="button" data-view="benchmark-scan">Benchmark &amp; Scan</button>
+              <button class="chip quick-start-chip" type="button" data-view="routing-gateway">Routing &amp; Gateway</button>
+              <button class="chip quick-start-chip" type="button" data-view="routing-gateway" data-scroll-target="cursorGatewayIntegrationHub">Cursor Gateway</button>
+              <button class="chip quick-start-chip" type="button" data-view="compliance">Compliance</button>
+              <button class="chip quick-start-chip" type="button" data-view="observability">Observability</button>
+            </div>
+          </article>
+          <div class="card-grid">
+            <article class="card metric">
+              <h3>Live Spend (24h)</h3>
+              <p class="metric-value" id="spendDay">--</p>
+            </article>
+            <article class="card metric">
+              <h3>Live Spend (1h)</h3>
+              <p class="metric-value" id="spendHour">--</p>
+            </article>
+            <article class="card metric">
+              <h3>Discovery Queue</h3>
+              <p class="metric-value" id="discoveryCount">--</p>
+            </article>
+            <article class="card metric">
+              <h3>Audit Events</h3>
+              <p class="metric-value" id="auditCount">--</p>
+            </article>
+          </div>
+          <article class="card">
+            <h3>Platform Status</h3>
+            <p id="healthStatus" class="mono" role="status" aria-live="polite">Checking backend...</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Spend vs Hours</h3>
+              <div class="inline-actions spend-controls">
+                <label class="inline-label" for="spendBreakdownDimension">View</label>
+                <select id="spendBreakdownDimension" aria-label="Spend breakdown dimension">
+                  <option value="all" selected>All</option>
+                  <option value="user">User</option>
+                  <option value="group">Group</option>
+                  <option value="team">Team</option>
+                  <option value="request_tag">Request Tag</option>
+                </select>
+                <label class="inline-label" for="spendBreakdownRange">Range</label>
+                <select id="spendBreakdownRange" aria-label="Spend range">
+                  <option value="1d" selected>1 Day</option>
+                  <option value="1w">1 Week</option>
+                  <option value="1m">1 Month</option>
+                  <option value="1y">1 Year</option>
+                  <option value="custom">Date Range</option>
+                </select>
+                <label class="inline-label" id="spendBreakdownScopeLabel" for="spendBreakdownScopeFilter">Filter</label>
+                <input id="spendBreakdownScopeFilter" type="text" placeholder="Optional username" aria-label="Spend scope filter" />
+                <div id="spendBreakdownCustomRange" class="spend-breakdown-custom-range" hidden>
+                  <label class="inline-label" for="spendBreakdownStartDate">From</label>
+                  <input id="spendBreakdownStartDate" type="date" aria-label="Spend start date" />
+                  <input id="spendBreakdownStartTime" type="time" aria-label="Spend start time" />
+                  <label class="inline-label" for="spendBreakdownEndDate">To</label>
+                  <input id="spendBreakdownEndDate" type="date" aria-label="Spend end date" />
+                  <input id="spendBreakdownEndTime" type="time" aria-label="Spend end time" />
+                </div>
+                <button id="loadSpendBreakdown" class="ghost" type="button">Load</button>
+              </div>
+            </div>
+            <p id="spendBreakdownSummary" class="mono">Loading spend breakdown...</p>
+            <div id="spendBreakdownChart" class="spend-breakdown-chart" role="img" aria-label="Spend breakdown chart"></div>
+            <ul id="spendBreakdownInsights" class="spend-breakdown-insights"></ul>
+          </article>
+        </section>

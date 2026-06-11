@@ -56,8 +56,79 @@ function isProdGuardExemptMutation(method, path) {
   if (PROD_GUARD_EXEMPT_MUTATIONS.has(`${normalizedMethod}:${normalizedPath}`)) return true;
   return normalizedMethod === "POST" && normalizedPath.startsWith("/auth/directory/groups");
 }
+
+function isLoopbackApiBase(rawBase) {
+  const value = String(rawBase || "").trim();
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+  } catch {
+    return false;
+  }
+}
 const UI_FEATURE_VIEWS = ["overview", "agents", "playground", "benchmark-scan", "routing-gateway", "runtime-config", "providers", "modules", "agentic", "discovery", "cost", "audit", "compliance", "observability", "security"];
+
+const CURSOR_GATEWAY_MODEL_DEFAULTS = [
+  "auto",
+  "composer-2.5",
+  "composer-2.5-fast",
+  "gpt-4o",
+  "gpt-4o-mini",
+  "gpt-4.1",
+  "gpt-5.3-codex",
+  "gpt-5.5-medium",
+  "claude-4.6-sonnet-medium-thinking",
+  "claude-fable-5-thinking-high",
+  "claude-opus-4-8-thinking-high",
+  "text-embedding-3-small",
+  "whisper-1",
+  "dall-e-3",
+  "gpt-realtime-1",
+  "rerank-english-v3.0",
+];
 const UI_FEATURE_FLAG_PREFIX = "ui.feature.";
+
+// Use delegated listeners for cursor token controls so Save/Clear keep working
+// even if another listener registration later in startup throws.
+document.addEventListener("click", (evt) => {
+  if (evt.__gatewayCursorTokenDelegatedHandled) return;
+  const target = evt.target instanceof Element
+    ? evt.target.closest("#loadGatewayCursorToken, #saveGatewayCursorToken, #clearGatewayCursorToken, #loadGatewayCursorSecretProviders")
+    : null;
+  if (!target) return;
+  evt.__gatewayCursorTokenDelegatedHandled = true;
+  if (target.id === "loadGatewayCursorToken") {
+    loadGatewayCursorTokenConfig(evt);
+    return;
+  }
+  if (target.id === "saveGatewayCursorToken") {
+    saveGatewayCursorTokenConfig(evt);
+    return;
+  }
+  if (target.id === "clearGatewayCursorToken") {
+    clearGatewayCursorTokenConfig(evt);
+    return;
+  }
+  if (target.id === "loadGatewayCursorSecretProviders") {
+    loadGatewayCursorSecretProviders(evt);
+  }
+});
+
+document.addEventListener("submit", (evt) => {
+  if (evt.__gatewayCursorTokenDelegatedHandled) return;
+  if (!isFormSubmitEventFor(evt, "gatewayCursorTokenForm")) return;
+  evt.__gatewayCursorTokenDelegatedHandled = true;
+  saveGatewayCursorTokenConfig(evt);
+});
+
+document.addEventListener("change", (evt) => {
+  const target = evt.target;
+  if (!(target instanceof Element)) return;
+  if (!target.matches('#gatewayCursorTokenForm select[name="storage_mode"]')) return;
+  updateGatewayCursorTokenFormModeVisibility();
+});
+
 const RUNTIME_CONFIG_PRESETS = [
   {
     config_key: "gateway.default_global_timeout_ms",
@@ -166,10 +237,19 @@ let playgroundAttachments = [];
 let playgroundJudgeRows = [];
 let playgroundRuns = [];
 let selectedPlaygroundRunId = "";
+let playgroundRunFeedbackRows = [];
+let playgroundQualityTriageRows = [];
+let playgroundQualityEscalationRows = [];
+let playgroundQualityRollupRows = [];
+let costModelCatalogRows = [];
+let promptRegistryItems = [];
+let promptRegistryVersions = [];
+let selectedPromptRegistryId = "";
 let playgroundStreamTimer = null;
 let playgroundMicRecorder = null;
 let playgroundMicStream = null;
 let playgroundMicChunks = [];
+let gatewayCacheDecisionRows = [];
 let routePolicyRows = [];
 let gatewayEntitlementRows = [];
 let gatewayNhiInventoryRows = [];
@@ -181,8 +261,13 @@ let gatewayGovernanceEvidenceRows = [];
 let gatewayGovernanceEvidenceSummaryRows = [];
 let gatewayOpenAiResponseRows = [];
 let gatewayOpenAiFileRows = [];
+let gatewayOpenAiRealtimeSessionRows = [];
+let gatewayOpenAiRealtimeEventRows = [];
+let gatewayConfiguredModelValues = [];
+let gatewayCursorTokenConfigured = false;
 let selectedGatewayOpenAiResponseId = "";
 let selectedGatewayOpenAiFileId = "";
+let selectedGatewayOpenAiRealtimeSessionId = "";
 const selectedGatewayOpenAiResponseIds = new Set();
 const selectedGatewayOpenAiFileIds = new Set();
 let keyRows = [];
@@ -190,12 +275,21 @@ let discoverySourceRows = [];
 let discoveryConflictRows = [];
 let discoveryAlertRows = [];
 let discoveryPromoteQueueRows = [];
+let discoveryUnifiedTriageRows = [];
+let discoveryTriageFilters = {
+  type: "all",
+  severity: "all",
+  search: "",
+};
 let complianceControlRows = [];
 let complianceMappingRows = [];
 let complianceFreshnessRows = [];
 let complianceRetentionRows = [];
 let complianceLegalHoldRows = [];
 let selectedComplianceControlId = "";
+let latestComplianceBundle = null;
+let latestComplianceBundleQuery = "";
+let complianceInvestigateContext = null;
 let costBudgetRows = [];
 let latestCostLimitRows = [];
 let latestPolicyRevisions = [];
@@ -205,6 +299,7 @@ let selectedRouteDraftId = "";
 let selectedKeyId = "";
 let keyRotationScheduleRows = [];
 let moduleRows = [];
+let aiSkillRows = [];
 let agenticCertificationRows = [];
 let agenticLoadTestRows = [];
 let agenticCheckpointRows = [];
@@ -227,6 +322,7 @@ const gatewayMcpUiState = {
 let directoryUserRows = [];
 let directoryGroupRows = [];
 let directoryTeamRows = [];
+let globalSearchEntries = [];
 
 const VIEW_TITLES = {
   overview: "Overview",
@@ -244,6 +340,26 @@ const VIEW_TITLES = {
   compliance: "Compliance",
   observability: "Observability",
   security: "Security",
+  "browser-security": "GuardBridge",
+};
+
+const VIEW_DESCRIPTIONS = {
+  overview: "Platform health, spend, and operator shortcuts.",
+  agents: "Register agents, manage ownership, and configure agent settings.",
+  playground: "Test prompts, manage the registry, and review run quality.",
+  "benchmark-scan": "Run benchmarks and security scans with history browsing.",
+  "routing-gateway": "Manage routes, gateway policies, keys, Cursor integration, and OpenAI-compatible ops.",
+  "runtime-config": "Tune database-backed runtime settings and validation rules.",
+  providers: "Workload identity and secret provider operations.",
+  modules: "Secure module lifecycle and AI skills registry.",
+  agentic: "Readiness certifications, schedules, and checkpoint workflows.",
+  discovery: "Source sync, triage, conflicts, alerts, and promotion.",
+  cost: "Spend tracking, budgets, pricing, and anomaly review.",
+  audit: "Browse immutable audit events and evidence trails.",
+  compliance: "Control coverage, evidence bundles, and investigation workflows.",
+  observability: "Trace lookup, log explorer, and schema health checks.",
+  security: "Session policy, SSO, directory, and authorization explainability.",
+  "browser-security": "GuardBridge extension telemetry, policies, and incident export.",
 };
 
 function runtimeRuleStatusStorageKey() {
@@ -701,6 +817,7 @@ function setLabeledSelectOptions(select, options, { placeholder = "Select an opt
     const option = document.createElement("option");
     option.value = item.value;
     option.textContent = item.label;
+    if (item.title) option.title = item.title;
     select.appendChild(option);
   });
 
@@ -739,18 +856,39 @@ function activeTenantRows() {
 
 function applyTenantOptionsToSelect(select, { includeBlank = false, selectedValue = "" } = {}) {
   if (!select) return;
+  const current = String(
+    selectedValue || select.getAttribute("data-tenant-selected") || select.value || "",
+  ).trim();
   const options = activeTenantRows().map((row) => ({
     value: row.tenant_id,
-    label: `${row.tenant_name} (${row.tenant_id})`,
+    label: row.tenant_id,
+    title: `${row.tenant_name} (${row.tenant_id})`,
   }));
+  if (current && !options.some((option) => option.value === current)) {
+    options.unshift({ value: current, label: current, title: `${current} (saved value)` });
+  }
   setLabeledSelectOptions(select, options, {
-    placeholder: includeBlank ? "All tenants" : "Choose tenant",
-    selectedValue,
+    placeholder: includeBlank ? "All tenants" : options.length ? "Choose tenant" : "No tenants loaded",
+    selectedValue: current,
   });
   if (includeBlank) {
     select.querySelector('option[value=""]')?.removeAttribute("disabled");
     select.querySelector('option[value=""]')?.removeAttribute("hidden");
   }
+  if (current) select.value = current;
+}
+
+function syncTenantSelectField(select, value = "") {
+  if (!select) return;
+  const normalized = String(value ?? select.value ?? "").trim();
+  if (select.matches("[data-tenant-select]")) {
+    applyTenantOptionsToSelect(select, {
+      includeBlank: select.hasAttribute("data-tenant-optional"),
+      selectedValue: normalized,
+    });
+    return;
+  }
+  select.value = normalized;
 }
 
 function syncTenantMetadataFields(form) {
@@ -770,41 +908,24 @@ function syncTenantMetadataFields(form) {
 }
 
 function refreshTenantBoundForms() {
-  const workloadCreate = qs("#createWorkloadIdentityProviderForm");
-  const secretCreate = qs("#createSecretProviderForm");
-  const workloadTokenExchange = qs("#workloadTokenExchangeForm");
-  const workloadTrustForm = qs("#workloadIdentityTrustForm");
-  const workloadHealthForm = qs("#workloadIdentityHealthForm");
-  const workloadFilter = qs("#workloadIdentityProviderFilters");
-  const secretFilter = qs("#secretProviderFilters");
-  const supportedModelFilter = qs("#supportedModelFilters");
-  const agentConfigForm = qs("#agentConfigForm");
-  const entitlementForm = qs("#tenantModelEntitlementForm");
-  const entitlementFilter = qs("#tenantModelEntitlementFilters");
+  qsa("[data-tenant-select]").forEach((select) => {
+    const includeBlank = select.hasAttribute("data-tenant-optional");
+    applyTenantOptionsToSelect(select, {
+      includeBlank,
+      selectedValue: select.value || select.getAttribute("data-tenant-selected") || "",
+    });
+  });
 
-  applyTenantOptionsToSelect(workloadCreate?.elements?.tenant_id, { selectedValue: workloadCreate?.elements?.tenant_id?.value || "" });
-  applyTenantOptionsToSelect(secretCreate?.elements?.tenant_id, { selectedValue: secretCreate?.elements?.tenant_id?.value || "" });
-  applyTenantOptionsToSelect(workloadTokenExchange?.elements?.tenant_id, {
-    selectedValue: workloadTokenExchange?.elements?.tenant_id?.value || "",
-  });
-  applyTenantOptionsToSelect(workloadTrustForm?.elements?.tenant_id, {
-    selectedValue: workloadTrustForm?.elements?.tenant_id?.value || "",
-  });
-  applyTenantOptionsToSelect(workloadHealthForm?.elements?.tenant_id, {
-    selectedValue: workloadHealthForm?.elements?.tenant_id?.value || "",
-  });
-  applyTenantOptionsToSelect(workloadFilter?.elements?.tenant_id, { includeBlank: true, selectedValue: workloadFilter?.elements?.tenant_id?.value || "" });
-  applyTenantOptionsToSelect(secretFilter?.elements?.tenant_id, { includeBlank: true, selectedValue: secretFilter?.elements?.tenant_id?.value || "" });
-  applyTenantOptionsToSelect(supportedModelFilter?.elements?.tenant_id, { includeBlank: true, selectedValue: supportedModelFilter?.elements?.tenant_id?.value || "" });
-  applyTenantOptionsToSelect(agentConfigForm?.elements?.tenant_scope_id, {
-    includeBlank: true,
-    selectedValue: agentConfigForm?.elements?.tenant_scope_id?.value || "",
-  });
-  applyTenantOptionsToSelect(entitlementForm?.elements?.tenant_id, { selectedValue: entitlementForm?.elements?.tenant_id?.value || "" });
-  applyTenantOptionsToSelect(entitlementFilter?.elements?.tenant_id, { includeBlank: true, selectedValue: entitlementFilter?.elements?.tenant_id?.value || "" });
+  syncTenantMetadataFields(qs("#createWorkloadIdentityProviderForm"));
+  syncTenantMetadataFields(qs("#createSecretProviderForm"));
+}
 
-  syncTenantMetadataFields(workloadCreate);
-  syncTenantMetadataFields(secretCreate);
+async function ensureTenantCatalogReady() {
+  if (!tenantCatalogRows.length) {
+    await loadTenantCatalog();
+    return;
+  }
+  refreshTenantBoundForms();
 }
 
 async function loadTenantCatalog() {
@@ -942,6 +1063,7 @@ async function loadProviderTypeOptions() {
       "nvidia-nim",
       "nvidia",
       "openai",
+      "cursor",
       "anthropic",
       "mistral",
       "groq",
@@ -977,6 +1099,7 @@ async function loadProviderTypeOptions() {
       "nvidia",
       "nvidia-nim",
       "openai",
+      "cursor",
       "anthropic",
       "perplexity",
       "together",
@@ -1605,6 +1728,399 @@ function formatViewTitle(viewName) {
   return VIEW_TITLES[viewName] || String(viewName || "").replace(/-/g, " ");
 }
 
+function annotateFormFieldRequirements() {
+  qsa("main form label").forEach((label) => {
+    if (label.querySelector(".field-req-badge")) return;
+    const control = label.querySelector("input, select, textarea");
+    if (!control) return;
+    const badge = document.createElement("span");
+    badge.className = `field-req-badge ${control.required ? "required" : "optional"}`;
+    badge.textContent = control.required ? "Required" : "Optional";
+    label.appendChild(badge);
+  });
+}
+
+function buildGlobalSearchIndex() {
+  globalSearchEntries = [];
+
+  qsa(".nav-item").forEach((btn) => {
+    const viewName = String(btn.dataset.view || "").trim();
+    const label = String(btn.textContent || "").trim();
+    if (!viewName || !label) return;
+    globalSearchEntries.push({
+      title: label,
+      subtitle: "View",
+      viewName,
+      anchorId: "",
+      keywords: `${label} ${viewName}`.toLowerCase(),
+    });
+  });
+
+  qsa(".view article.card h3").forEach((heading, index) => {
+    const viewSection = heading.closest(".view");
+    const viewName = String(viewSection?.id || "").trim();
+    const title = String(heading.textContent || "").trim();
+    if (!viewName || !title) return;
+    if (!heading.id) {
+      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+      heading.id = `${viewName}-${slug || "section"}-${index + 1}`;
+    }
+    globalSearchEntries.push({
+      title,
+      subtitle: formatViewTitle(viewName),
+      viewName,
+      anchorId: heading.id,
+      keywords: `${title} ${viewName} ${formatViewTitle(viewName)}`.toLowerCase(),
+    });
+  });
+}
+
+function clearGlobalSearchInputs() {
+  const headerInput = qs("#globalSearchInput");
+  const sidebarInput = qs("#sidebarGlobalSearchInput");
+  if (headerInput) headerInput.value = "";
+  if (sidebarInput) sidebarInput.value = "";
+}
+
+function hideAllGlobalSearchPanels() {
+  ["#globalSearchResults", "#sidebarGlobalSearchResults"].forEach((selector) => {
+    const panel = qs(selector);
+    if (!panel) return;
+    panel.hidden = true;
+    panel.textContent = "";
+  });
+}
+
+function renderGlobalSearchResults(query, panelSelector = "#globalSearchResults") {
+  const panel = qs(panelSelector);
+  if (!panel) return;
+  const normalized = String(query || "").trim().toLowerCase();
+  if (!normalized) {
+    panel.hidden = true;
+    panel.textContent = "";
+    return;
+  }
+
+  const matches = globalSearchEntries
+    .filter((entry) => entry.keywords.includes(normalized))
+    .slice(0, 8);
+
+  panel.textContent = "";
+  if (!matches.length) {
+    const empty = document.createElement("div");
+    empty.className = "global-search-empty mono";
+    empty.textContent = "No matches found.";
+    panel.appendChild(empty);
+    panel.hidden = false;
+    return;
+  }
+
+  matches.forEach((entry) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "global-search-item";
+    button.innerHTML = `<strong>${safeText(entry.title)}</strong><span>${safeText(entry.subtitle)}</span>`;
+    button.addEventListener("click", () => {
+      switchView(entry.viewName);
+      hideAllGlobalSearchPanels();
+      clearGlobalSearchInputs();
+      if (entry.anchorId) {
+        requestAnimationFrame(() => {
+          const anchor = document.getElementById(entry.anchorId);
+          if (anchor) anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+    });
+    panel.appendChild(button);
+  });
+  panel.hidden = false;
+}
+
+function bindGlobalSearchInput(inputSelector, panelSelector) {
+  const input = qs(inputSelector);
+  const panel = qs(panelSelector);
+  if (!input || !panel) return;
+
+  input.addEventListener("input", (evt) => {
+    renderGlobalSearchResults(evt.target.value, panelSelector);
+  });
+  input.addEventListener("keydown", (evt) => {
+    if (evt.key === "Escape") {
+      panel.hidden = true;
+      panel.textContent = "";
+      input.value = "";
+    }
+    if (evt.key === "Enter") {
+      const first = panel.querySelector(".global-search-item");
+      if (first) {
+        evt.preventDefault();
+        first.click();
+      }
+    }
+  });
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      panel.hidden = true;
+    }, 120);
+  });
+  input.addEventListener("focus", () => {
+    renderGlobalSearchResults(input.value, panelSelector);
+  });
+}
+
+function addGatewayConfiguredModelValue(values, modelName, providerType = "") {
+  const model = String(modelName || "").trim();
+  if (!model) return;
+  values.add(model);
+  const provider = String(providerType || "").trim().toLowerCase();
+  if (provider) values.add(`${provider}/${model}`);
+}
+
+function seedCursorGatewayModelDefaults(values) {
+  CURSOR_GATEWAY_MODEL_DEFAULTS.forEach((model) => {
+    addGatewayConfiguredModelValue(values, model, "cursor");
+    addGatewayConfiguredModelValue(values, model);
+  });
+}
+
+function isCursorGatewayModelValue(value) {
+  const normalized = String(value || "").trim();
+  return normalized.startsWith("cursor/") || CURSOR_GATEWAY_MODEL_DEFAULTS.includes(normalized);
+}
+
+function setGatewayModelPickerOptions(select, { cursor = [], catalog = [] } = {}) {
+  if (!select) return;
+  const currentValue = select.value;
+  select.textContent = "";
+
+  const placeholderOption = document.createElement("option");
+  placeholderOption.value = "";
+  placeholderOption.textContent = cursor.length || catalog.length ? "Choose a model" : "No models loaded";
+  placeholderOption.disabled = true;
+  placeholderOption.hidden = true;
+  select.appendChild(placeholderOption);
+
+  const appendGroup = (label, items) => {
+    if (!items.length) return;
+    const group = document.createElement("optgroup");
+    group.label = label;
+    items.forEach((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      group.appendChild(option);
+    });
+    select.appendChild(group);
+  };
+
+  appendGroup("Cursor models", cursor);
+  appendGroup("Configured catalog", catalog);
+
+  const allValues = [...cursor, ...catalog];
+  if (allValues.includes(currentValue)) {
+    select.value = currentValue;
+  } else if (allValues.length) {
+    select.value = allValues[0];
+  } else {
+    select.value = "";
+  }
+}
+
+function collectGatewayModelsFromProviderRows(rows, values) {
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    addGatewayConfiguredModelValue(values, row?.model_name, row?.provider_type);
+  });
+}
+
+function collectGatewayModelsFromCostCatalog(catalog, values) {
+  (Array.isArray(catalog) ? catalog : []).forEach((row) => {
+    if (String(row?.status || "active").trim().toLowerCase() !== "active") return;
+    addGatewayConfiguredModelValue(values, row?.model_name, row?.provider_type);
+  });
+}
+
+function collectGatewayModelsFromKeyRows(rows, values) {
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const allowedModels = parseJsonOrFallback(row?.allowed_models, []);
+    if (!Array.isArray(allowedModels)) return;
+    allowedModels.forEach((model) => addGatewayConfiguredModelValue(values, model));
+  });
+}
+
+function collectGatewayModelsFromRoutePolicies(rows, values) {
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const fallbackPolicy = parseJsonOrFallback(row?.fallback_policy, {});
+    const routingGroups = Array.isArray(fallbackPolicy?.routing_groups) ? fallbackPolicy.routing_groups : [];
+    routingGroups.forEach((group) => {
+      const priorityOrder = Array.isArray(group?.priority_order) ? group.priority_order : [];
+      priorityOrder.forEach((item) => {
+        addGatewayConfiguredModelValue(values, item?.model_name, item?.provider_type);
+      });
+    });
+  });
+}
+
+function collectGatewayModelsFromRuntimeRates(rawConfig, values) {
+  const parsed = parseJsonOrFallback(rawConfig, {});
+  if (!parsed || typeof parsed !== "object") return;
+  const modelBlocks = parsed.models && typeof parsed.models === "object" ? parsed.models : parsed;
+  Object.keys(modelBlocks).forEach((modelName) => {
+    if (["default", "models", "provider_type", "endpoint_family"].includes(modelName)) return;
+    const block = modelBlocks[modelName];
+    if (block && typeof block === "object") addGatewayConfiguredModelValue(values, modelName);
+  });
+}
+
+function renderGatewayConfiguredModelOptions(values) {
+  const datalist = qs("#gatewayConfiguredModelOptions");
+  const picker = qs("#gatewayCursorModelPicker");
+  const sortedValues = Array.from(values).sort((a, b) => a.localeCompare(b));
+  gatewayConfiguredModelValues = sortedValues;
+
+  if (datalist) {
+    datalist.textContent = "";
+    sortedValues.forEach((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      datalist.appendChild(option);
+    });
+  }
+
+  if (picker) {
+    const cursorPrefixed = sortedValues.filter((value) => value.startsWith("cursor/"));
+    const cursorPlain = sortedValues.filter((value) => CURSOR_GATEWAY_MODEL_DEFAULTS.includes(value));
+    const cursorValues = cursorPrefixed.length ? cursorPrefixed : cursorPlain;
+    const catalogValues = sortedValues.filter((value) => !isCursorGatewayModelValue(value));
+    setGatewayModelPickerOptions(picker, {
+      cursor: cursorValues,
+      catalog: catalogValues,
+    });
+  }
+}
+
+function updateGatewayConfiguredModelsStatus({ totalCount = 0, cursorCount = 0, sources = [], error = "" } = {}) {
+  const status = qs("#gatewayConfiguredModelsStatus");
+  if (!status) return;
+  const sourceText = sources.length ? sources.join(", ") : "none";
+  const tokenHint = gatewayCursorTokenConfigured
+    ? "Cursor token configured."
+    : "Cursor token not configured — gateway defaults are still available; configure the token before running ops.";
+  const warningText = error ? ` Some sources failed: ${safeText(error)}.` : "";
+  if (!totalCount) {
+    status.textContent = `No model options loaded.${warningText}`;
+    return;
+  }
+  status.textContent = `Loaded ${totalCount} model options (${cursorCount} Cursor-tagged). Sources: ${sourceText}. ${tokenHint}${warningText}`;
+}
+
+function applyGatewayCursorModelToActivePanel() {
+  const picker = qs("#gatewayCursorModelPicker");
+  const modelValue = String(picker?.value || "").trim();
+  if (!modelValue) return;
+  const card = qs("#gatewayOpenAiOpsCard");
+  const scope = card || qs('.gateway-ops-panel.active[data-gateway-ops-panel]') || qs('[data-gateway-ops-panel="core"]');
+  if (!scope) return;
+  scope.querySelectorAll('input[name="model"]').forEach((input) => {
+    input.value = modelValue;
+  });
+  const status = qs("#gatewayConfiguredModelsStatus");
+  if (status) status.textContent = `Applied ${modelValue} to gateway ops model fields.`;
+}
+
+async function loadGatewayConfiguredModels(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const datalist = qs("#gatewayConfiguredModelOptions");
+  if (!datalist) return;
+
+  const status = qs("#gatewayConfiguredModelsStatus");
+  if (status) status.textContent = "Loading configured and Cursor gateway models...";
+
+  const values = new Set();
+  const sources = ["cursor defaults"];
+  const errors = [];
+
+  seedCursorGatewayModelDefaults(values);
+
+  const settled = await Promise.allSettled([
+    api("/providers/models?status=active&limit=500", { headers: { "X-Actor-Role": "Auditor" } }),
+    api("/providers/models?provider_type=cursor&status=active&limit=500", { headers: { "X-Actor-Role": "Auditor" } }),
+    api("/gateway/cursor-token"),
+    api("/cost/models/catalog"),
+    api("/runtime-config"),
+  ]);
+
+  const [allProvidersResult, cursorProvidersResult, cursorTokenResult, costCatalogResult, runtimeConfigResult] = settled;
+
+  if (allProvidersResult.status === "fulfilled" && Array.isArray(allProvidersResult.value) && allProvidersResult.value.length) {
+    collectGatewayModelsFromProviderRows(allProvidersResult.value, values);
+    sources.push(`providers (${allProvidersResult.value.length})`);
+  } else if (allProvidersResult.status === "rejected") {
+    errors.push(`providers: ${allProvidersResult.reason?.message || "failed"}`);
+  }
+
+  if (cursorProvidersResult.status === "fulfilled" && Array.isArray(cursorProvidersResult.value) && cursorProvidersResult.value.length) {
+    collectGatewayModelsFromProviderRows(cursorProvidersResult.value, values);
+    sources.push(`cursor catalog (${cursorProvidersResult.value.length})`);
+  } else if (cursorProvidersResult.status === "rejected") {
+    errors.push(`cursor catalog: ${cursorProvidersResult.reason?.message || "failed"}`);
+  }
+
+  if (cursorTokenResult.status === "fulfilled") {
+    gatewayCursorTokenConfigured = Boolean(cursorTokenResult.value?.configured);
+    sources.push(gatewayCursorTokenConfigured ? "cursor token configured" : "cursor token not configured");
+  } else {
+    errors.push(`cursor token: ${cursorTokenResult.reason?.message || "failed"}`);
+  }
+
+  if (costCatalogResult.status === "fulfilled") {
+    const costCatalog = Array.isArray(costCatalogResult.value?.catalog) ? costCatalogResult.value.catalog : costModelCatalogRows;
+    if (costCatalog.length) {
+      collectGatewayModelsFromCostCatalog(costCatalog, values);
+      sources.push(`cost catalog (${costCatalog.length})`);
+    }
+  } else if (costCatalogResult.status === "rejected") {
+    errors.push(`cost catalog: ${costCatalogResult.reason?.message || "failed"}`);
+  }
+
+  if (runtimeConfigResult.status === "fulfilled") {
+    const runtimeRatesRow = Array.isArray(runtimeConfigResult.value)
+      ? runtimeConfigResult.value.find((row) => row?.config_key === "cost.model_token_rates_json")
+      : null;
+    if (runtimeRatesRow?.config_value) {
+      collectGatewayModelsFromRuntimeRates(runtimeRatesRow.config_value, values);
+      sources.push("runtime model rates");
+    }
+  } else if (runtimeConfigResult.status === "rejected") {
+    errors.push(`runtime config: ${runtimeConfigResult.reason?.message || "failed"}`);
+  }
+
+  if (keyRows.length) {
+    collectGatewayModelsFromKeyRows(keyRows, values);
+    sources.push(`key guardrails (${keyRows.length})`);
+  }
+
+  if (routePolicyRows.length) {
+    collectGatewayModelsFromRoutePolicies(routePolicyRows, values);
+    sources.push(`route policies (${routePolicyRows.length})`);
+  }
+
+  renderGatewayConfiguredModelOptions(values);
+
+  const cursorCount = Array.from(values).filter((value) => isCursorGatewayModelValue(value)).length;
+  updateGatewayConfiguredModelsStatus({
+    totalCount: values.size,
+    cursorCount,
+    sources: Array.from(new Set(sources)),
+    error: errors.length ? errors.join(" | ") : "",
+  });
+
+  if (values.size && !String(qs("#gatewayCursorModelPicker")?.value || "").trim()) {
+    const picker = qs("#gatewayCursorModelPicker");
+    const firstCursor = gatewayConfiguredModelValues.find((value) => value.startsWith("cursor/"));
+    if (picker && firstCursor) picker.value = firstCursor;
+  }
+}
+
 function parseListInput(raw) {
   const text = String(raw || "").trim();
   if (!text) return [];
@@ -1926,6 +2442,688 @@ function renderPlaygroundRuns() {
   });
 }
 
+function renderPlaygroundRunFeedback() {
+  const tbody = qs("#playgroundRunFeedbackTable");
+  if (!tbody) return;
+  if (!playgroundRunFeedbackRows.length) {
+    setTableMessage(tbody, 5, "No feedback yet.");
+    return;
+  }
+  tbody.textContent = "";
+  playgroundRunFeedbackRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.trace_id);
+    appendTableCell(tr, row.rating);
+    appendTableCell(tr, row.quality_score);
+    appendTableCell(tr, row.comment);
+    appendTableCell(tr, row.created_at);
+    tbody.appendChild(tr);
+  });
+}
+
+function syncPlaygroundFeedbackForm(runId, traceId) {
+  const form = qs("#playgroundFeedbackForm");
+  if (!form) return;
+  form.elements.run_id.value = runId || "";
+  form.elements.trace_id.value = traceId || (runId ? `trace-${runId}` : "");
+}
+
+async function loadPlaygroundRunFeedback(runId) {
+  const form = qs("#playgroundFeedbackForm");
+  const result = qs("#playgroundFeedbackResult");
+  const tbody = qs("#playgroundRunFeedbackTable");
+  const resolvedRunId = String(runId || form?.elements.run_id?.value || selectedPlaygroundRunId || "").trim();
+  if (!resolvedRunId || !tbody) return;
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const rows = await api(`/playground/runs/${encodeURIComponent(resolvedRunId)}/feedback`);
+    playgroundRunFeedbackRows = Array.isArray(rows) ? rows : [];
+    renderPlaygroundRunFeedback();
+    syncPlaygroundFeedbackForm(resolvedRunId, form?.elements.trace_id?.value || `trace-${resolvedRunId}`);
+    if (result) {
+      result.textContent = playgroundRunFeedbackRows.length
+        ? `Loaded ${playgroundRunFeedbackRows.length} feedback records for ${resolvedRunId}.`
+        : `No feedback found for ${resolvedRunId}.`;
+    }
+  } catch (err) {
+    playgroundRunFeedbackRows = [];
+    renderPlaygroundRunFeedback();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+  }
+}
+
+async function savePlaygroundRunFeedback(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#playgroundFeedbackForm");
+  const result = qs("#playgroundFeedbackResult");
+  if (!form) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const runId = String(raw.run_id || "").trim();
+  const traceId = String(raw.trace_id || "").trim();
+  if (!runId || !traceId) {
+    if (result) result.textContent = "Run ID and trace ID are required.";
+    return;
+  }
+  try {
+    const data = await api(`/playground/runs/${encodeURIComponent(runId)}/feedback`, {
+      method: "POST",
+      body: JSON.stringify({
+        trace_id: traceId,
+        rating: Number(raw.rating || 3),
+        quality_score: Number(raw.quality_score || 0),
+        comment: String(raw.comment || "").trim(),
+      }),
+    });
+    await loadPlaygroundRunFeedback(runId);
+    if (result) result.textContent = `Saved feedback for ${data.run_id} at ${data.trace_id}.`;
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function renderPlaygroundQualityTriageQueue() {
+  const tbody = qs("#playgroundQualityTriageTable");
+  if (!tbody) return;
+  if (!playgroundQualityTriageRows.length) {
+    setTableMessage(tbody, 10, "No triage records found for current filters.");
+    return;
+  }
+  tbody.textContent = "";
+  playgroundQualityTriageRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.priority_tag || "p2");
+    appendTableCell(tr, row.run_id);
+    appendTableCell(tr, row.trace_id);
+    appendTableCell(tr, row.selected_model);
+    appendTableCell(tr, row.rating);
+    appendTableCell(tr, row.quality_score);
+    appendTableCell(tr, row.triage_reason);
+    appendTableCell(tr, row.comment);
+    appendTableCell(tr, row.created_at);
+    const actions = document.createElement("td");
+    actions.className = "cell-actions";
+    const escalateBtn = document.createElement("button");
+    escalateBtn.type = "button";
+    escalateBtn.className = "ghost";
+    escalateBtn.textContent = "Escalate";
+    escalateBtn.addEventListener("click", () => {
+      const form = qs("#playgroundQualityEscalationCreateForm");
+      if (form?.elements?.feedback_id) {
+        form.elements.feedback_id.value = row.feedback_id || "";
+      }
+      const result = qs("#playgroundQualityEscalationResult");
+      if (result) result.textContent = `Prepared escalation form for feedback ${row.feedback_id}.`;
+    });
+    actions.appendChild(escalateBtn);
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadPlaygroundQualityTriageQueue(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#playgroundQualityTriageForm");
+  const result = qs("#playgroundQualityTriageResult");
+  const tbody = qs("#playgroundQualityTriageTable");
+  if (!form || !tbody) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  setTableMessage(tbody, 10, "Loading...");
+
+  try {
+    const queue = await api(`/playground/quality/triage${buildQueryString({
+      max_quality_score: raw.max_quality_score,
+      max_rating: raw.max_rating,
+      limit: raw.limit,
+      offset: raw.offset,
+    })}`);
+    playgroundQualityTriageRows = Array.isArray(queue?.items) ? queue.items : [];
+    renderPlaygroundQualityTriageQueue();
+    if (result) {
+      result.textContent = `Loaded ${playgroundQualityTriageRows.length} triage item(s) (total: ${Number(queue?.total || 0)}).`;
+    }
+  } catch (err) {
+    playgroundQualityTriageRows = [];
+    renderPlaygroundQualityTriageQueue();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    setTableMessage(tbody, 10, `Error: ${safeText(err.message)}`);
+  }
+}
+
+function renderPlaygroundQualityEscalations() {
+  const tbody = qs("#playgroundQualityEscalationTable");
+  if (!tbody) return;
+  if (!playgroundQualityEscalationRows.length) {
+    setTableMessage(tbody, 10, "No escalation records found for current filters.");
+    return;
+  }
+  tbody.textContent = "";
+  playgroundQualityEscalationRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.status);
+    appendTableCell(tr, row.priority_tag);
+    appendTableCell(tr, row.severity);
+    appendTableCell(tr, row.escalation_id);
+    appendTableCell(tr, row.feedback_id);
+    appendTableCell(tr, row.run_id);
+    appendTableCell(tr, row.due_at);
+    appendTableCell(tr, row.assigned_team);
+    appendTableCell(tr, row.external_ticket_ref || "-");
+    appendTableCell(tr, row.escalation_reason);
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadPlaygroundQualityEscalations(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#playgroundQualityEscalationFiltersForm");
+  const result = qs("#playgroundQualityEscalationResult");
+  const tbody = qs("#playgroundQualityEscalationTable");
+  if (!form || !tbody) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  setTableMessage(tbody, 10, "Loading...");
+
+  try {
+    const queue = await api(`/playground/quality/triage/escalations${buildQueryString({
+      status: raw.status,
+      priority_tag: raw.priority_tag,
+      assigned_team: raw.assigned_team,
+      overdue_only: raw.overdue_only,
+      limit: raw.limit,
+      offset: raw.offset,
+    })}`);
+    playgroundQualityEscalationRows = Array.isArray(queue?.items) ? queue.items : [];
+    renderPlaygroundQualityEscalations();
+    if (result) {
+      result.textContent = `Loaded ${playgroundQualityEscalationRows.length} escalation item(s) (total: ${Number(queue?.total || 0)}, overdue: ${Number(queue?.overdue || 0)}).`;
+    }
+  } catch (err) {
+    playgroundQualityEscalationRows = [];
+    renderPlaygroundQualityEscalations();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    setTableMessage(tbody, 10, `Error: ${safeText(err.message)}`);
+  }
+}
+
+async function createPlaygroundQualityEscalation(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#playgroundQualityEscalationCreateForm");
+  const result = qs("#playgroundQualityEscalationResult");
+  if (!form) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const feedbackId = String(raw.feedback_id || "").trim();
+  if (!feedbackId) {
+    if (result) result.textContent = "Feedback ID is required to escalate.";
+    return;
+  }
+
+  try {
+    const data = await api(`/playground/quality/triage/${encodeURIComponent(feedbackId)}/escalate`, {
+      method: "POST",
+      body: JSON.stringify({
+        severity: String(raw.severity || "high").trim().toLowerCase(),
+        priority_tag: String(raw.priority_tag || "p1").trim().toLowerCase(),
+        assigned_team: String(raw.assigned_team || "ai-trust-ops").trim(),
+        escalation_channel: String(raw.escalation_channel || "security-ops").trim(),
+        escalation_reason: String(raw.escalation_reason || "").trim(),
+        external_ticket_ref: String(raw.external_ticket_ref || "").trim() || null,
+        sla_target_minutes: Number(raw.sla_target_minutes || 60),
+      }),
+    });
+    const resolveForm = qs("#playgroundQualityEscalationResolveForm");
+    if (resolveForm?.elements?.escalation_id) {
+      resolveForm.elements.escalation_id.value = data.escalation_id || "";
+    }
+    await loadPlaygroundQualityEscalations();
+    if (result) result.textContent = `Escalation ${data.escalation_id} created with SLA due at ${data.due_at}.`;
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function acknowledgePlaygroundQualityEscalation(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#playgroundQualityEscalationResolveForm");
+  const result = qs("#playgroundQualityEscalationResult");
+  const escalationId = String(form?.elements?.escalation_id?.value || "").trim();
+  if (!escalationId) {
+    if (result) result.textContent = "Escalation ID is required to acknowledge.";
+    return;
+  }
+  try {
+    const data = await api(`/playground/quality/triage/escalations/${encodeURIComponent(escalationId)}/acknowledge`, {
+      method: "POST",
+    });
+    await loadPlaygroundQualityEscalations();
+    if (result) result.textContent = `Escalation ${data.escalation_id} acknowledged.`;
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function notifyPlaygroundQualityEscalation(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#playgroundQualityEscalationResolveForm");
+  const result = qs("#playgroundQualityEscalationResult");
+  const escalationId = String(form?.elements?.escalation_id?.value || "").trim();
+  const destination = String(form?.elements?.notify_destination?.value || "").trim();
+  if (!escalationId || !destination) {
+    if (result) result.textContent = "Escalation ID and notify destination are required.";
+    return;
+  }
+  try {
+    const data = await api(`/playground/quality/triage/escalations/${encodeURIComponent(escalationId)}/notify`, {
+      method: "POST",
+      body: JSON.stringify({
+        channel: String(form?.elements?.notify_channel?.value || "security-ops").trim(),
+        destination,
+        message_prefix: String(form?.elements?.notify_message_prefix?.value || "Playground escalation alert").trim(),
+      }),
+    });
+    if (result) {
+      result.textContent = `Notified ${data.channel} via ${data.destination} for ${data.escalation_id}.`;
+    }
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function resolvePlaygroundQualityEscalation(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#playgroundQualityEscalationResolveForm");
+  const result = qs("#playgroundQualityEscalationResult");
+  const escalationId = String(form?.elements?.escalation_id?.value || "").trim();
+  const resolutionNote = String(form?.elements?.resolution_note?.value || "").trim();
+  if (!escalationId || !resolutionNote) {
+    if (result) result.textContent = "Escalation ID and resolution note are required.";
+    return;
+  }
+  try {
+    const data = await api(`/playground/quality/triage/escalations/${encodeURIComponent(escalationId)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ resolution_note: resolutionNote }),
+    });
+    await loadPlaygroundQualityEscalations();
+    if (result) result.textContent = `Escalation ${data.escalation_id} resolved.`;
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function renderPlaygroundQualityRollups() {
+  const tbody = qs("#playgroundQualityRollupsTable");
+  if (!tbody) return;
+  if (!playgroundQualityRollupRows.length) {
+    setTableMessage(tbody, 10, "No quality rollups found for current filters.");
+    return;
+  }
+  tbody.textContent = "";
+  playgroundQualityRollupRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.bucket_start);
+    appendTableCell(tr, row.bucket_end);
+    appendTableCell(tr, row.provider_id);
+    appendTableCell(tr, row.route_policy_id);
+    appendTableCell(tr, row.model_name);
+    appendTableCell(tr, row.sample_count);
+    appendTableCell(tr, Number(row.average_quality_score || 0).toFixed(3));
+    appendTableCell(tr, Number(row.average_rating || 0).toFixed(2));
+    appendTableCell(tr, row.critical_count);
+    appendTableCell(tr, row.elevated_count);
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadPlaygroundQualityRollups(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#playgroundQualityRollupsForm");
+  const result = qs("#playgroundQualityRollupsResult");
+  const tbody = qs("#playgroundQualityRollupsTable");
+  if (!form || !tbody) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  setTableMessage(tbody, 10, "Loading...");
+
+  try {
+    const data = await api(`/playground/quality/analytics/rollups${buildQueryString({
+      window_hours: raw.window_hours,
+      bucket_hours: raw.bucket_hours,
+      provider_id: raw.provider_id,
+      route_policy_id: raw.route_policy_id,
+      model_name: raw.model_name,
+      limit: raw.limit,
+    })}`);
+    playgroundQualityRollupRows = Array.isArray(data?.buckets) ? data.buckets : [];
+    renderPlaygroundQualityRollups();
+    if (result) {
+      result.textContent = `Loaded ${playgroundQualityRollupRows.length} rollup bucket(s) from ${Number(data?.total_samples || 0)} samples.`;
+    }
+  } catch (err) {
+    playgroundQualityRollupRows = [];
+    renderPlaygroundQualityRollups();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    setTableMessage(tbody, 10, `Error: ${safeText(err.message)}`);
+  }
+}
+
+function renderPromptRegistryItems() {
+  const tbody = qs("#promptRegistryTable");
+  if (!tbody) return;
+  if (!promptRegistryItems.length) {
+    setTableMessage(tbody, 6, "No prompt registry items yet.");
+    return;
+  }
+  tbody.textContent = "";
+  promptRegistryItems.forEach((item) => {
+    const tr = document.createElement("tr");
+    if (item.prompt_registry_id === selectedPromptRegistryId) {
+      tr.classList.add("selected-row");
+    }
+    appendTableCell(tr, item.name);
+    appendTableCell(tr, item.latest_version);
+    appendTableCell(tr, item.status);
+    appendTableCell(tr, item.labels);
+    appendTableCell(tr, item.updated_at);
+    const actions = document.createElement("td");
+    actions.className = "cell-actions";
+    const loadBtn = document.createElement("button");
+    loadBtn.type = "button";
+    loadBtn.className = "ghost";
+    loadBtn.textContent = "Load";
+    loadBtn.addEventListener("click", () => loadPromptRegistryItemDetails(item.prompt_registry_id));
+    const versionBtn = document.createElement("button");
+    versionBtn.type = "button";
+    versionBtn.className = "ghost";
+    versionBtn.textContent = "Versions";
+    versionBtn.addEventListener("click", () => loadPromptRegistryVersions(item.prompt_registry_id));
+    const promoteBtn = document.createElement("button");
+    promoteBtn.type = "button";
+    promoteBtn.className = "ghost";
+    promoteBtn.textContent = "Promote";
+    promoteBtn.addEventListener("click", () => loadPromptRegistryItemDetails(item.prompt_registry_id));
+    actions.append(loadBtn, versionBtn, promoteBtn);
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+function renderPromptRegistryVersions() {
+  const tbody = qs("#promptRegistryVersionsTable");
+  if (!tbody) return;
+  if (!promptRegistryVersions.length) {
+    setTableMessage(tbody, 5, "No versions loaded.");
+    return;
+  }
+  tbody.textContent = "";
+  promptRegistryVersions.forEach((version) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, version.version);
+    appendTableCell(tr, version.change_reason);
+    appendTableCell(tr, version.created_by);
+    appendTableCell(tr, version.created_at);
+    const actions = document.createElement("td");
+    const rollbackBtn = document.createElement("button");
+    rollbackBtn.type = "button";
+    rollbackBtn.className = "ghost";
+    rollbackBtn.textContent = "Rollback";
+    rollbackBtn.addEventListener("click", () => rollbackPromptRegistryVersion(version.version));
+    actions.appendChild(rollbackBtn);
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+function syncPromptRegistryForm(item) {
+  const form = qs("#promptRegistryForm");
+  if (!form || !item) return;
+  form.elements.prompt_registry_id.value = item.prompt_registry_id || "";
+  form.elements.name.value = item.name || "";
+  form.elements.description.value = item.description || "";
+  form.elements.labels.value = Array.isArray(parseJsonSafe(item.labels, [])) ? parseJsonSafe(item.labels, []).join(", ") : "";
+  form.elements.prompt_text.value = item.prompt_text || "";
+  form.elements.change_reason.value = "updated";
+  const result = qs("#promptRegistryResult");
+  if (result) {
+    result.textContent = `Loaded prompt registry item ${item.name} (version ${item.latest_version}).`;
+  }
+}
+
+function extractPromptTemplateVariables(promptText) {
+  const found = new Set();
+  const re = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_.-]*)\s*\}\}/g;
+  let match;
+  while ((match = re.exec(String(promptText || ""))) !== null) {
+    const key = String(match[1] || "").trim();
+    if (key) found.add(key);
+  }
+  return Array.from(found).sort();
+}
+
+function parseRenderVariablesInput(rawText) {
+  const variables = {};
+  String(rawText || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const separator = line.indexOf("=");
+      if (separator <= 0) return;
+      const key = line.slice(0, separator).trim();
+      const value = line.slice(separator + 1).trim();
+      if (key) variables[key] = value;
+    });
+  return variables;
+}
+
+function syncPromptRegistryPromotionForm(item) {
+  const form = qs("#promptRegistryPromotionForm");
+  if (!form || !item) return;
+  form.elements.prompt_registry_id.value = item.prompt_registry_id || "";
+  const existing = parseRenderVariablesInput(form.elements.render_variables?.value || "");
+  const variables = extractPromptTemplateVariables(item.prompt_text);
+  if (!variables.length) {
+    form.elements.render_variables.value = "";
+    return;
+  }
+  const lines = variables.map((key) => `${key}=${existing[key] || ""}`);
+  form.elements.render_variables.value = lines.join("\n");
+}
+
+async function loadPromptRegistryItems(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#promptRegistryResult");
+  const tbody = qs("#promptRegistryTable");
+  if (!tbody) return;
+  setTableMessage(tbody, 6, "Loading...");
+  try {
+    const rows = await api("/playground/prompts");
+    promptRegistryItems = Array.isArray(rows) ? rows : [];
+    selectedPromptRegistryId = promptRegistryItems[0]?.prompt_registry_id || selectedPromptRegistryId;
+    renderPromptRegistryItems();
+    if (result) {
+      result.textContent = promptRegistryItems.length
+        ? `Loaded ${promptRegistryItems.length} prompt registry items.`
+        : "No prompt registry items found.";
+    }
+  } catch (err) {
+    promptRegistryItems = [];
+    renderPromptRegistryItems();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
+  }
+}
+
+async function loadPromptRegistryItemDetails(promptRegistryId) {
+  const result = qs("#promptRegistryResult");
+  const trimmedId = String(promptRegistryId || selectedPromptRegistryId || "").trim();
+  if (!trimmedId) {
+    if (result) result.textContent = "Select a prompt registry item first.";
+    return;
+  }
+  try {
+    const item = await api(`/playground/prompts/${encodeURIComponent(trimmedId)}`);
+    selectedPromptRegistryId = item.prompt_registry_id;
+    promptRegistryItems = promptRegistryItems.some((entry) => entry.prompt_registry_id === item.prompt_registry_id)
+      ? promptRegistryItems.map((entry) => (entry.prompt_registry_id === item.prompt_registry_id ? item : entry))
+      : [item, ...promptRegistryItems];
+    renderPromptRegistryItems();
+    syncPromptRegistryForm(item);
+    syncPromptRegistryPromotionForm(item);
+    await loadPromptRegistryVersions(item.prompt_registry_id);
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadPromptRegistryVersions(promptRegistryId) {
+  const result = qs("#promptRegistryResult");
+  const trimmedId = String(promptRegistryId || selectedPromptRegistryId || "").trim();
+  const tbody = qs("#promptRegistryVersionsTable");
+  if (!trimmedId || !tbody) return;
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const rows = await api(`/playground/prompts/${encodeURIComponent(trimmedId)}/versions`);
+    promptRegistryVersions = Array.isArray(rows) ? rows : [];
+    selectedPromptRegistryId = trimmedId;
+    renderPromptRegistryVersions();
+    if (result) {
+      result.textContent = promptRegistryVersions.length
+        ? `Loaded ${promptRegistryVersions.length} versions for ${trimmedId}.`
+        : `No versions found for ${trimmedId}.`;
+    }
+  } catch (err) {
+    promptRegistryVersions = [];
+    renderPromptRegistryVersions();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+  }
+}
+
+async function savePromptRegistryItem(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#promptRegistryForm");
+  const result = qs("#promptRegistryResult");
+  if (!form) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const payload = {
+    name: String(raw.name || "").trim(),
+    description: String(raw.description || "").trim(),
+    labels: JSON.stringify(parseListInput(raw.labels)),
+    prompt_text: String(raw.prompt_text || "").trim(),
+  };
+  if (!payload.name || !payload.prompt_text) {
+    if (result) result.textContent = "Name and prompt text are required.";
+    return;
+  }
+  const promptRegistryId = String(raw.prompt_registry_id || "").trim();
+  const method = promptRegistryId ? "PUT" : "POST";
+  const path = promptRegistryId ? `/playground/prompts/${encodeURIComponent(promptRegistryId)}` : "/playground/prompts";
+  try {
+    const item = await api(path, { method, body: JSON.stringify({ ...payload, change_reason: String(raw.change_reason || "updated").trim() || "updated" }) });
+    selectedPromptRegistryId = item.prompt_registry_id;
+    await loadPromptRegistryItems();
+    await loadPromptRegistryItemDetails(item.prompt_registry_id);
+    if (result) {
+      result.textContent = promptRegistryId
+        ? `Updated prompt registry item ${item.name} to version ${item.latest_version}.`
+        : `Created prompt registry item ${item.name}.`;
+    }
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function deletePromptRegistryItem() {
+  const form = qs("#promptRegistryForm");
+  const result = qs("#promptRegistryResult");
+  const promptRegistryId = String(form?.elements.prompt_registry_id?.value || selectedPromptRegistryId || "").trim();
+  if (!promptRegistryId) {
+    if (result) result.textContent = "Select a prompt registry item first.";
+    return;
+  }
+  try {
+    await api(`/playground/prompts/${encodeURIComponent(promptRegistryId)}`, { method: "DELETE" });
+    selectedPromptRegistryId = "";
+    promptRegistryVersions = [];
+    if (form) form.reset();
+    const promotionForm = qs("#promptRegistryPromotionForm");
+    if (promotionForm) promotionForm.reset();
+    await loadPromptRegistryItems();
+    renderPromptRegistryVersions();
+    if (result) result.textContent = `Deleted prompt registry item ${promptRegistryId}.`;
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function rollbackPromptRegistryVersion(version) {
+  const form = qs("#promptRegistryForm");
+  const result = qs("#promptRegistryResult");
+  const promptRegistryId = String(form?.elements.prompt_registry_id?.value || selectedPromptRegistryId || "").trim();
+  if (!promptRegistryId) {
+    if (result) result.textContent = "Select a prompt registry item first.";
+    return;
+  }
+  try {
+    const item = await api(`/playground/prompts/${encodeURIComponent(promptRegistryId)}/rollback`, {
+      method: "POST",
+      body: JSON.stringify({ version, reason: `rollback to version ${version}` }),
+    });
+    await loadPromptRegistryItems();
+    await loadPromptRegistryItemDetails(item.prompt_registry_id);
+    if (result) result.textContent = `Rolled back ${item.name} to version ${version}.`;
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function promotePromptRegistryItem(previewOnly = false) {
+  const form = qs("#promptRegistryPromotionForm");
+  const result = qs("#promptRegistryPromotionResult");
+  if (!form) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const promptRegistryId = String(raw.prompt_registry_id || selectedPromptRegistryId || "").trim();
+  if (!promptRegistryId) {
+    if (result) result.textContent = "Select a prompt registry item first.";
+    return;
+  }
+
+  const payload = {
+    target_environment: String(raw.target_environment || "dev").trim().toLowerCase(),
+    reason: String(raw.reason || "promote").trim() || "promote",
+    approval_ticket: String(raw.approval_ticket || "").trim() || null,
+    require_render_validation: String(raw.require_render_validation || "true").toLowerCase() !== "false",
+    render_variables: parseRenderVariablesInput(raw.render_variables),
+    preview_only: Boolean(previewOnly),
+  };
+
+  try {
+    const data = await api(`/playground/prompts/${encodeURIComponent(promptRegistryId)}/promote`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (!previewOnly) {
+      selectedPromptRegistryId = data?.item?.prompt_registry_id || promptRegistryId;
+      await loadPromptRegistryItems();
+      await loadPromptRegistryItemDetails(promptRegistryId);
+    }
+    const variables = Array.isArray(data.variables_detected) && data.variables_detected.length
+      ? data.variables_detected.join(", ")
+      : "none";
+    if (result) {
+      result.textContent = previewOnly
+        ? `Preview ready for ${promptRegistryId} in ${data.target_environment}. Variables: ${variables}.`
+        : `Promoted ${promptRegistryId} to ${data.target_environment}. Variables: ${variables}.`;
+    }
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function submitPromptRegistryPromotion(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  await promotePromptRegistryItem(false);
+}
+
 async function loadPlaygroundRuns(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#playgroundRunHistoryFilters");
@@ -1966,7 +3164,9 @@ async function loadPlaygroundRunDetails(runId) {
     playgroundRuns = [row];
     selectedPlaygroundRunId = row.run_id;
     if (form?.elements?.run_id) form.elements.run_id.value = row.run_id;
+    syncPlaygroundFeedbackForm(row.run_id, `trace-${row.run_id}`);
     renderPlaygroundRuns();
+    await loadPlaygroundRunFeedback(row.run_id);
     if (result) {
       result.textContent = `Opened run ${row.run_id} for ${row.selected_model} with status ${row.status}.`;
     }
@@ -2605,6 +3805,15 @@ function summarizeKeyGuardrails(rawPolicy) {
     if (policy.require_mfa_for_prod === true) {
       parts.push("mfa:prod");
     }
+    if (typeof policy.policy_mode === "string" && policy.policy_mode.trim()) {
+      parts.push(`mode:${policy.policy_mode}`);
+    }
+    if (Array.isArray(policy.input_stages) && policy.input_stages.length) {
+      parts.push(`input:${policy.input_stages.join(",")}`);
+    }
+    if (Array.isArray(policy.output_stages) && policy.output_stages.length) {
+      parts.push(`output:${policy.output_stages.join(",")}`);
+    }
     return parts.length ? parts.join(" | ") : "none";
   } catch {
     return "invalid";
@@ -2624,7 +3833,7 @@ function populateGatewayEntitlementForm(row) {
   if (!form || !row) return;
   form.elements.entitlement_id.value = row.entitlement_id || "";
   form.elements.action.value = row.action || "";
-  form.elements.tenant_id.value = row.tenant_id || "";
+  syncTenantSelectField(form.elements.tenant_id, row.tenant_id || "");
   form.elements.environment.value = row.environment || "dev";
   form.elements.route_policy_id.value = row.route_policy_id || "";
   form.elements.request_tag.value = row.request_tag || "";
@@ -3069,6 +4278,64 @@ async function exportGatewayGovernanceEvidence(evt) {
   result.textContent = `Exported governance evidence bundle (${payload.event_count} events).`;
 }
 
+function summarizeGatewayInferencePayload(data) {
+  if (!data || typeof data !== "object") return "Request completed.";
+  const choiceText = data?.choices?.[0]?.message?.content;
+  if (choiceText) return String(choiceText);
+  const outputText = data?.output_text || data?.text || data?.transcript || data?.translation;
+  if (outputText) return String(outputText);
+  if (data.id) return `Created record ${data.id}.`;
+  return "Request completed.";
+}
+
+function renderGatewayInferenceResult(target, { data, error, source, title }) {
+  if (!target) return;
+  if (typeof UiKit !== "undefined" && UiKit.renderOperatorResult) {
+    if (error) {
+      UiKit.renderOperatorResultError(target, error, source);
+      return;
+    }
+    const details = [
+      data?.risk_tier ? `risk: ${data.risk_tier}` : "",
+      data?.usage?.total_tokens ? `tokens: ${data.usage.total_tokens}` : "",
+      data?.model ? `model: ${data.model}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    UiKit.renderOperatorResultSuccess(
+      target,
+      title || "Completed",
+      summarizeGatewayInferencePayload(data),
+      data,
+      source,
+    );
+    if (details && target.querySelector(".operator-result-message")) {
+      const detailsNode = document.createElement("p");
+      detailsNode.className = "operator-result-details mono";
+      detailsNode.textContent = details;
+      target.querySelector(".operator-result")?.appendChild(detailsNode);
+    }
+    return;
+  }
+  target.textContent = error ? `Error: ${error}` : JSON.stringify(data, null, 2);
+}
+
+function initGatewayConsoleTabs() {
+  const gatewayView = qs("#routing-gateway");
+  if (!gatewayView || typeof UiKit === "undefined") return null;
+  return UiKit.bindTabGroup(gatewayView, {
+    tabSelector: "[data-gateway-console-tab]",
+    panelSelector: "[data-gateway-console-panel]",
+  });
+}
+
+function activateGatewayWorkspacePanel() {
+  const gatewayView = qs("#routing-gateway");
+  if (!gatewayView) return;
+  const workspaceTab = gatewayView.querySelector('[data-gateway-console-tab="workspace"]');
+  if (workspaceTab) workspaceTab.click();
+}
+
 async function runGatewayOpenAiChatCompletion(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#gatewayOpenAiChatForm");
@@ -3080,17 +4347,17 @@ async function runGatewayOpenAiChatCompletion(evt) {
   try {
     messages = parseGatewayJsonInput(raw.messages_json, "Messages JSON");
   } catch (err) {
-    result.textContent = `Error: ${safeText(err.message)}`;
+    renderGatewayInferenceResult(result, { error: safeText(err.message), source: "chat.create" });
     return;
   }
   if (!Array.isArray(messages) || !messages.length) {
-    result.textContent = "Error: Messages JSON must be a non-empty array.";
+    renderGatewayInferenceResult(result, { error: "Messages JSON must be a non-empty array.", source: "chat.create" });
     return;
   }
 
   const stops = parseListInput(raw.stop_csv);
   const payload = {
-    model: String(raw.model || "").trim(),
+    model: normalizeGatewayInferenceModel(raw.model),
     messages,
     stream: false,
     environment: String(raw.environment || "dev").trim() || "dev",
@@ -3107,9 +4374,196 @@ async function runGatewayOpenAiChatCompletion(evt) {
       body: JSON.stringify(payload),
     });
     renderGatewayOpenAiRiskSummary(data, "chat.create");
-    result.textContent = JSON.stringify(data, null, 2);
+    renderGatewayInferenceResult(result, { data, source: "chat.create", title: "Chat completion" });
+    if (typeof UiKit !== "undefined") UiKit.showToast("Chat completion finished.", "success");
   } catch (err) {
     renderGatewayOpenAiRiskSummary(null, "chat.create.error");
+    renderGatewayInferenceResult(result, { error: safeText(err.message), source: "chat.create.error" });
+  }
+}
+
+async function createGatewayOpenAiEmbeddings(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayOpenAiEmbeddingsForm");
+  const result = qs("#gatewayOpenAiEmbeddingsResult");
+  if (!form || !result) return;
+
+  const raw = Object.fromEntries(new FormData(form).entries());
+  let input = String(raw.input_text || "").trim();
+  if (String(raw.input_json || "").trim()) {
+    try {
+      const parsed = parseGatewayJsonInput(raw.input_json, "Input JSON");
+      input = parsed;
+    } catch (err) {
+      result.textContent = `Error: ${safeText(err.message)}`;
+      return;
+    }
+  }
+
+  const payload = {
+    model: normalizeGatewayInferenceModel(raw.model),
+    input,
+    dimensions: Number.parseInt(String(raw.dimensions || "16"), 10) || 16,
+    ...buildGatewayInferenceBasePayload(raw),
+  };
+
+  try {
+    const data = await api("/v1/embeddings", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    renderGatewayOpenAiRiskSummary(data, "embeddings.create");
+    renderGatewayInferenceResult(result, { data, source: "embeddings.create", title: "Embeddings" });
+  } catch (err) {
+    renderGatewayOpenAiRiskSummary(null, "embeddings.create.error");
+    renderGatewayInferenceResult(result, { error: safeText(err.message), source: "embeddings.create.error" });
+  }
+}
+
+async function runGatewayOpenAiAudioTranscription(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayOpenAiAudioTranscriptionsForm");
+  const result = qs("#gatewayOpenAiAudioTranscriptionsResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const payload = {
+    model: normalizeGatewayInferenceModel(raw.model),
+    input_text: String(raw.input_text || "").trim(),
+    language: String(raw.language || "").trim() || null,
+    prompt: String(raw.prompt || "").trim() || null,
+    ...buildGatewayInferenceBasePayload(raw),
+  };
+  try {
+    const data = await api("/v1/audio/transcriptions", { method: "POST", body: JSON.stringify(payload) });
+    renderGatewayOpenAiRiskSummary(data, "audio.transcriptions");
+    result.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    renderGatewayOpenAiRiskSummary(null, "audio.transcriptions.error");
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayOpenAiAudioTranslation(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayOpenAiAudioTranslationsForm");
+  const result = qs("#gatewayOpenAiAudioTranslationsResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const payload = {
+    model: normalizeGatewayInferenceModel(raw.model),
+    input_text: String(raw.input_text || "").trim(),
+    target_language: String(raw.target_language || "").trim(),
+    language: String(raw.language || "").trim() || null,
+    ...buildGatewayInferenceBasePayload(raw),
+  };
+  try {
+    const data = await api("/v1/audio/translations", { method: "POST", body: JSON.stringify(payload) });
+    renderGatewayOpenAiRiskSummary(data, "audio.translations");
+    result.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    renderGatewayOpenAiRiskSummary(null, "audio.translations.error");
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayOpenAiImages(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayOpenAiImagesForm");
+  const result = qs("#gatewayOpenAiImagesResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const payload = {
+    model: normalizeGatewayInferenceModel(raw.model),
+    prompt: String(raw.prompt || "").trim(),
+    n: Number.parseInt(String(raw.n || "1"), 10) || 1,
+    size: String(raw.size || "1024x1024").trim() || "1024x1024",
+    ...buildGatewayInferenceBasePayload(raw),
+  };
+  try {
+    const data = await api("/v1/images", { method: "POST", body: JSON.stringify(payload) });
+    renderGatewayOpenAiRiskSummary(data, "images.create");
+    result.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    renderGatewayOpenAiRiskSummary(null, "images.create.error");
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayOpenAiMessages(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayOpenAiMessagesForm");
+  const result = qs("#gatewayOpenAiMessagesResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const payload = {
+    model: normalizeGatewayInferenceModel(raw.model),
+    input: String(raw.input || "").trim(),
+    conversation_id: String(raw.conversation_id || "").trim() || null,
+    ...buildGatewayInferenceBasePayload(raw),
+  };
+  try {
+    const data = await api("/v1/messages", { method: "POST", body: JSON.stringify(payload) });
+    renderGatewayOpenAiRiskSummary(data, "messages.create");
+    result.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    renderGatewayOpenAiRiskSummary(null, "messages.create.error");
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayOpenAiA2aMessage(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayOpenAiA2aForm");
+  const result = qs("#gatewayOpenAiA2aResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const payload = {
+    model: normalizeGatewayInferenceModel(raw.model) || "a2a-transport-v1",
+    from_agent_id: String(raw.from_agent_id || "").trim(),
+    to_agent_id: String(raw.to_agent_id || "").trim(),
+    message: String(raw.message || "").trim(),
+    ...buildGatewayInferenceBasePayload(raw),
+  };
+  try {
+    const data = await api("/v1/a2a/messages", { method: "POST", body: JSON.stringify(payload) });
+    renderGatewayOpenAiRiskSummary(data, "a2a.create");
+    result.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    renderGatewayOpenAiRiskSummary(null, "a2a.create.error");
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayOpenAiRerank(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayOpenAiRerankForm");
+  const result = qs("#gatewayOpenAiRerankResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  let documents = null;
+  try {
+    documents = parseGatewayJsonInput(raw.documents_json, "Documents JSON");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+    return;
+  }
+  if (!Array.isArray(documents) || !documents.length) {
+    result.textContent = "Error: Documents JSON must be a non-empty array.";
+    return;
+  }
+  const payload = {
+    model: normalizeGatewayInferenceModel(raw.model),
+    query: String(raw.query || "").trim(),
+    documents,
+    top_n: Number.parseInt(String(raw.top_n || "3"), 10) || 3,
+    ...buildGatewayInferenceBasePayload(raw),
+  };
+  try {
+    const data = await api("/v1/rerank", { method: "POST", body: JSON.stringify(payload) });
+    renderGatewayOpenAiRiskSummary(data, "rerank.create");
+    result.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    renderGatewayOpenAiRiskSummary(null, "rerank.create.error");
     result.textContent = `Error: ${safeText(err.message)}`;
   }
 }
@@ -3176,6 +4630,648 @@ function renderGatewayOpenAiRiskSummary(payload, sourceLabel = "--") {
       : "");
 }
 
+function normalizeGatewaySystemRuleForUi(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const ruleText = String(raw.rule_text || "").trim();
+  const scopeType = String(raw.scope_type || "global").trim().toLowerCase() || "global";
+  const scopeId = String(raw.scope_id || "").trim();
+  if (!ruleText) return null;
+  const allowedScopeTypes = new Set(["global", "user", "team", "group", "owner", "actor", "agent"]);
+  if (!allowedScopeTypes.has(scopeType)) {
+    throw new Error("System Rules JSON scope_type must be one of: global, user, team, group, owner, actor, agent.");
+  }
+  if (scopeType !== "global" && !scopeId) {
+    throw new Error("System Rules JSON scope_id is required for non-global rules.");
+  }
+  return {
+    rule_text: ruleText,
+    scope_type: scopeType,
+    scope_id: scopeType === "global" ? "" : scopeId,
+  };
+}
+
+async function loadGatewaySystemControls(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewaySystemControlsForm");
+  const result = qs("#gatewaySystemControlsResult");
+  if (!form || !result) return;
+
+  try {
+    const [instructionsData, rulesData] = await Promise.all([
+      api("/gateway/system-instructions", { headers: { "X-Actor-Role": "Auditor" } }),
+      api("/gateway/system-rules", { headers: { "X-Actor-Role": "Auditor" } }),
+    ]);
+    form.elements.instructions.value = String(instructionsData?.instructions || "");
+    form.elements.rules_json.value = JSON.stringify(Array.isArray(rulesData?.rules) ? rulesData.rules : [], null, 2);
+    result.textContent = `Loaded gateway system controls (${safeText((rulesData?.rules || []).length)} rules).`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewaySystemControls(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewaySystemControlsForm");
+  const result = qs("#gatewaySystemControlsResult");
+  if (!form || !result) return;
+
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const instructions = String(raw.instructions || "").trim();
+  let rules = [];
+  try {
+    const parsedRules = parseGatewayJsonInput(raw.rules_json, "System Rules JSON");
+    if (!Array.isArray(parsedRules)) {
+      throw new Error("System Rules JSON must be an array.");
+    }
+    rules = parsedRules
+      .map((item) => normalizeGatewaySystemRuleForUi(item))
+      .filter((item) => Boolean(item));
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+    return;
+  }
+  try {
+    await Promise.all([
+      api("/gateway/system-instructions", {
+        method: "PUT",
+        body: JSON.stringify({ instructions }),
+      }),
+      api("/gateway/system-rules", {
+        method: "PUT",
+        body: JSON.stringify({ rules }),
+      }),
+    ]);
+    result.textContent = `Saved gateway system controls with ${safeText(rules.length)} rules.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+const CURSOR_GATEWAY_OPERATION_FAMILIES = [
+  { family: "Chat Completions", endpoint: "POST /v1/chat/completions", panel: "core" },
+  { family: "Embeddings", endpoint: "POST /v1/embeddings", panel: "core" },
+  { family: "Responses Create", endpoint: "POST /v1/responses", panel: "core" },
+  { family: "Audio Transcriptions", endpoint: "POST /v1/audio/transcriptions", panel: "media" },
+  { family: "Audio Translations", endpoint: "POST /v1/audio/translations", panel: "media" },
+  { family: "Images", endpoint: "POST /v1/images", panel: "media" },
+  { family: "Realtime", endpoint: "POST /v1/realtime", panel: "media" },
+  { family: "Messages", endpoint: "POST /v1/messages", panel: "transport" },
+  { family: "A2A Messages", endpoint: "POST /v1/a2a/messages", panel: "transport" },
+  { family: "Rerank", endpoint: "POST /v1/rerank", panel: "transport" },
+  { family: "Responses Lifecycle", endpoint: "GET/DELETE /v1/responses*", panel: "lifecycle" },
+  { family: "Files Lifecycle", endpoint: "POST/GET/DELETE /v1/files*", panel: "lifecycle" },
+  { family: "Realtime Lifecycle", endpoint: "GET/POST /v1/realtime/sessions*", panel: "lifecycle" },
+];
+
+const GATEWAY_OPS_TAB_HINTS = {
+  core: "Core: chat completions, embeddings, and responses create workflows for Cursor-backed inference.",
+  media: "Media: audio transcription/translation, image generation, and realtime session creation.",
+  transport: "Transport: message-oriented and agent-to-agent gateway operations with audit and cost telemetry.",
+  lifecycle: "Lifecycle: responses/files/realtime record management, filtering, and privileged delete workflows.",
+};
+
+function normalizeGatewayInferenceModel(modelValue) {
+  const raw = String(modelValue || "").trim();
+  if (!raw) return raw;
+  const lower = raw.toLowerCase();
+  if (lower.startsWith("cursor/")) {
+    return raw.slice("cursor/".length).trim() || raw;
+  }
+  return raw;
+}
+
+function buildGatewayInferenceBasePayload(raw) {
+  return {
+    environment: String(raw.environment || "dev").trim() || "dev",
+    tenant_id: String(raw.tenant_id || "").trim() || null,
+    request_tag: String(raw.request_tag || "").trim() || null,
+  };
+}
+
+function switchGatewayOpsTab(tabName) {
+  activateGatewayWorkspacePanel();
+  const normalized = String(tabName || "core").trim().toLowerCase() || "core";
+  qsa("[data-gateway-ops-tab]").forEach((btn) => {
+    const isActive = btn.dataset.gatewayOpsTab === normalized;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  qsa("[data-gateway-ops-panel]").forEach((panel) => {
+    const isActive = panel.dataset.gatewayOpsPanel === normalized;
+    panel.hidden = !isActive;
+    panel.classList.toggle("active", isActive);
+  });
+  const hint = qs("#gatewayOpsTabHint");
+  if (hint) hint.textContent = GATEWAY_OPS_TAB_HINTS[normalized] || GATEWAY_OPS_TAB_HINTS.core;
+  const card = qs("#gatewayOpenAiOpsCard");
+  if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderCursorGatewayOpsMatrix() {
+  const tbody = qs("#cursorGatewayOpsMatrix");
+  if (!tbody) return;
+  tbody.textContent = "";
+  CURSOR_GATEWAY_OPERATION_FAMILIES.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.family);
+    appendTableCell(tr, row.endpoint);
+    appendTableCell(tr, "yes");
+    appendTableCell(tr, row.panel);
+    const actionCell = document.createElement("td");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost";
+    button.textContent = "Open";
+    button.addEventListener("click", () => switchGatewayOpsTab(row.panel));
+    actionCell.appendChild(button);
+    tr.appendChild(actionCell);
+    tbody.appendChild(tr);
+  });
+}
+
+function renderCursorIntegrationHubStatus(payload) {
+  const badge = qs("#cursorTokenHubBadge");
+  const mode = qs("#cursorTokenHubMode");
+  const hint = qs("#cursorTokenHubHint");
+  const summary = qs("#cursorIntegrationHubSummary");
+  const configured = Boolean(payload?.configured);
+  const storageMode = String(payload?.storage_mode || "db").trim() || "db";
+  const maskedHint = String(payload?.masked_hint || "").trim() || "--";
+
+  if (badge) {
+    badge.textContent = configured ? "Token: configured" : "Token: not configured";
+    badge.className = `status-pill ${configured ? "success" : "error"}`;
+  }
+  if (mode) mode.textContent = `Mode: ${safeText(storageMode)}`;
+  if (hint) hint.textContent = `Masked: ${safeText(maskedHint)}`;
+  if (summary) {
+    summary.textContent = configured
+      ? "Cursor gateway token is configured. All operation families below can resolve credentials at runtime."
+      : "Configure the Cursor token before running gateway operations. Use db mode for encrypted runtime storage or external mode for secret-provider references.";
+  }
+  gatewayCursorTokenConfigured = configured;
+}
+
+async function refreshCursorIntegrationHub(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  renderCursorGatewayOpsMatrix();
+  try {
+    const data = await api("/gateway/cursor-token", { headers: { "X-Actor-Role": "Platform Admin" } });
+    renderGatewayCursorTokenState(data);
+    renderCursorIntegrationHubStatus(data);
+    await loadGatewayConfiguredModels();
+  } catch (err) {
+    gatewayCursorTokenConfigured = false;
+    renderCursorIntegrationHubStatus({ configured: false, storage_mode: "--", masked_hint: "--" });
+    const summary = qs("#cursorIntegrationHubSummary");
+    if (summary) summary.textContent = `Error loading token status: ${safeText(err.message)}`;
+  }
+}
+
+function openCursorTokenPanel() {
+  switchView("routing-gateway");
+  activateGatewayWorkspacePanel();
+  const card = qs("#gatewayCursorTokenCard");
+  if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function openCursorModulesPanel() {
+  switchView("modules");
+  const form = qs("#moduleRegisterForm");
+  if (form?.elements?.integration_provider) {
+    form.elements.integration_provider.value = "cursor";
+  }
+  if (form?.elements?.integration_reference && !String(form.elements.integration_reference.value || "").trim()) {
+    form.elements.integration_reference.value = "cursor://workspace/team-a/skills";
+  }
+}
+
+function openCursorGatewayHub(scrollToAutomation = false) {
+  switchView("routing-gateway");
+  activateGatewayWorkspacePanel();
+  const hub = qs("#cursorGatewayIntegrationHub");
+  if (hub) hub.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (scrollToAutomation) {
+    const panel = qs(".cursor-automation-panel");
+    if (panel) {
+      panel.open = true;
+      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+}
+
+function cursorAutomationActorHeaders(includeApproval = false) {
+  const headers = [
+    `-H "X-Actor-Role: ${safeText(state.actorRole)}"`,
+    `-H "X-Actor-Id: ${safeText(state.actorId)}"`,
+  ];
+  if (includeApproval || state.environmentProfile === "prod") {
+    headers.push('-H "X-Approver-Role: Security Approver"');
+    headers.push('-H "X-Approver-Id: security-approver-1"');
+  }
+  if (state.accessToken) {
+    headers.push('-H "Authorization: Bearer <access_token>"');
+  }
+  return headers.join(" \\\n  ");
+}
+
+function buildCursorAutomationRecipe(recipeId) {
+  const apiBase = String(state.apiBase || "http://127.0.0.1:8000").replace(/\/$/, "");
+  const actorHeaders = cursorAutomationActorHeaders();
+  const prodApprovalHeaders = cursorAutomationActorHeaders(true);
+  const env = String(state.environmentProfile || "dev").trim().toLowerCase() || "dev";
+
+  switch (recipeId) {
+    case "curl_token_db":
+      return `# Configure Cursor token in encrypted db mode
+curl -X PUT "${apiBase}/gateway/cursor-token" \\
+  -H "Content-Type: application/json" \\
+  ${prodApprovalHeaders} \\
+  -d '{
+    "storage_mode": "db",
+    "token": "<cursor_api_token>"
+  }'`;
+    case "curl_token_external":
+      return `# Configure Cursor token via external secret provider reference
+curl -X PUT "${apiBase}/gateway/cursor-token" \\
+  -H "Content-Type: application/json" \\
+  ${prodApprovalHeaders} \\
+  -d '{
+    "storage_mode": "external",
+    "external_provider_id": "<secret_provider_id>",
+    "external_secret_ref": "kv/data/gateway/cursor-token"
+  }'`;
+    case "curl_chat":
+      return `# Cursor-backed chat completion through AgentHub gateway
+curl -X POST "${apiBase}/v1/chat/completions" \\
+  -H "Content-Type: application/json" \\
+  ${actorHeaders} \\
+  -d '{
+    "model": "gpt-4o-mini",
+    "environment": "${env}",
+    "request_tag": "automation.cursor.chat",
+    "messages": [
+      {"role": "system", "content": "You are concise."},
+      {"role": "user", "content": "Summarize gateway fallback posture."}
+    ],
+    "max_tokens": 64,
+    "stream": false
+  }'`;
+    case "curl_embeddings":
+      return `# Cursor-backed embeddings through AgentHub gateway
+curl -X POST "${apiBase}/v1/embeddings" \\
+  -H "Content-Type: application/json" \\
+  ${actorHeaders} \\
+  -d '{
+    "model": "text-embedding-3-small",
+    "environment": "${env}",
+    "request_tag": "automation.cursor.embeddings",
+    "input": "Summarize the current gateway policy posture.",
+    "dimensions": 16
+  }'`;
+    case "curl_messages":
+      return `# Message-oriented transport via gateway (Cursor token resolved server-side)
+curl -X POST "${apiBase}/v1/messages" \\
+  -H "Content-Type: application/json" \\
+  ${actorHeaders} \\
+  -d '{
+    "model": "gpt-4o-mini",
+    "environment": "${env}",
+    "request_tag": "automation.cursor.messages",
+    "conversation_id": "conv-automation-001",
+    "input": "Summarize route health for operator review."
+  }'`;
+    case "curl_rerank":
+      return `# Rerank candidates via gateway
+curl -X POST "${apiBase}/v1/rerank" \\
+  -H "Content-Type: application/json" \\
+  ${actorHeaders} \\
+  -d '{
+    "model": "rerank-english-v3.0",
+    "environment": "${env}",
+    "request_tag": "automation.cursor.rerank",
+    "query": "gateway fallback policy",
+    "top_n": 3,
+    "documents": [
+      "Route fallback policy",
+      "Cache invalidation workflow",
+      "Realtime stream policy"
+    ]
+  }'`;
+    case "curl_module_register":
+      return `# Register module with workspace-scoped Cursor metadata (no secrets in reference)
+curl -X POST "${apiBase}/modules/register" \\
+  -H "Content-Type: application/json" \\
+  ${actorHeaders} \\
+  -d '{
+    "module_name": "cursor-skill-pack",
+    "module_type": "ai_skill",
+    "version": "1.0.0",
+    "contract_version": "v1",
+    "owner_team": "platform-security",
+    "compatibility_range": "*",
+    "required_permissions": "[]",
+    "artifact_signature": "sig:sha256:example",
+    "provenance_ref": "prov://artifact/registry/cursor-skill-pack",
+    "security_review_ticket": "SEC-12345",
+    "integration_provider": "cursor",
+    "integration_reference": "cursor://workspace/team-a/skills"
+  }'`;
+    case "curl_module_sync":
+      return `# Sync Cursor module integration metadata
+curl -X POST "${apiBase}/modules/<module_id>/integration/sync" \\
+  -H "Content-Type: application/json" \\
+  ${actorHeaders} \\
+  -d '{
+    "integration_reference": "cursor://workspace/team-a/skills"
+  }'`;
+    case "python_chat":
+      return `#!/usr/bin/env python3
+import os
+import requests
+
+API_BASE = os.environ.get("API_BASE", "${apiBase}")
+ACTOR_ROLE = os.environ.get("ACTOR_ROLE", "${safeText(state.actorRole)}")
+ACTOR_ID = os.environ.get("ACTOR_ID", "${safeText(state.actorId)}")
+ACCESS_TOKEN = os.environ.get("ACCESS_TOKEN", "")
+
+headers = {
+    "Content-Type": "application/json",
+    "X-Actor-Role": ACTOR_ROLE,
+    "X-Actor-Id": ACTOR_ID,
+}
+if ACCESS_TOKEN:
+    headers["Authorization"] = f"Bearer {ACCESS_TOKEN}"
+
+payload = {
+    "model": "gpt-4o-mini",
+    "environment": "${env}",
+    "request_tag": "automation.cursor.chat",
+    "messages": [
+        {"role": "system", "content": "You are concise."},
+        {"role": "user", "content": "Summarize gateway fallback posture."},
+    ],
+    "max_tokens": 64,
+    "stream": False,
+}
+
+resp = requests.post(f"{API_BASE}/v1/chat/completions", headers=headers, json=payload, timeout=30)
+resp.raise_for_status()
+print(resp.json())`;
+    case "typescript_openai_client":
+      return `// Point an OpenAI-compatible client at AgentHub gateway.
+// Cursor IDE automations and SDK flows can call this base URL after token config is complete.
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: process.env.AGENTHUB_ACCESS_TOKEN || "operator-session-token",
+  baseURL: "${apiBase}/v1",
+  defaultHeaders: {
+    "X-Actor-Role": "${safeText(state.actorRole)}",
+    "X-Actor-Id": "${safeText(state.actorId)}",
+  },
+});
+
+const completion = await client.chat.completions.create({
+  model: "gpt-4o-mini",
+  messages: [{ role: "user", content: "Summarize gateway fallback posture." }],
+});
+console.log(completion);`;
+    default:
+      return buildCursorAutomationRecipe("curl_chat");
+  }
+}
+
+function renderCursorAutomationRecipe() {
+  const select = qs("#cursorAutomationRecipe");
+  const preview = qs("#cursorAutomationRecipePreview");
+  const status = qs("#cursorAutomationRecipeStatus");
+  if (!select || !preview) return;
+  const recipe = buildCursorAutomationRecipe(select.value);
+  preview.textContent = recipe;
+  if (status) {
+    status.textContent = `Recipe context: ${safeText(state.environmentProfile)} @ ${safeText(state.apiBase)} (${safeText(state.actorRole)} / ${safeText(state.actorId)})`;
+  }
+}
+
+async function copyCursorAutomationRecipe(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const preview = qs("#cursorAutomationRecipePreview");
+  const status = qs("#cursorAutomationRecipeStatus");
+  if (!preview) return;
+  const text = String(preview.textContent || "").trim();
+  if (!text) {
+    if (status) status.textContent = "Error: No recipe content to copy.";
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    if (status) status.textContent = "Copied recipe to clipboard.";
+  } catch (err) {
+    if (status) status.textContent = `Error copying recipe: ${safeText(err.message)}`;
+  }
+}
+
+function renderGatewayCursorTokenState(payload) {
+  const status = qs("#gatewayCursorTokenStatus");
+  if (!status) return;
+  const configured = Boolean(payload?.configured);
+  const storageMode = String(payload?.storage_mode || "db").trim() || "db";
+  const externalProviderId = String(payload?.external_provider_id || "").trim() || "--";
+  const externalSecretRef = String(payload?.external_secret_ref || "").trim() || "--";
+  const maskedHint = String(payload?.masked_hint || "").trim() || "--";
+  const updatedBy = String(payload?.updated_by || "").trim() || "--";
+  const updatedAt = payload?.updated_at ? formatGatewayRecordDate(payload.updated_at) : "--";
+  status.textContent = `Configured: ${configured ? "yes" : "no"} | Mode: ${safeText(storageMode)} | External Provider: ${safeText(externalProviderId)} | External Ref: ${safeText(externalSecretRef)} | Masked: ${safeText(maskedHint)} | Updated By: ${safeText(updatedBy)} | Updated At: ${safeText(updatedAt)}`;
+  renderCursorIntegrationHubStatus(payload);
+}
+
+function updateGatewayCursorTokenFormModeVisibility() {
+  const form = qs("#gatewayCursorTokenForm");
+  if (!form) return;
+  const mode = String(form.elements.storage_mode?.value || "db").trim().toLowerCase();
+  const tokenField = form.elements.token;
+  const providerField = form.elements.external_provider_id;
+  const secretRefField = form.elements.external_secret_ref;
+  const isExternal = mode === "external";
+
+  if (tokenField) {
+    tokenField.disabled = isExternal;
+    tokenField.required = !isExternal;
+    if (isExternal) tokenField.value = "";
+  }
+  if (providerField) {
+    providerField.disabled = !isExternal;
+    providerField.required = isExternal;
+  }
+  if (secretRefField) {
+    secretRefField.disabled = !isExternal;
+    secretRefField.required = isExternal;
+  }
+
+  if (isExternal) {
+    loadGatewayCursorSecretProviders().catch(() => {});
+  }
+}
+
+function validateGatewayCursorTokenDualApproval(form) {
+  if (state.environmentProfile !== "prod") {
+    return "";
+  }
+  const approverRole = String(form?.elements?.approver_role?.value || "").trim();
+  const approverId = String(form?.elements?.approver_id?.value || "").trim();
+  if (!approverRole || !approverId) {
+    return "Approver Role and Approver ID are required for production Save/Clear actions.";
+  }
+  return "";
+}
+
+async function loadGatewayCursorSecretProviders(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const datalist = qs("#gatewayCursorSecretProviderIds");
+  const result = qs("#gatewayCursorTokenResult");
+  if (!datalist) return;
+
+  try {
+    const rows = await api("/secrets/providers?status=active&limit=500", { headers: { "X-Actor-Role": "Auditor" } });
+    const providers = Array.isArray(rows) ? rows : [];
+    datalist.textContent = "";
+    providers.forEach((row) => {
+      const option = document.createElement("option");
+      option.value = String(row?.secret_provider_id || "").trim();
+      const providerType = String(row?.provider_type || "").trim();
+      const tenantId = String(row?.tenant_id || "").trim();
+      option.label = `${providerType}${tenantId ? ` | ${tenantId}` : ""}`;
+      datalist.appendChild(option);
+    });
+    if (result) result.textContent = `Loaded ${safeText(providers.length)} active secret providers for external mode.`;
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayCursorTokenConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCursorTokenForm");
+  const result = qs("#gatewayCursorTokenResult");
+  if (!form || !result) return;
+
+  try {
+    const data = await api("/gateway/cursor-token", { headers: { "X-Actor-Role": "Platform Admin" } });
+    renderGatewayCursorTokenState(data);
+    form.elements.storage_mode.value = String(data?.storage_mode || "db").trim() || "db";
+    form.elements.external_provider_id.value = String(data?.external_provider_id || "").trim();
+    form.elements.external_secret_ref.value = String(data?.external_secret_ref || "").trim();
+    await loadGatewayCursorSecretProviders();
+    updateGatewayCursorTokenFormModeVisibility();
+    result.textContent = "Loaded gateway cursor token status.";
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewayCursorTokenConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCursorTokenForm");
+  const result = qs("#gatewayCursorTokenResult");
+  if (!form || !result) return;
+
+  if (!form.checkValidity()) {
+    form.reportValidity();
+    result.textContent = "Error: Complete required fields before saving.";
+    return;
+  }
+
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const storageMode = String(raw.storage_mode || "db").trim().toLowerCase() || "db";
+  const token = String(raw.token || "").trim();
+  const externalProviderId = String(raw.external_provider_id || "").trim();
+  const externalSecretRef = String(raw.external_secret_ref || "").trim();
+
+  if (storageMode === "db" && !token) {
+    result.textContent = "Error: Cursor API Token is required for db mode.";
+    return;
+  }
+  if (storageMode === "external" && !externalProviderId) {
+    result.textContent = "Error: External Provider ID is required for external mode.";
+    return;
+  }
+  if (storageMode === "external" && !externalSecretRef) {
+    result.textContent = "Error: External Secret Ref is required for external mode.";
+    return;
+  }
+
+  const approvalError = validateGatewayCursorTokenDualApproval(form);
+  if (approvalError) {
+    result.textContent = `Error: ${approvalError}`;
+    return;
+  }
+
+  try {
+    result.textContent = "Saving gateway cursor token configuration...";
+    const payload =
+      storageMode === "external"
+        ? {
+            storage_mode: "external",
+            external_provider_id: externalProviderId,
+            external_secret_ref: externalSecretRef,
+          }
+        : {
+            storage_mode: "db",
+            token,
+          };
+    const data = await api("/gateway/cursor-token", {
+      method: "PUT",
+      headers: getGatewayDualApprovalHeaders("#gatewayCursorTokenForm"),
+      body: JSON.stringify(payload),
+    });
+    renderGatewayCursorTokenState(data);
+    form.elements.token.value = "";
+    updateGatewayCursorTokenFormModeVisibility();
+    result.textContent = "Saved gateway cursor token configuration.";
+    await loadGatewayConfiguredModels();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function clearGatewayCursorTokenConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCursorTokenForm");
+  const result = qs("#gatewayCursorTokenResult");
+  if (!form || !result) return;
+
+  if (!form.checkValidity()) {
+    form.reportValidity();
+    result.textContent = "Error: Complete required fields before clearing.";
+    return;
+  }
+
+  const approvalError = validateGatewayCursorTokenDualApproval(form);
+  if (approvalError) {
+    result.textContent = `Error: ${approvalError}`;
+    return;
+  }
+
+  try {
+    result.textContent = "Clearing gateway cursor token configuration...";
+    const data = await api("/gateway/cursor-token", {
+      method: "DELETE",
+      headers: getGatewayDualApprovalHeaders("#gatewayCursorTokenForm"),
+    });
+    renderGatewayCursorTokenState(data);
+    form.elements.storage_mode.value = "db";
+    form.elements.token.value = "";
+    form.elements.external_provider_id.value = "";
+    form.elements.external_secret_ref.value = "";
+    updateGatewayCursorTokenFormModeVisibility();
+    result.textContent = "Cleared gateway cursor token configuration.";
+    await loadGatewayConfiguredModels();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function createGatewayOpenAiResponse(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#gatewayOpenAiResponsesCreateForm");
@@ -3194,7 +5290,7 @@ async function createGatewayOpenAiResponse(evt) {
 
   const toolChoice = String(raw.tool_choice || "none").trim() || "none";
   const payload = {
-    model: String(raw.model || "").trim(),
+    model: normalizeGatewayInferenceModel(raw.model),
     input: String(raw.input || "").trim(),
     instructions: String(raw.instructions || "").trim() || null,
     stream: false,
@@ -3376,7 +5472,7 @@ async function loadGatewayOpenAiFiles(evt) {
   if (!form || !result || !payloadTarget || !tbody) return;
   const raw = Object.fromEntries(new FormData(form).entries());
 
-  setTableMessage(tbody, 8, "Loading...");
+  setTableMessage(tbody, 11, "Loading...");
   try {
     const query = buildQueryString({
       limit: Number(raw.limit || 20),
@@ -3457,6 +5553,298 @@ async function deleteGatewayOpenAiFileById(fileId, options = {}) {
     if (!suppressMessage) result.textContent = `Error: ${safeText(err.message)}`;
     return { ok: false, id, error: String(err.message || err) };
   }
+}
+
+function renderGatewayOpenAiRealtimeRows() {
+  const tbody = qs("#gatewayOpenAiRealtimeTable");
+  if (!tbody) return;
+  if (!gatewayOpenAiRealtimeSessionRows.length) {
+    setTableMessage(tbody, 9, "No realtime sessions found.");
+    return;
+  }
+
+  tbody.textContent = "";
+  gatewayOpenAiRealtimeSessionRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    if (row.id === selectedGatewayOpenAiRealtimeSessionId) tr.classList.add("selected-row");
+    appendTableCell(tr, row.id || "--");
+    appendTableCell(tr, row.status || "--");
+    appendTableCell(tr, row.model || "--");
+    appendTableCell(tr, Array.isArray(row.requested_modalities) ? row.requested_modalities.join(", ") : "--");
+    appendTableCell(tr, row.event_count ?? "--");
+    appendTableCell(tr, row.total_event_bytes ?? "--");
+    appendTableCell(tr, row.last_event_type || "--");
+    appendTableCell(tr, formatGatewayRecordDate(row.expires_at));
+
+    const actions = document.createElement("td");
+    actions.className = "cell-actions";
+
+    const useBtn = document.createElement("button");
+    useBtn.type = "button";
+    useBtn.className = "ghost";
+    useBtn.textContent = "Use";
+    useBtn.addEventListener("click", () => {
+      selectedGatewayOpenAiRealtimeSessionId = row.id || "";
+      const ops = qs("#gatewayOpenAiRealtimeOpsForm");
+      if (ops?.elements?.session_id) ops.elements.session_id.value = selectedGatewayOpenAiRealtimeSessionId;
+      renderGatewayOpenAiRealtimeRows();
+    });
+
+    const viewBtn = document.createElement("button");
+    viewBtn.type = "button";
+    viewBtn.className = "ghost";
+    viewBtn.textContent = "Get";
+    viewBtn.addEventListener("click", () => loadGatewayOpenAiRealtimeSessionById(row.id));
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "ghost";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", () => closeGatewayOpenAiRealtimeSessionById(row.id));
+
+    actions.append(useBtn, viewBtn, closeBtn);
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+function renderGatewayOpenAiRealtimeEventRows() {
+  const tbody = qs("#gatewayOpenAiRealtimeEventsTable");
+  if (!tbody) return;
+  if (!gatewayOpenAiRealtimeEventRows.length) {
+    setTableMessage(tbody, 7, "No realtime events loaded.");
+    return;
+  }
+
+  tbody.textContent = "";
+  gatewayOpenAiRealtimeEventRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.id || "--");
+    appendTableCell(tr, row.session_id || "--");
+    appendTableCell(tr, row.event_type || "--");
+    appendTableCell(tr, row.binary_mode || "--");
+    appendTableCell(tr, row.event_bytes ?? "--");
+    appendTableCell(tr, row.status || "--");
+    appendTableCell(tr, formatGatewayRecordDate(row.created_at));
+    tbody.appendChild(tr);
+  });
+}
+
+async function createGatewayOpenAiRealtimeSession(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayOpenAiRealtimeCreateForm");
+  const opsForm = qs("#gatewayOpenAiRealtimeOpsForm");
+  const result = qs("#gatewayOpenAiRealtimeResult");
+  const payloadTarget = qs("#gatewayOpenAiRealtimePayload");
+  if (!form || !opsForm || !result || !payloadTarget) return;
+
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const requestedModalities = parseListInput(raw.requested_modalities_csv || "text");
+  const payload = {
+    model: normalizeGatewayInferenceModel(raw.model),
+    session_label: String(raw.session_label || "").trim() || null,
+    stream: String(raw.stream || "false").trim().toLowerCase() === "true",
+    stream_binary_mode: String(raw.stream_binary_mode || "metadata_only").trim() || "metadata_only",
+    stream_inline_max_event_bytes: Number(raw.stream_inline_max_event_bytes || 16384),
+    stream_inline_allowed_event_types: parseListInput(raw.stream_inline_allowed_event_types_csv || "input.audio.append,input.video.append"),
+    stream_inline_require_correlation_id:
+      String(raw.stream_inline_require_correlation_id || "false").trim().toLowerCase() === "true",
+    stream_max_event_bytes: Number(raw.stream_max_event_bytes || 65536),
+    stream_max_session_events: Number(raw.stream_max_session_events || 500),
+    stream_max_session_event_bytes: Number(raw.stream_max_session_event_bytes || 5242880),
+    stream_heartbeat_interval_seconds: Number(raw.stream_heartbeat_interval_seconds || 15),
+    tenant_id: String(raw.tenant_id || "").trim() || null,
+    environment: String(raw.environment || "dev").trim() || "dev",
+    requested_modalities: requestedModalities.length ? requestedModalities : ["text"],
+    request_tag: String(raw.request_tag || "").trim() || null,
+  };
+
+  try {
+    const data = await api("/v1/realtime", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: getGatewayDualApprovalHeaders("#gatewayOpenAiRealtimeOpsForm"),
+    });
+    selectedGatewayOpenAiRealtimeSessionId = data.id || "";
+    if (opsForm?.elements?.session_id) opsForm.elements.session_id.value = selectedGatewayOpenAiRealtimeSessionId;
+    result.textContent = `Created realtime session ${safeText(selectedGatewayOpenAiRealtimeSessionId)}.`;
+    payloadTarget.textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+    if (payload.stream) {
+      await loadGatewayOpenAiRealtimeSessionById(selectedGatewayOpenAiRealtimeSessionId);
+    } else {
+      await loadGatewayOpenAiRealtimeSessions();
+    }
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayOpenAiRealtimeSessions(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayOpenAiRealtimeOpsForm");
+  const result = qs("#gatewayOpenAiRealtimeResult");
+  const payloadTarget = qs("#gatewayOpenAiRealtimePayload");
+  const tbody = qs("#gatewayOpenAiRealtimeTable");
+  if (!form || !result || !payloadTarget || !tbody) return;
+
+  setTableMessage(tbody, 8, "Loading...");
+  const raw = Object.fromEntries(new FormData(form).entries());
+  try {
+    const query = buildQueryString({
+      limit: Number(raw.limit || 20),
+      offset: Number(raw.offset || 0),
+      status: String(raw.status || "").trim() || null,
+    });
+    const data = await api(`/v1/realtime/sessions${query}`);
+    gatewayOpenAiRealtimeSessionRows = Array.isArray(data?.data) ? data.data : [];
+    if (!selectedGatewayOpenAiRealtimeSessionId && gatewayOpenAiRealtimeSessionRows.length) {
+      selectedGatewayOpenAiRealtimeSessionId = gatewayOpenAiRealtimeSessionRows[0].id || "";
+      form.elements.session_id.value = selectedGatewayOpenAiRealtimeSessionId;
+    }
+    renderGatewayOpenAiRealtimeRows();
+    result.textContent = `Loaded ${gatewayOpenAiRealtimeSessionRows.length} realtime sessions.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    gatewayOpenAiRealtimeSessionRows = [];
+    renderGatewayOpenAiRealtimeRows();
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayOpenAiRealtimeSessionById(sessionId) {
+  const form = qs("#gatewayOpenAiRealtimeOpsForm");
+  const result = qs("#gatewayOpenAiRealtimeResult");
+  const payloadTarget = qs("#gatewayOpenAiRealtimePayload");
+  if (!form || !result || !payloadTarget) return;
+
+  const id = String(sessionId || form.elements.session_id.value || selectedGatewayOpenAiRealtimeSessionId || "").trim();
+  if (!id) {
+    result.textContent = "Session ID is required.";
+    return;
+  }
+
+  try {
+    const data = await api(`/v1/realtime/sessions/${encodeURIComponent(id)}`);
+    selectedGatewayOpenAiRealtimeSessionId = data.id || id;
+    form.elements.session_id.value = selectedGatewayOpenAiRealtimeSessionId;
+    const existingIndex = gatewayOpenAiRealtimeSessionRows.findIndex((row) => String(row.id || "") === selectedGatewayOpenAiRealtimeSessionId);
+    if (existingIndex >= 0) gatewayOpenAiRealtimeSessionRows.splice(existingIndex, 1, data);
+    else gatewayOpenAiRealtimeSessionRows.unshift(data);
+    renderGatewayOpenAiRealtimeRows();
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+    result.textContent = `Loaded realtime session ${safeText(selectedGatewayOpenAiRealtimeSessionId)}.`;
+    await loadGatewayOpenAiRealtimeEventsBySessionId(selectedGatewayOpenAiRealtimeSessionId, { suppressMessage: true });
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayOpenAiRealtimeEventsBySessionId(sessionId, options = {}) {
+  const form = qs("#gatewayOpenAiRealtimeOpsForm");
+  const result = qs("#gatewayOpenAiRealtimeResult");
+  const payloadTarget = qs("#gatewayOpenAiRealtimePayload");
+  const tbody = qs("#gatewayOpenAiRealtimeEventsTable");
+  if (!form || !result || !payloadTarget || !tbody) return;
+
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const id = String(sessionId || raw.session_id || selectedGatewayOpenAiRealtimeSessionId || "").trim();
+  if (!id) {
+    result.textContent = "Session ID is required.";
+    return;
+  }
+
+  setTableMessage(tbody, 7, "Loading...");
+  try {
+    const query = buildQueryString({
+      limit: Number(raw.limit || 20),
+      offset: Number(raw.offset || 0),
+    });
+    const data = await api(`/v1/realtime/sessions/${encodeURIComponent(id)}/events${query}`);
+    gatewayOpenAiRealtimeEventRows = Array.isArray(data?.data) ? data.data : [];
+    renderGatewayOpenAiRealtimeEventRows();
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+    if (!options.suppressMessage) {
+      result.textContent = `Loaded ${gatewayOpenAiRealtimeEventRows.length} realtime events for session ${safeText(id)}.`;
+    }
+  } catch (err) {
+    gatewayOpenAiRealtimeEventRows = [];
+    renderGatewayOpenAiRealtimeEventRows();
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function appendGatewayOpenAiRealtimeEvent(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayOpenAiRealtimeOpsForm");
+  const result = qs("#gatewayOpenAiRealtimeResult");
+  const payloadTarget = qs("#gatewayOpenAiRealtimePayload");
+  if (!form || !result || !payloadTarget) return;
+
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const id = String(raw.session_id || selectedGatewayOpenAiRealtimeSessionId || "").trim();
+  if (!id) {
+    result.textContent = "Session ID is required.";
+    return;
+  }
+
+  let payloadJson = null;
+  try {
+    payloadJson = parseGatewayJsonInput(raw.event_payload_json, "Event Payload JSON");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+    return;
+  }
+
+  const payload = {
+    event_type: String(raw.event_type || "").trim() || "input.audio.append",
+    binary_mode: String(raw.binary_mode || "metadata_only").trim() || "metadata_only",
+    event_bytes: Number(raw.event_bytes || 0),
+    payload: payloadJson && typeof payloadJson === "object" ? payloadJson : {},
+  };
+
+  try {
+    const data = await api(`/v1/realtime/sessions/${encodeURIComponent(id)}/events`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: getGatewayDualApprovalHeaders("#gatewayOpenAiRealtimeOpsForm"),
+    });
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+    result.textContent = `Appended event ${safeText(data.id || "--")} to session ${safeText(id)}.`;
+    await loadGatewayOpenAiRealtimeSessionById(id);
+    await loadGatewayOpenAiRealtimeEventsBySessionId(id, { suppressMessage: true });
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function closeGatewayOpenAiRealtimeSessionById(sessionId) {
+  const form = qs("#gatewayOpenAiRealtimeOpsForm");
+  const result = qs("#gatewayOpenAiRealtimeResult");
+  const payloadTarget = qs("#gatewayOpenAiRealtimePayload");
+  if (!form || !result || !payloadTarget) return;
+
+  const id = String(sessionId || form.elements.session_id.value || selectedGatewayOpenAiRealtimeSessionId || "").trim();
+  if (!id) {
+    result.textContent = "Session ID is required.";
+    return;
+  }
+
+  try {
+    const data = await api(`/v1/realtime/sessions/${encodeURIComponent(id)}/close`, {
+      method: "POST",
+      headers: getGatewayDualApprovalHeaders("#gatewayOpenAiRealtimeOpsForm"),
+    });
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+    result.textContent = `Closed realtime session ${safeText(id)}.`;
+    await loadGatewayOpenAiRealtimeSessionById(id);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function loadGatewayOpenAiRealtimeEvents(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  return loadGatewayOpenAiRealtimeEventsBySessionId();
 }
 
 function selectAllGatewayOpenAiResponses() {
@@ -3655,6 +6043,49 @@ function renderKeyGuardrailPolicySummary(rawPolicy) {
   }
 }
 
+function renderCostModelCatalogRows() {
+  const tbody = qs("#costModelCatalogTable");
+  if (!tbody) return;
+  if (!costModelCatalogRows.length) {
+    setTableMessage(tbody, 6, "No model catalog rows.");
+    return;
+  }
+  tbody.textContent = "";
+  costModelCatalogRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.display_name || row.model_name);
+    appendTableCell(tr, row.provider_type);
+    appendTableCell(tr, row.context_window_tokens);
+    appendTableCell(tr, row.status);
+    appendTableCell(tr, row.estimated_average_cost_cents_per_1k);
+    appendTableCell(tr, row.ranking_score);
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadCostModelCatalog() {
+  const result = qs("#costModelCatalogResult");
+  const tbody = qs("#costModelCatalogTable");
+  if (!tbody) return;
+  setTableMessage(tbody, 6, "Loading...");
+  if (result) result.textContent = "Loading model catalog...";
+  try {
+    const data = await api("/cost/models/catalog");
+    costModelCatalogRows = Array.isArray(data?.catalog) ? data.catalog : [];
+    renderCostModelCatalogRows();
+    if (result) {
+      result.textContent = costModelCatalogRows.length
+        ? `Loaded ${costModelCatalogRows.length} supported models ranked by effective pricing.`
+        : "No supported models found.";
+    }
+  } catch (err) {
+    costModelCatalogRows = [];
+    renderCostModelCatalogRows();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
+  }
+}
+
 function applyGuardrailTemplate(templateName) {
   const form = qs("#keyLifecycleForm");
   const result = qs("#keyLifecycleResult");
@@ -3666,6 +6097,9 @@ function applyGuardrailTemplate(templateName) {
       max_requests_per_minute: 120,
       max_input_tokens: 8000,
       max_output_tokens: 4000,
+      policy_mode: "monitor",
+      input_stages: ["input"],
+      output_stages: ["output"],
     },
     strict_prod: {
       allowed_environments: ["prod"],
@@ -3674,6 +6108,9 @@ function applyGuardrailTemplate(templateName) {
       max_output_tokens: 3000,
       require_mfa_for_prod: true,
       deny_on_weekends: true,
+      policy_mode: "block",
+      input_stages: ["input"],
+      output_stages: ["output"],
     },
     dev_sandbox: {
       allowed_environments: ["dev"],
@@ -3681,6 +6118,8 @@ function applyGuardrailTemplate(templateName) {
       max_input_tokens: 2000,
       max_output_tokens: 1000,
       blocked_owner_scope_ids: ["prod-core"],
+      policy_mode: "warn",
+      input_stages: ["input"],
     },
   };
 
@@ -3816,6 +6255,7 @@ async function evaluateKeyGuardrails(evt) {
 
   const payload = {
     environment: String(raw.environment || "dev").trim().toLowerCase(),
+    stage: String(raw.stage || "input").trim().toLowerCase(),
     requests_last_minute: Number.parseInt(String(raw.requests_last_minute || "0"), 10) || 0,
     input_tokens: Number.parseInt(String(raw.input_tokens || "0"), 10) || 0,
     output_tokens: Number.parseInt(String(raw.output_tokens || "0"), 10) || 0,
@@ -4215,7 +6655,10 @@ function populateRoutingForms(row) {
   const routePriorityForm = qs("#routePriorityForm");
   const routeProviderHealthForm = qs("#routeProviderHealthForm");
   const routePreCallFiltersForm = qs("#routePreCallFiltersForm");
+  const routeOutputGuardrailsForm = qs("#routeOutputGuardrailsForm");
+  const routeInputDataPolicyForm = qs("#routeInputDataPolicyForm");
   const routeTrafficMirroringForm = qs("#routeTrafficMirroringForm");
+  const routeCanaryRolloutForm = qs("#routeCanaryRolloutForm");
   const routeTrafficMirroringAnalyticsForm = qs("#routeTrafficMirroringAnalyticsForm");
   const gatewayEntitlementFiltersForm = qs("#gatewayEntitlementFiltersForm");
   const gatewayEntitlementForm = qs("#gatewayEntitlementForm");
@@ -4232,13 +6675,17 @@ function populateRoutingForms(row) {
   if (routePriorityForm) routePriorityForm.elements.route_policy_id.value = row.route_policy_id || "";
   if (routeProviderHealthForm) routeProviderHealthForm.elements.route_policy_id.value = row.route_policy_id || "";
   if (routePreCallFiltersForm) routePreCallFiltersForm.elements.route_policy_id.value = row.route_policy_id || "";
+  if (routeOutputGuardrailsForm) routeOutputGuardrailsForm.elements.route_policy_id.value = row.route_policy_id || "";
+  if (routeInputDataPolicyForm) routeInputDataPolicyForm.elements.route_policy_id.value = row.route_policy_id || "";
   if (routeTrafficMirroringForm) routeTrafficMirroringForm.elements.route_policy_id.value = row.route_policy_id || "";
+  if (routeCanaryRolloutForm) routeCanaryRolloutForm.elements.route_policy_id.value = row.route_policy_id || "";
   if (routeTrafficMirroringAnalyticsForm) routeTrafficMirroringAnalyticsForm.elements.route_policy_id.value = row.route_policy_id || "";
   if (gatewayEntitlementFiltersForm) gatewayEntitlementFiltersForm.elements.route_policy_id.value = row.route_policy_id || "";
   if (gatewayEntitlementForm) gatewayEntitlementForm.elements.route_policy_id.value = row.route_policy_id || "";
   if (routeFallbackForm) {
     routeFallbackForm.elements.route_policy_id.value = row.route_policy_id || "";
-    routeFallbackForm.elements.tenant_id.value = row?.tenant_id || routeFallbackForm.elements.tenant_id.value || "tenant-platform";
+    const tenantValue = row?.tenant_id || routeFallbackForm.elements.tenant_id.value || "tenant-platform";
+    syncTenantSelectField(routeFallbackForm.elements.tenant_id, tenantValue);
   }
   if (routeOptimizeForm) routeOptimizeForm.elements.route_policy_id.value = row.route_policy_id || "";
 }
@@ -4716,23 +7163,47 @@ function updateContextInputs() {
   renderLoggedInUserDetails();
 }
 
-function detectProfileFromBaseUrl(baseUrl) {
+function detectProfileFromBaseUrl(baseUrl, preferredProfile = state.environmentProfile) {
   const normalized = (baseUrl || "").trim().toLowerCase();
   const matches = Object.entries(ENVIRONMENT_PROFILES)
     .filter(([, profile]) => profile.apiBase.toLowerCase() === normalized)
     .map(([name]) => name);
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) {
-    if (matches.includes(state.environmentProfile)) return state.environmentProfile;
+    const preferred = String(preferredProfile || "").trim();
+    if (preferred && matches.includes(preferred)) return preferred;
     return matches[0];
   }
   return "custom";
 }
 
+function describeBackendMode(apiBase = state.apiBase) {
+  return isLoopbackApiBase(apiBase) ? "local loopback" : "remote";
+}
+
+function formatProfileHealthLine(profileName, text) {
+  const label = profileName.charAt(0).toUpperCase() + profileName.slice(1);
+  const isActive = profileName === state.environmentProfile;
+  return `${label}: ${text}${isActive ? " · active" : ""}`;
+}
+
+function syncProfileHealthActiveMarkers() {
+  qsa("#profileHealthList [data-profile]").forEach((row) => {
+    const profileName = row.getAttribute("data-profile");
+    const status = row.dataset.status || "--";
+    row.dataset.active = profileName === state.environmentProfile ? "true" : "false";
+    row.textContent = formatProfileHealthLine(profileName, status);
+  });
+}
+
 function renderActiveProfile() {
   const target = qs("#activeProfileText");
-  target.textContent = `Profile: ${state.environmentProfile.toUpperCase()}`;
+  const profileLabel = String(state.environmentProfile || "custom").toUpperCase();
+  const backendMode = describeBackendMode(state.apiBase);
+  const backendTarget = isLoopbackApiBase(state.apiBase) ? "127.0.0.1:8000" : state.apiBase;
+  target.textContent = `Active profile: ${profileLabel} — guardrails apply via ${backendMode} backend (${backendTarget}).`;
   renderProdGuardBanner();
+  syncProfileHealthActiveMarkers();
 }
 
 function toTitleCaseToken(token) {
@@ -4783,6 +7254,7 @@ function renderLoggedInUserDetails() {
   const name = qs("#loggedInUserName");
   const overviewName = qs("#overviewLoggedInUser");
   const overviewContext = qs("#overviewLoggedInContext");
+  const overviewSessionBadge = qs("#overviewSessionBadge");
   const headerAvatar = qs("#headerLoggedInAvatar");
   const headerName = qs("#headerLoggedInUser");
   const headerRole = qs("#headerLoggedInRole");
@@ -4806,6 +7278,10 @@ function renderLoggedInUserDetails() {
   if (overviewContext) {
     overviewContext.textContent = `${safeText(state.actorRole)} @ ${safeText(state.environmentProfile).toUpperCase()}`;
   }
+  if (overviewSessionBadge) {
+    overviewSessionBadge.textContent = state.accessToken ? "Signed in" : "Not signed in";
+    overviewSessionBadge.className = `status-pill ${state.accessToken ? "success" : "idle"}`;
+  }
   if (headerAvatar) {
     headerAvatar.setAttribute("aria-label", `${parsed.firstName} ${parsed.lastName}`);
   }
@@ -4823,12 +7299,16 @@ function renderLoggedInUserDetails() {
   }
 
   if (!target) return;
+  const sessionLine = state.accessToken
+    ? "session: signed in (bearer token)"
+    : "session: not signed in";
   target.textContent = [
     `actor_id: ${safeText(state.actorId)}`,
     `actor_role: ${safeText(state.actorRole)}`,
-    `environment: ${safeText(state.environmentProfile)}`,
+    `environment_profile: ${safeText(state.environmentProfile)}`,
     `api_base: ${safeText(state.apiBase)}`,
-    `context_source: local operator session`,
+    `backend_mode: ${describeBackendMode(state.apiBase)}`,
+    sessionLine,
   ].join("\n");
 
   if (loginControls) {
@@ -4906,7 +7386,11 @@ function saveContext() {
   state.actorId = qs("#actorId").value.trim();
   state.actorRole = resolveActorRole(state.actorId, qs("#actorRole").value);
   state.accessToken = "";
-  state.environmentProfile = detectProfileFromBaseUrl(state.apiBase);
+  const selectedProfile = String(qs("#environmentProfile")?.value || "").trim();
+  state.environmentProfile =
+    selectedProfile && selectedProfile !== "custom"
+      ? selectedProfile
+      : detectProfileFromBaseUrl(state.apiBase, state.environmentProfile);
   state.mfaVerified = parseBooleanFlag(qs("#mfaVerified")?.value, true);
   localStorage.setItem("apiBase", state.apiBase);
   localStorage.setItem("actorRole", state.actorRole);
@@ -4999,10 +7483,33 @@ async function api(path, options = {}) {
   };
 
   const requestUrl = `${state.apiBase}${path}`;
-  let resp = await fetch(requestUrl, {
+  const requestOptions = {
     ...options,
     headers,
-  });
+  };
+  let resp = await fetch(requestUrl, requestOptions);
+
+  const usedBearerToken = Boolean(headers.Authorization);
+  const shouldTryHeaderIdentityFallback =
+    usedBearerToken &&
+    (resp.status === 401 || resp.status === 403) &&
+    isLoopbackApiBase(state.apiBase);
+  if (shouldTryHeaderIdentityFallback) {
+    const fallbackHeaders = {
+      ...headers,
+    };
+    delete fallbackHeaders.Authorization;
+    resp = await fetch(requestUrl, {
+      ...requestOptions,
+      headers: fallbackHeaders,
+    });
+    if (resp.ok) {
+      state.accessToken = "";
+      localStorage.setItem("accessToken", "");
+      const tokenInput = qs("#accessToken");
+      if (tokenInput) tokenInput.value = "";
+    }
+  }
 
   const forcedRole = options?.headers?.["X-Actor-Role"];
   const effectiveRole = normalizeActorRoleForBackend(state.actorRole);
@@ -5029,8 +7536,13 @@ async function api(path, options = {}) {
     const detail = data?.detail;
     let message = detail?.message || detail || `Request failed (${resp.status})`;
     if (detail && typeof detail === "object") {
+      const actorRole = String(detail.actor_role || "").trim();
       const requiredRole = String(detail.required_role || "").trim();
+      const errorCode = String(detail.error_code || "").trim();
       const traceId = String(detail.decision_trace_id || "").trim();
+      if (errorCode === "AUTHZ_ROLE_FORBIDDEN" && usedBearerToken && isLoopbackApiBase(state.apiBase)) {
+        message = `${message} Session token role${actorRole ? ` (${actorRole})` : ""} was used for authorization. Sign in with Platform Admin, AI Ops Approver, or Agent Owner, or use a local session without a conflicting bearer token.`;
+      }
       if (requiredRole) {
         message = `${message} Required role: ${requiredRole}.`;
       }
@@ -5049,7 +7561,9 @@ async function api(path, options = {}) {
 function setProfileHealthStatus(profileName, text) {
   const row = qs(`#profileHealthList [data-profile="${profileName}"]`);
   if (!row) return;
-  row.textContent = `${profileName[0].toUpperCase() + profileName.slice(1)}: ${text}`;
+  row.dataset.status = text;
+  row.dataset.active = profileName === state.environmentProfile ? "true" : "false";
+  row.textContent = formatProfileHealthLine(profileName, text);
 }
 
 async function fetchHealthForProfile(profileName, timeoutMs = 2500) {
@@ -5087,25 +7601,86 @@ async function fetchHealthForProfile(profileName, timeoutMs = 2500) {
   }
 }
 
-async function probeProfiles(profileNames = [state.environmentProfile || "local"]) {
+async function probeProfiles(profileNames = Object.keys(ENVIRONMENT_PROFILES)) {
   const uniqueNames = Array.from(new Set(profileNames)).filter((name) => Boolean(ENVIRONMENT_PROFILES[name]));
   if (!uniqueNames.length) return;
   await Promise.all(uniqueNames.map((name) => fetchHealthForProfile(name)));
+  syncProfileHealthActiveMarkers();
+}
+
+function formatViewDescription(viewName) {
+  return VIEW_DESCRIPTIONS[viewName] || "Operator console for platform workflows.";
+}
+
+function closeSidebar() {
+  const sidebar = qs("#sidebar");
+  const toggle = qs("#sidebarToggle");
+  if (sidebar) sidebar.classList.remove("open");
+  document.body.classList.remove("sidebar-open");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-label", "Open navigation menu");
+    toggle.setAttribute("title", "Menu");
+  }
+}
+
+function openSidebar() {
+  const sidebar = qs("#sidebar");
+  const toggle = qs("#sidebarToggle");
+  if (sidebar) sidebar.classList.add("open");
+  document.body.classList.add("sidebar-open");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", "true");
+    toggle.setAttribute("aria-label", "Close navigation menu");
+    toggle.setAttribute("title", "Close menu");
+  }
+}
+
+function toggleSidebar() {
+  const sidebar = qs("#sidebar");
+  if (!sidebar) return;
+  if (sidebar.classList.contains("open")) {
+    closeSidebar();
+    return;
+  }
+  openSidebar();
 }
 
 function switchView(viewName) {
   const targetBtn = qsa(".nav-item").find((btn) => btn.dataset.view === viewName);
   if (!targetBtn || targetBtn.hidden) return;
 
+  const navGroup = targetBtn.closest("[data-nav-group]");
+  if (navGroup) {
+    const toggle = navGroup.querySelector(".nav-group-toggle");
+    const submenu = navGroup.querySelector(".nav-submenu");
+    if (submenu) submenu.hidden = false;
+    if (toggle) toggle.setAttribute("aria-expanded", "true");
+  }
+
   qsa(".nav-item").forEach((btn) => {
     const isActive = btn.dataset.view === viewName;
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-current", isActive ? "page" : "false");
   });
-  qsa(".view").forEach((section) => {
-    section.classList.toggle("active", section.id === viewName);
-  });
-  qs("#viewTitle").textContent = formatViewTitle(viewName);
+  if (typeof ViewLoader !== "undefined") {
+    ViewLoader.setActiveView(viewName);
+  } else {
+    qsa(".view").forEach((section) => {
+      section.classList.toggle("active", section.id === viewName);
+    });
+  }
+  const titleTarget = qs("#viewTitle");
+  if (titleTarget) titleTarget.textContent = formatViewTitle(viewName);
+  const subtitleTarget = qs("#viewSubtitle");
+  if (subtitleTarget) subtitleTarget.textContent = formatViewDescription(viewName);
+  closeSidebar();
+  if (viewName === "routing-gateway") {
+    void ensureTenantCatalogReady();
+    void loadGatewayConfiguredModels();
+  } else if (["providers", "security", "agents"].includes(viewName)) {
+    void ensureTenantCatalogReady();
+  }
 }
 
 function buildQueryString(raw) {
@@ -5193,11 +7768,11 @@ async function loadOverview() {
 
 async function loadDiscovery() {
   const tbody = qs("#discoveryTable");
-  setTableMessage(tbody, 4, "Loading...");
+  setTableMessage(tbody, 5, "Loading...");
   try {
     const rows = await api("/discovery/agents");
     if (!rows?.length) {
-      setTableMessage(tbody, 4, "No discovery records.");
+      setTableMessage(tbody, 5, "No discovery records.");
       return;
     }
 
@@ -5208,10 +7783,11 @@ async function loadDiscovery() {
         row.source_system,
         row.discovery_confidence,
         row.discovery_status,
+        row.promoted_to_agent_id || "--",
       ]);
     });
   } catch (err) {
-    setTableMessage(tbody, 4, `Error: ${safeText(err.message)}`);
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
   }
 }
 
@@ -5301,7 +7877,7 @@ function renderDiscoveryPromoteQueue() {
   const tbody = qs("#discoveryPromoteQueueTable");
   if (!tbody) return;
   if (!discoveryPromoteQueueRows.length) {
-    setTableMessage(tbody, 6, "No discovered agents ready for promotion.");
+    setTableMessage(tbody, 7, "No discovered agents ready for promotion.");
     return;
   }
   tbody.textContent = "";
@@ -5311,6 +7887,7 @@ function renderDiscoveryPromoteQueue() {
     appendTableCell(tr, row.canonical_agent_key);
     appendTableCell(tr, row.source_system);
     appendTableCell(tr, row.discovery_confidence);
+    appendTableCell(tr, Number(row.discovery_confidence || 0) >= 95 ? "critical" : "high");
     appendTableCell(tr, row.queue_reason);
     const actions = document.createElement("td");
     actions.className = "cell-actions";
@@ -5325,6 +7902,158 @@ function renderDiscoveryPromoteQueue() {
   });
 }
 
+function normalizeDiscoveryUrgency(type, row) {
+  if (type === "alert") return String(row.severity || "high").toLowerCase();
+  if (type === "conflict") return String(row.review_priority || "normal").toLowerCase();
+  if (type === "promote") return Number(row.discovery_confidence || 0) >= 95 ? "critical" : "high";
+  return "normal";
+}
+
+function buildDiscoveryUnifiedTriageRows() {
+  const conflictRows = discoveryConflictRows.map((row) => ({
+    type: "conflict",
+    discovered_agent_id: row.discovered_agent_id,
+    canonical_agent_key: row.canonical_agent_key,
+    source_system: row.source_system,
+    discovery_confidence: row.discovery_confidence,
+    urgency: normalizeDiscoveryUrgency("conflict", row),
+    detail: row.conflict_reason || "conflict_requires_review",
+    actions: ["approve", "reject"],
+  }));
+
+  const alertRows = discoveryAlertRows.map((row) => ({
+    type: "alert",
+    discovered_agent_id: row.discovered_agent_id,
+    canonical_agent_key: "--",
+    source_system: row.source_system,
+    discovery_confidence: row.discovery_confidence,
+    urgency: normalizeDiscoveryUrgency("alert", row),
+    detail: `${row.alert_type || "alert"}: ${row.message || ""}`,
+    actions: ["approve", "reject"],
+  }));
+
+  const promoteRows = discoveryPromoteQueueRows.map((row) => ({
+    type: "promote",
+    discovered_agent_id: row.discovered_agent_id,
+    canonical_agent_key: row.canonical_agent_key,
+    source_system: row.source_system,
+    discovery_confidence: row.discovery_confidence,
+    urgency: normalizeDiscoveryUrgency("promote", row),
+    detail: row.queue_reason || "ready_for_promotion",
+    actions: ["promote"],
+  }));
+
+  return [...conflictRows, ...alertRows, ...promoteRows].sort((left, right) => {
+    const confidenceDelta = Number(right.discovery_confidence || 0) - Number(left.discovery_confidence || 0);
+    if (confidenceDelta !== 0) return confidenceDelta;
+    return String(left.type).localeCompare(String(right.type));
+  });
+}
+
+function renderDiscoveryPosture() {
+  const healthySources = discoverySourceRows.filter((row) => row.status === "healthy").length;
+  const staleSources = discoverySourceRows.filter((row) => row.status !== "healthy").length;
+  const highRiskAlerts = discoveryAlertRows.filter((row) => String(row.severity || "").toLowerCase() === "high").length;
+
+  const healthyTarget = qs("#discoveryHealthySources");
+  const staleTarget = qs("#discoveryStaleSources");
+  const conflictsTarget = qs("#discoveryConflictCount");
+  const alertsTarget = qs("#discoveryAlertCount");
+  const promoteTarget = qs("#discoveryPromoteReadyCount");
+
+  if (healthyTarget) healthyTarget.textContent = String(healthySources);
+  if (staleTarget) staleTarget.textContent = String(staleSources);
+  if (conflictsTarget) conflictsTarget.textContent = String(discoveryConflictRows.length);
+  if (alertsTarget) alertsTarget.textContent = String(highRiskAlerts);
+  if (promoteTarget) promoteTarget.textContent = String(discoveryPromoteQueueRows.length);
+}
+
+function renderDiscoveryUnifiedTriage() {
+  const tbody = qs("#discoveryUnifiedTriageTable");
+  if (!tbody) return;
+
+  const typeFilter = String(discoveryTriageFilters.type || "all").toLowerCase();
+  const severityFilter = String(discoveryTriageFilters.severity || "all").toLowerCase();
+  const search = String(discoveryTriageFilters.search || "").trim().toLowerCase();
+
+  const rows = discoveryUnifiedTriageRows.filter((row) => {
+    if (typeFilter !== "all" && row.type !== typeFilter) return false;
+    if (severityFilter !== "all" && row.urgency !== severityFilter) return false;
+    if (!search) return true;
+    const haystack = [
+      row.discovered_agent_id,
+      row.canonical_agent_key,
+      row.source_system,
+      row.detail,
+      row.urgency,
+      row.type,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(search);
+  });
+
+  if (!rows.length) {
+    setTableMessage(tbody, 8, "No triage records match current filters.");
+    return;
+  }
+
+  tbody.textContent = "";
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.type);
+    appendTableCell(tr, row.discovered_agent_id);
+    appendTableCell(tr, row.canonical_agent_key || "--");
+    appendTableCell(tr, row.source_system);
+    appendTableCell(tr, row.discovery_confidence);
+    appendTableCell(tr, row.urgency);
+    appendTableCell(tr, row.detail);
+    const actions = document.createElement("td");
+    actions.className = "cell-actions";
+    if (row.actions.includes("approve")) {
+      const approveBtn = document.createElement("button");
+      approveBtn.type = "button";
+      approveBtn.className = "ghost";
+      approveBtn.textContent = "Approve";
+      approveBtn.addEventListener("click", () => resolveDiscoveryRecord(row.discovered_agent_id, "approve"));
+      actions.appendChild(approveBtn);
+    }
+    if (row.actions.includes("reject")) {
+      const rejectBtn = document.createElement("button");
+      rejectBtn.type = "button";
+      rejectBtn.className = "ghost";
+      rejectBtn.textContent = "Reject";
+      rejectBtn.addEventListener("click", () => resolveDiscoveryRecord(row.discovered_agent_id, "reject"));
+      actions.appendChild(rejectBtn);
+    }
+    if (row.actions.includes("promote")) {
+      const promoteBtn = document.createElement("button");
+      promoteBtn.type = "button";
+      promoteBtn.className = "ghost";
+      promoteBtn.textContent = "Promote";
+      promoteBtn.addEventListener("click", () => promoteDiscoveryAgent(row.discovered_agent_id));
+      actions.appendChild(promoteBtn);
+    }
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+function refreshDiscoveryDerivedViews() {
+  discoveryUnifiedTriageRows = buildDiscoveryUnifiedTriageRows();
+  renderDiscoveryPosture();
+  renderDiscoveryUnifiedTriage();
+}
+
+function setDiscoveryTriageFilter(filterKey, value) {
+  discoveryTriageFilters = {
+    ...discoveryTriageFilters,
+    [filterKey]: String(value || "").trim(),
+  };
+  renderDiscoveryUnifiedTriage();
+}
+
 async function loadDiscoverySources() {
   const result = qs("#discoverySourceResult");
   const tbody = qs("#discoverySourcesTable");
@@ -5333,6 +8062,7 @@ async function loadDiscoverySources() {
     const rows = await api("/discovery/sources");
     discoverySourceRows = Array.isArray(rows) ? rows : [];
     renderDiscoverySources();
+    refreshDiscoveryDerivedViews();
     if (result) result.textContent = discoverySourceRows.length ? `Loaded ${discoverySourceRows.length} discovery sources.` : "No discovery sources.";
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
@@ -5360,6 +8090,7 @@ async function loadDiscoveryConflicts() {
     const rows = await api("/discovery/conflicts");
     discoveryConflictRows = Array.isArray(rows) ? rows : [];
     renderDiscoveryConflicts();
+    refreshDiscoveryDerivedViews();
     if (result) result.textContent = discoveryConflictRows.length ? `Loaded ${discoveryConflictRows.length} discovery conflicts.` : "No discovery conflicts.";
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
@@ -5375,6 +8106,7 @@ async function loadDiscoveryAlerts() {
     const rows = await api("/discovery/alerts");
     discoveryAlertRows = Array.isArray(rows) ? rows : [];
     renderDiscoveryAlerts();
+    refreshDiscoveryDerivedViews();
     if (result) result.textContent = discoveryAlertRows.length ? `Loaded ${discoveryAlertRows.length} discovery alerts.` : "No discovery alerts.";
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
@@ -5390,11 +8122,16 @@ async function loadDiscoveryPromoteQueue() {
     const rows = await api("/discovery/promote-queue");
     discoveryPromoteQueueRows = Array.isArray(rows) ? rows : [];
     renderDiscoveryPromoteQueue();
+    refreshDiscoveryDerivedViews();
     if (result) result.textContent = discoveryPromoteQueueRows.length ? `Loaded ${discoveryPromoteQueueRows.length} promotion candidates.` : "No promotion candidates.";
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
     setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
   }
+}
+
+async function loadDiscoveryTriageWorkspace() {
+  await Promise.all([loadDiscoveryConflicts(), loadDiscoveryAlerts(), loadDiscoveryPromoteQueue()]);
 }
 
 async function resolveDiscoveryRecord(discoveredAgentId, decision) {
@@ -5534,12 +8271,12 @@ function populateWorkloadTrustForms(row) {
   const healthForm = qs("#workloadIdentityHealthForm");
   if (trustForm) {
     trustForm.elements.provider_id.value = row.workload_identity_profile_id || "";
-    trustForm.elements.tenant_id.value = row.tenant_id || "";
+    syncTenantSelectField(trustForm.elements.tenant_id, row.tenant_id || "");
     trustForm.elements.expected_audience.value = row.audience || "";
   }
   if (healthForm) {
     healthForm.elements.provider_id.value = row.workload_identity_profile_id || "";
-    healthForm.elements.tenant_id.value = row.tenant_id || "";
+    syncTenantSelectField(healthForm.elements.tenant_id, row.tenant_id || "");
   }
 }
 
@@ -5944,7 +8681,7 @@ async function loadSupportedModels(evt) {
     const rows = await api(`/providers/models${query}`, { headers: { "X-Actor-Role": "Auditor" } });
     if (result) result.textContent = `Loaded ${rows.length} supported models.`;
     if (!rows?.length) {
-      setTableMessage(tbody, 8, "No supported models found.");
+      setTableMessage(tbody, 11, "No supported models found.");
       return;
     }
 
@@ -5956,6 +8693,9 @@ async function loadSupportedModels(evt) {
       appendTableCell(tr, row.display_name);
       appendTableCell(tr, row.context_window_tokens);
       appendTableCell(tr, row.status);
+      appendTableCell(tr, row.approval_status || "pending");
+      appendTableCell(tr, row.metadata_version || 1);
+      appendTableCell(tr, row.recommendation_rationale || "");
       appendTableCell(tr, row.description);
       appendTableCell(tr, row.updated_at);
 
@@ -5966,18 +8706,23 @@ async function loadSupportedModels(evt) {
       editBtn.className = "ghost";
       editBtn.textContent = "Edit";
       editBtn.addEventListener("click", () => populateSupportedModelForm(row));
+      const approveBtn = document.createElement("button");
+      approveBtn.type = "button";
+      approveBtn.className = "ghost";
+      approveBtn.textContent = "Approve/Reject";
+      approveBtn.addEventListener("click", () => populateSupportedModelApprovalForm(row));
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "ghost";
       deleteBtn.textContent = "Delete";
       deleteBtn.addEventListener("click", () => deleteSupportedModel(row.supported_model_id));
-      actionsCell.append(editBtn, deleteBtn);
+      actionsCell.append(editBtn, approveBtn, deleteBtn);
       tr.appendChild(actionsCell);
       tbody.appendChild(tr);
     });
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
-    setTableMessage(tbody, 8, `Error: ${safeText(err.message)}`);
+    setTableMessage(tbody, 11, `Error: ${safeText(err.message)}`);
   }
 }
 
@@ -5988,6 +8733,7 @@ function resetSupportedModelForm(message = "") {
   form.elements.supported_model_id.value = "";
   form.elements.context_window_tokens.value = "128000";
   form.elements.status.value = "active";
+  form.elements.recommendation_rationale.value = "";
   const result = qs("#supportedModelsResult");
   if (result) result.textContent = message;
 }
@@ -6003,8 +8749,18 @@ function populateSupportedModelForm(row) {
   form.elements.context_window_tokens.value = String(row.context_window_tokens || 128000);
   form.elements.status.value = row.status || "active";
   form.elements.description.value = row.description || "";
+  form.elements.recommendation_rationale.value = row.recommendation_rationale || "";
   const result = qs("#supportedModelsResult");
   if (result) result.textContent = `Editing ${row.model_name}`;
+}
+
+function populateSupportedModelApprovalForm(row) {
+  const form = qs("#supportedModelApprovalForm");
+  if (!form || !row) return;
+  form.elements.supported_model_id.value = row.supported_model_id || "";
+  form.elements.decision.value = "approve";
+  const result = qs("#supportedModelsResult");
+  if (result) result.textContent = `Approval form prepared for ${row.model_name}`;
 }
 
 async function saveSupportedModel(evt) {
@@ -6020,6 +8776,7 @@ async function saveSupportedModel(evt) {
     context_window_tokens: Number(raw.context_window_tokens || 128000),
     status: String(raw.status || "active").trim().toLowerCase(),
     description: String(raw.description || "").trim(),
+    recommendation_rationale: String(raw.recommendation_rationale || "").trim(),
   };
 
   try {
@@ -6028,6 +8785,38 @@ async function saveSupportedModel(evt) {
     await api(path, { method, body: JSON.stringify(payload) });
     resetSupportedModelForm(`Saved supported model ${payload.model_name}.`);
     await Promise.all([loadSupportedModels(), loadSupportedModelOptions(payload.provider_type, payload.model_name)]);
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function submitSupportedModelApproval(evt) {
+  evt.preventDefault();
+  const form = evt.currentTarget;
+  const result = qs("#supportedModelsResult");
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const supportedModelId = String(raw.supported_model_id || "").trim();
+  if (!supportedModelId) {
+    if (result) result.textContent = "Supported model ID is required for approval actions.";
+    return;
+  }
+
+  try {
+    const payload = {
+      decision: String(raw.decision || "approve").trim().toLowerCase(),
+      approval_ticket_ref: String(raw.approval_ticket_ref || "").trim(),
+      approval_note: String(raw.approval_note || "").trim(),
+      environment: String(raw.environment || "dev").trim().toLowerCase(),
+    };
+    const data = await api(`/providers/models/${encodeURIComponent(supportedModelId)}/approve`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: payload.environment === "prod" ? { "X-Actor-Role": "Security Approver" } : undefined,
+    });
+    if (result) {
+      result.textContent = `Model ${safeText(data.model_name)} marked ${safeText(data.approval_status)} at version ${safeText(String(data.metadata_version || 1))}.`;
+    }
+    await loadSupportedModels();
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
   }
@@ -6112,6 +8901,7 @@ function resetTenantModelEntitlementForm(message = "") {
   form.reset();
   form.elements.tenant_model_entitlement_id.value = "";
   form.elements.status.value = "active";
+  refreshTenantBoundForms();
   if (result) result.textContent = message;
 }
 
@@ -6121,7 +8911,7 @@ function populateTenantModelEntitlementForm(row) {
   if (!form || !row) return;
 
   form.elements.tenant_model_entitlement_id.value = row.tenant_model_entitlement_id || "";
-  form.elements.tenant_id.value = row.tenant_id || "";
+  syncTenantSelectField(form.elements.tenant_id, row.tenant_id || "");
   form.elements.provider_type.value = row.provider_type || "";
   form.elements.model_name.value = row.model_name || "";
   form.elements.status.value = row.status || "active";
@@ -6184,6 +8974,7 @@ async function loadProviderConsole() {
 }
 
 function populateModuleForms(row) {
+  const registerForm = qs("#moduleRegisterForm");
   const versionsForm = qs("#moduleVersionsForm");
   const validateForm = qs("#moduleValidateForm");
   const planForm = qs("#moduleUpgradePlanForm");
@@ -6197,6 +8988,14 @@ function populateModuleForms(row) {
     planForm.elements.module_id.value = row.module_id || "";
     planForm.elements.pinned_version.value = row.version || "";
   }
+  if (registerForm) {
+    if (registerForm.elements.integration_provider) {
+      registerForm.elements.integration_provider.value = row.integration_provider || "";
+    }
+    if (registerForm.elements.integration_reference) {
+      registerForm.elements.integration_reference.value = row.integration_reference || "";
+    }
+  }
   if (deprecateForm) deprecateForm.elements.module_id.value = row.module_id || "";
 }
 
@@ -6204,7 +9003,7 @@ function renderModuleRows() {
   const tbody = qs("#modulesTable");
   if (!tbody) return;
   if (!moduleRows.length) {
-    setTableMessage(tbody, 7, "No modules found.");
+    setTableMessage(tbody, 10, "No modules found.");
     return;
   }
   tbody.textContent = "";
@@ -6216,6 +9015,9 @@ function renderModuleRows() {
     appendTableCell(tr, row.version);
     appendTableCell(tr, row.status);
     appendTableCell(tr, row.owner_team);
+    appendTableCell(tr, row.integration_provider || "--");
+    appendTableCell(tr, formatIntegrationSyncStatus(row.integration_sync_status));
+    appendTableCell(tr, row.integration_last_synced_at || "--");
 
     const actionsCell = document.createElement("td");
     actionsCell.className = "cell-actions";
@@ -6232,7 +9034,30 @@ function renderModuleRows() {
     versionsBtn.textContent = "Versions";
     versionsBtn.addEventListener("click", () => loadModuleVersions(row.module_id));
 
-    actionsCell.append(useBtn, versionsBtn);
+    const syncBtn = document.createElement("button");
+    syncBtn.type = "button";
+    syncBtn.className = "ghost";
+    syncBtn.textContent = "Sync Integration";
+    syncBtn.disabled = !row.integration_provider;
+    syncBtn.addEventListener(
+      "click",
+      () => syncModuleIntegration(row.module_id, row.integration_reference || "", row.integration_provider || "")
+    );
+
+    const needsCursorFix =
+      String(row.integration_provider || "").trim().toLowerCase() === "cursor"
+      && String(row.integration_sync_status || "").trim().toLowerCase() === "invalid_reference";
+
+    if (needsCursorFix) {
+      const fixBtn = document.createElement("button");
+      fixBtn.type = "button";
+      fixBtn.className = "ghost";
+      fixBtn.textContent = "Fix Cursor Reference";
+      fixBtn.addEventListener("click", () => prepareCursorReferenceFix(row));
+      actionsCell.append(useBtn, versionsBtn, syncBtn, fixBtn);
+    } else {
+      actionsCell.append(useBtn, versionsBtn, syncBtn);
+    }
     tr.appendChild(actionsCell);
     tbody.appendChild(tr);
   });
@@ -6242,7 +9067,7 @@ async function loadModules(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const result = qs("#moduleRegisterResult");
   const tbody = qs("#modulesTable");
-  if (tbody) setTableMessage(tbody, 7, "Loading...");
+  if (tbody) setTableMessage(tbody, 10, "Loading...");
   try {
     const rows = await api("/modules", { headers: { "X-Actor-Role": "Auditor" } });
     moduleRows = Array.isArray(rows) ? rows : [];
@@ -6250,7 +9075,93 @@ async function loadModules(evt) {
     if (result) result.textContent = `Loaded ${moduleRows.length} modules.`;
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
-    if (tbody) setTableMessage(tbody, 7, `Error: ${safeText(err.message)}`);
+    if (tbody) setTableMessage(tbody, 10, `Error: ${safeText(err.message)}`);
+  }
+}
+
+function renderAiSkillRows() {
+  const tbody = qs("#aiSkillsTable");
+  if (!tbody) return;
+  if (!aiSkillRows.length) {
+    setTableMessage(tbody, 8, "No AI skills found.");
+    return;
+  }
+  tbody.textContent = "";
+  aiSkillRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.module_id);
+    appendTableCell(tr, row.module_name);
+    appendTableCell(tr, row.module_type);
+    appendTableCell(tr, row.version);
+    appendTableCell(tr, row.status);
+    appendTableCell(tr, row.owner_team);
+    appendTableCell(tr, row.integration_provider || "--");
+    appendTableCell(tr, formatIntegrationSyncStatus(row.integration_sync_status));
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadAiSkills(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#aiSkillsResult");
+  const tbody = qs("#aiSkillsTable");
+  if (tbody) setTableMessage(tbody, 8, "Loading...");
+  try {
+    const rows = await api("/modules/skills", { headers: { "X-Actor-Role": "Auditor" } });
+    aiSkillRows = Array.isArray(rows) ? rows : [];
+    renderAiSkillRows();
+    if (result) result.textContent = `Loaded ${aiSkillRows.length} AI skills.`;
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    if (tbody) setTableMessage(tbody, 8, `Error: ${safeText(err.message)}`);
+  }
+}
+
+function isValidCursorIntegrationReference(reference) {
+  return String(reference || "").trim().startsWith("cursor://workspace/");
+}
+
+function formatIntegrationSyncStatus(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (!normalized) return "--";
+  if (normalized === "invalid_reference") return "invalid_reference (action required)";
+  return normalized;
+}
+
+function resolveCursorSyncReferenceFromForm() {
+  const registerForm = qs("#moduleRegisterForm");
+  if (!registerForm || !registerForm.elements || !registerForm.elements.integration_reference) return "";
+  return String(registerForm.elements.integration_reference.value || "").trim();
+}
+
+function suggestCursorWorkspaceReference(row) {
+  const teamToken = String(row?.owner_team || "team")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const scopedTeam = teamToken || "team";
+  return `cursor://workspace/${scopedTeam}/skills`;
+}
+
+function prepareCursorReferenceFix(row) {
+  const registerForm = qs("#moduleRegisterForm");
+  const result = qs("#moduleRegisterResult");
+  if (!registerForm || !registerForm.elements) {
+    if (result) result.textContent = "Error: Module Register form is not available for remediation.";
+    return;
+  }
+
+  if (registerForm.elements.integration_provider) {
+    registerForm.elements.integration_provider.value = "cursor";
+  }
+  if (registerForm.elements.integration_reference) {
+    registerForm.elements.integration_reference.value = suggestCursorWorkspaceReference(row);
+    registerForm.elements.integration_reference.focus();
+    registerForm.elements.integration_reference.select();
+  }
+  if (result) {
+    result.textContent = `Prepared Cursor reference fix for ${safeText(row.module_id)}. Review integration_reference and click Sync Integration.`;
   }
 }
 
@@ -6270,7 +9181,13 @@ async function registerModule(evt) {
     artifact_signature: String(raw.artifact_signature || "").trim(),
     provenance_ref: String(raw.provenance_ref || "").trim(),
     security_review_ticket: String(raw.security_review_ticket || "").trim(),
+    integration_provider: String(raw.integration_provider || "").trim().toLowerCase(),
+    integration_reference: String(raw.integration_reference || "").trim(),
   };
+  if (payload.integration_provider === "cursor" && !isValidCursorIntegrationReference(payload.integration_reference)) {
+    if (result) result.textContent = "Error: cursor integration_reference must start with cursor://workspace/.";
+    return;
+  }
   try {
     const module = await api("/modules/register", {
       method: "POST",
@@ -6278,6 +9195,37 @@ async function registerModule(evt) {
     });
     if (result) result.textContent = `Registered module ${safeText(module.module_id)} (${safeText(module.module_name)}).`;
     await loadModules();
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function syncModuleIntegration(moduleId, integrationReference, integrationProvider = "") {
+  const result = qs("#moduleRegisterResult");
+  if (!moduleId) return;
+  const provider = String(integrationProvider || "").trim().toLowerCase();
+  let resolvedReference = String(integrationReference || "").trim();
+  if (provider === "cursor" && !isValidCursorIntegrationReference(resolvedReference)) {
+    const formReference = resolveCursorSyncReferenceFromForm();
+    if (isValidCursorIntegrationReference(formReference)) {
+      resolvedReference = formReference;
+    } else {
+      if (result) {
+        result.textContent = "Error: cursor module needs integration_reference cursor://workspace/.... Set it in Register Module form and retry Sync Integration.";
+      }
+      return;
+    }
+  }
+  try {
+    const data = await api(`/modules/${encodeURIComponent(moduleId)}/integration/sync`, {
+      method: "POST",
+      body: JSON.stringify({ integration_reference: resolvedReference || null }),
+    });
+    if (result) {
+      result.textContent = `Integration synced for ${safeText(data.module_id)} via ${safeText(data.integration_provider)}.`;
+    }
+    await loadModules();
+    await loadAiSkills();
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
   }
@@ -6389,6 +9337,7 @@ async function deprecateModule(evt) {
 
 async function loadModulesConsole() {
   await loadModules();
+  await loadAiSkills();
 }
 
 function renderAgenticCertificationRows() {
@@ -8032,7 +10981,7 @@ async function loadRoutePriorityReadback(routePolicyId) {
     const query = buildQueryString({ request_tag: requestTag || null });
     const data = await api(`/gateway/routes/${encodeURIComponent(id)}/providers/priority${query}`);
     form.elements.route_policy_id.value = id;
-    form.elements.tenant_id.value = data.tenant_id || "";
+    syncTenantSelectField(form.elements.tenant_id, data.tenant_id || "");
     form.elements.environment.value = data.environment || "prod";
     form.elements.request_tag.value = data.request_tag || requestTag || "";
     form.elements.priority_order.value = data.priority_order || "[]";
@@ -8115,7 +11064,7 @@ async function loadGatewayCacheStats() {
   result.textContent = "Loading cache stats...";
   try {
     const data = await api("/gateway/cache/stats");
-    result.textContent = `Cache hit ratio ${safeText(data.hit_ratio)} across ${safeText(data.eligible_requests)} eligible requests.`;
+    result.textContent = `Cache hit ratio ${safeText(data.hit_ratio)} across ${safeText(data.eligible_requests)} eligible requests; ${safeText(data.semantic_policies)} semantic policies average threshold ${safeText(data.avg_similarity_threshold)}.`;
   } catch (err) {
     result.textContent = `Error: ${safeText(err.message)}`;
   }
@@ -8137,7 +11086,7 @@ function renderGatewayCachePolicies() {
   const table = qs("#gatewayCachePoliciesTable");
   if (!table) return;
   if (!gatewayCachePolicyRows.length) {
-    setTableMessage(table, 8, "No cache policies found.");
+    setTableMessage(table, 12, "No cache policies found.");
     return;
   }
 
@@ -8151,6 +11100,10 @@ function renderGatewayCachePolicies() {
       row.key_strategy,
       row.invalidation_strategy,
       row.privacy_mode,
+      row.privacy_scope || "tenant",
+      row.non_cache_data_classes || "[]",
+      row.cache_mode,
+      row.similarity_threshold,
       row.status,
     ].forEach((value) => {
       const td = document.createElement("td");
@@ -8172,12 +11125,42 @@ function renderGatewayCachePolicies() {
       form.elements.key_strategy.value = row.key_strategy || "";
       form.elements.invalidation_strategy.value = row.invalidation_strategy || "";
       form.elements.privacy_mode.value = row.privacy_mode || "";
+      if (form.elements.privacy_scope) form.elements.privacy_scope.value = row.privacy_scope || "tenant";
+      if (form.elements.non_cache_data_classes) form.elements.non_cache_data_classes.value = row.non_cache_data_classes || "[]";
+      if (form.elements.cache_mode) form.elements.cache_mode.value = row.cache_mode || "exact";
+      if (form.elements.similarity_threshold) form.elements.similarity_threshold.value = Number(row.similarity_threshold ?? 0.9);
       const result = qs("#gatewayCachePolicyResult");
       if (result) result.textContent = `Loaded cache policy ${row.cache_policy_id} into form.`;
     });
     actions.appendChild(useBtn);
     tr.appendChild(actions);
     table.appendChild(tr);
+  });
+}
+
+function renderGatewayCacheDecisions() {
+  const table = qs("#gatewayCacheDecisionsTable");
+  if (!table) return;
+  if (!gatewayCacheDecisionRows.length) {
+    setTableMessage(table, 11, "No cache decisions found.");
+    return;
+  }
+
+  table.textContent = "";
+  gatewayCacheDecisionRows.forEach((row) => {
+    appendTableRow(table, [
+      formatComplianceDate(row.timestamp),
+      row.decision || "--",
+      row.match_score ?? "--",
+      row.explanation || "--",
+      row.cache_policy_id || "--",
+      row.cache_mode || "--",
+      row.cache_policy_scope || "--",
+      row.trace_id || "--",
+      row.request_fingerprint || "--",
+      row.source_request_id || "--",
+      row.match_provenance || "--",
+    ]);
   });
 }
 
@@ -8196,7 +11179,7 @@ async function loadGatewayCachePolicies(evt) {
     offset: raw.offset,
   });
 
-  setTableMessage(table, 8, "Loading...");
+  setTableMessage(table, 12, "Loading...");
   if (result) result.textContent = "Loading cache policies...";
   try {
     const rows = await api(`/gateway/cache/policies${query}`, {
@@ -8207,7 +11190,38 @@ async function loadGatewayCachePolicies(evt) {
     if (result) result.textContent = `Loaded ${gatewayCachePolicyRows.length} cache policies.`;
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
-    setTableMessage(table, 8, `Error: ${safeText(err.message)}`);
+    setTableMessage(table, 12, `Error: ${safeText(err.message)}`);
+  }
+}
+
+async function loadGatewayCacheDecisions(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCacheDecisionFilters");
+  const result = qs("#gatewayCacheDecisionResult");
+  const table = qs("#gatewayCacheDecisionsTable");
+  if (!form || !table) return;
+
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const query = buildQueryString({
+    trace_id: raw.trace_id,
+    tenant_id: raw.tenant_id,
+    decision: raw.decision,
+    limit: raw.limit,
+    offset: raw.offset,
+  });
+
+  setTableMessage(table, 10, "Loading...");
+  if (result) result.textContent = "Loading cache decisions...";
+  try {
+    const rows = await api(`/gateway/cache/decisions${query}`, {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    gatewayCacheDecisionRows = Array.isArray(rows) ? rows : [];
+    renderGatewayCacheDecisions();
+    if (result) result.textContent = `Loaded ${gatewayCacheDecisionRows.length} cache decisions.`;
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    setTableMessage(table, 10, `Error: ${safeText(err.message)}`);
   }
 }
 
@@ -8217,6 +11231,11 @@ async function saveGatewayCachePolicy(evt) {
   const result = qs("#gatewayCachePolicyResult");
   if (!form || !result) return;
   const raw = Object.fromEntries(new FormData(form).entries());
+  const nonCacheDataClasses = parseJsonOrFallback(raw.non_cache_data_classes, []);
+  if (!Array.isArray(nonCacheDataClasses)) {
+    result.textContent = "Non-Cache Data Classes must be a JSON array.";
+    return;
+  }
   result.textContent = "Creating cache policy...";
   try {
     const data = await api("/gateway/cache/policies", {
@@ -8227,6 +11246,10 @@ async function saveGatewayCachePolicy(evt) {
         key_strategy: String(raw.key_strategy || "default").trim(),
         invalidation_strategy: String(raw.invalidation_strategy || "ttl").trim(),
         privacy_mode: String(raw.privacy_mode || "standard").trim(),
+        privacy_scope: String(raw.privacy_scope || "tenant").trim(),
+        non_cache_data_classes: JSON.stringify(nonCacheDataClasses),
+        cache_mode: String(raw.cache_mode || "exact").trim(),
+        similarity_threshold: Number(raw.similarity_threshold || 0.9),
       }),
     });
     result.textContent = `Created cache policy ${safeText(data.cache_policy_id)}.`;
@@ -8604,7 +11627,7 @@ function renderGatewayExternalCallbacks() {
   const tbody = qs("#gatewayExternalCallbacksTable");
   if (!tbody) return;
   if (!gatewayExternalCallbackRows.length) {
-    setTableMessage(tbody, 7, "No external callbacks configured.");
+    setTableMessage(tbody, 10, "No external callbacks configured.");
     return;
   }
 
@@ -8614,6 +11637,9 @@ function renderGatewayExternalCallbacks() {
     appendTableCell(tr, row.callback_id || "--");
     appendTableCell(tr, row.callback_url || "--");
     appendTableCell(tr, Array.isArray(row.event_types) ? row.event_types.join(", ") : "--");
+    appendTableCell(tr, row.sink_type || "generic_webhook");
+    appendTableCell(tr, row.sink_route_key || "--");
+    appendTableCell(tr, row.correlation_preset || "trace_resource");
     appendTableCell(tr, row.environment || "dev");
     appendTableCell(tr, row.enabled ? "true" : "false");
     appendTableCell(tr, row.redact_sensitive ? "true" : "false");
@@ -8661,7 +11687,7 @@ async function loadGatewayExternalCallbacks(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const result = qs("#gatewayExternalCallbackResult");
   const tbody = qs("#gatewayExternalCallbacksTable");
-  if (tbody) setTableMessage(tbody, 7, "Loading...");
+  if (tbody) setTableMessage(tbody, 10, "Loading...");
   try {
     const rows = await api("/gateway/external-callbacks");
     gatewayExternalCallbackRows = Array.isArray(rows) ? rows : [];
@@ -8669,7 +11695,7 @@ async function loadGatewayExternalCallbacks(evt) {
     if (result) result.textContent = `Loaded ${gatewayExternalCallbackRows.length} external callbacks.`;
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
-    if (tbody) setTableMessage(tbody, 7, `Error: ${safeText(err.message)}`);
+    if (tbody) setTableMessage(tbody, 10, `Error: ${safeText(err.message)}`);
   }
 }
 
@@ -8685,6 +11711,9 @@ async function saveGatewayExternalCallback(evt) {
       body: JSON.stringify({
         callback_url: String(raw.callback_url || "").trim(),
         event_types: parseCsvList(raw.event_types_csv),
+        sink_type: String(raw.sink_type || "generic_webhook").trim().toLowerCase(),
+        sink_route_key: String(raw.sink_route_key || "").trim() || null,
+        correlation_preset: String(raw.correlation_preset || "trace_resource").trim().toLowerCase(),
         environment: String(raw.environment || "dev").trim(),
         redact_sensitive: String(raw.redact_sensitive || "true") === "true",
         enabled: String(raw.enabled || "true") === "true",
@@ -8741,7 +11770,10 @@ async function exportGatewayExternalCallbackEvidence(evt) {
       }),
     });
     if (result) {
-      result.textContent = `Exported ${safeText(data.event_count)} events across ${safeText(data.callback_count)} callbacks (${safeText(data.export_id)}).`;
+      const sinks = Object.entries(data.sink_distribution || {})
+        .map(([key, count]) => `${key}:${count}`)
+        .join(", ");
+      result.textContent = `Exported ${safeText(data.event_count)} events across ${safeText(data.callback_count)} callbacks (${safeText(data.export_id)}). Sink mix: ${safeText(sinks || "n/a")}.`;
     }
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
@@ -9114,6 +12146,7 @@ async function executeRouteFallback(evt) {
         endpoint_family: String(raw.endpoint_family || "responses").trim(),
         input_tokens: Number(raw.input_tokens || 100),
         output_tokens: Number(raw.output_tokens || 50),
+        simulated_input_text: String(raw.simulated_input_text || "").trim() || null,
         currency: String(raw.currency || "USD").trim(),
         simulate_fail_provider_ids: String(raw.simulate_fail_provider_ids || "[]").trim(),
       }),
@@ -9145,7 +12178,7 @@ async function loadRoutePreCallFilters(evt) {
     const query = buildQueryString({ request_tag: String(raw.request_tag || "").trim() || null });
     const data = await api(`/gateway/routes/${encodeURIComponent(routePolicyId)}/pre-call-filters${query}`);
     form.elements.route_policy_id.value = routePolicyId;
-    form.elements.tenant_id.value = data.tenant_id || "";
+    syncTenantSelectField(form.elements.tenant_id, data.tenant_id || "");
     form.elements.environment.value = data.environment || "dev";
     form.elements.request_tag.value = data.request_tag || String(raw.request_tag || "").trim();
     form.elements.allowed_regions.value = data.allowed_regions || "[]";
@@ -9196,6 +12229,154 @@ async function saveRoutePreCallFilters(evt) {
   }
 }
 
+async function loadRouteOutputGuardrails(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#routeOutputGuardrailsForm");
+  const result = qs("#routeOutputGuardrailsResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const routePolicyId = String(raw.route_policy_id || "").trim();
+  if (!routePolicyId) {
+    result.textContent = "Route policy ID is required to load output guardrails.";
+    return;
+  }
+
+  try {
+    const query = buildQueryString({ request_tag: String(raw.request_tag || "").trim() || null });
+    const data = await api(`/gateway/routes/${encodeURIComponent(routePolicyId)}/output-guardrails${query}`);
+    form.elements.route_policy_id.value = routePolicyId;
+    syncTenantSelectField(form.elements.tenant_id, data.tenant_id || "");
+    form.elements.environment.value = data.environment || "dev";
+    form.elements.request_tag.value = data.request_tag || String(raw.request_tag || "").trim();
+    form.elements.policy_mode.value = data.policy_mode || "warn";
+    form.elements.enforce.value = String(Boolean(data.enforce));
+    form.elements.max_output_tokens.value = data.max_output_tokens ?? "";
+    form.elements.blocked_phrases.value = data.blocked_phrases || "[]";
+    form.elements.redact_phrases.value = data.redact_phrases || "[]";
+    result.textContent = `Loaded output guardrails for ${routePolicyId}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveRouteOutputGuardrails(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#routeOutputGuardrailsForm");
+  const result = qs("#routeOutputGuardrailsResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const routePolicyId = String(raw.route_policy_id || "").trim();
+  if (!routePolicyId) {
+    result.textContent = "Route policy ID is required.";
+    return;
+  }
+
+  const blockedPhrases = parseJsonOrFallback(raw.blocked_phrases, []);
+  if (!Array.isArray(blockedPhrases)) {
+    result.textContent = "Blocked Phrases must be a JSON array.";
+    return;
+  }
+  const redactPhrases = parseJsonOrFallback(raw.redact_phrases, []);
+  if (!Array.isArray(redactPhrases)) {
+    result.textContent = "Redact Phrases must be a JSON array.";
+    return;
+  }
+
+  try {
+    await api(`/gateway/routes/${encodeURIComponent(routePolicyId)}/output-guardrails`, {
+      method: "PUT",
+      body: JSON.stringify({
+        tenant_id: String(raw.tenant_id || "").trim(),
+        environment: String(raw.environment || "dev").trim(),
+        request_tag: String(raw.request_tag || "").trim() || null,
+        policy_mode: String(raw.policy_mode || "warn").trim(),
+        enforce: String(raw.enforce || "true") === "true",
+        max_output_tokens: String(raw.max_output_tokens || "").trim() ? Number(raw.max_output_tokens) : null,
+        blocked_phrases: JSON.stringify(blockedPhrases),
+        redact_phrases: JSON.stringify(redactPhrases),
+      }),
+    });
+    result.textContent = `Saved output guardrails for ${routePolicyId}.`;
+    await loadRouteOutputGuardrails();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadRouteInputDataPolicy(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#routeInputDataPolicyForm");
+  const result = qs("#routeInputDataPolicyResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const routePolicyId = String(raw.route_policy_id || "").trim();
+  if (!routePolicyId) {
+    result.textContent = "Route policy ID is required to load input data policy.";
+    return;
+  }
+
+  try {
+    const query = buildQueryString({ request_tag: String(raw.request_tag || "").trim() || null });
+    const data = await api(`/gateway/routes/${encodeURIComponent(routePolicyId)}/input-data-policy${query}`);
+    form.elements.route_policy_id.value = routePolicyId;
+    syncTenantSelectField(form.elements.tenant_id, data.tenant_id || "");
+    form.elements.environment.value = data.environment || "dev";
+    form.elements.request_tag.value = data.request_tag || String(raw.request_tag || "").trim();
+    form.elements.policy_mode.value = data.policy_mode || "warn";
+    form.elements.enforce.value = String(Boolean(data.enforce));
+    form.elements.mask_token.value = data.mask_token || "[REDACTED]";
+    form.elements.data_classes.value = data.data_classes || "[]";
+    form.elements.block_patterns.value = data.block_patterns || "[]";
+    result.textContent = `Loaded input data policy for ${routePolicyId}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveRouteInputDataPolicy(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#routeInputDataPolicyForm");
+  const result = qs("#routeInputDataPolicyResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const routePolicyId = String(raw.route_policy_id || "").trim();
+  if (!routePolicyId) {
+    result.textContent = "Route policy ID is required.";
+    return;
+  }
+
+  const dataClasses = parseJsonOrFallback(raw.data_classes, []);
+  if (!Array.isArray(dataClasses)) {
+    result.textContent = "Data Classes must be a JSON array.";
+    return;
+  }
+  const blockPatterns = parseJsonOrFallback(raw.block_patterns, []);
+  if (!Array.isArray(blockPatterns)) {
+    result.textContent = "Block Patterns must be a JSON array.";
+    return;
+  }
+
+  try {
+    await api(`/gateway/routes/${encodeURIComponent(routePolicyId)}/input-data-policy`, {
+      method: "PUT",
+      body: JSON.stringify({
+        tenant_id: String(raw.tenant_id || "").trim(),
+        environment: String(raw.environment || "dev").trim(),
+        request_tag: String(raw.request_tag || "").trim() || null,
+        policy_mode: String(raw.policy_mode || "warn").trim(),
+        enforce: String(raw.enforce || "true") === "true",
+        mask_token: String(raw.mask_token || "[REDACTED]").trim(),
+        data_classes: JSON.stringify(dataClasses),
+        block_patterns: JSON.stringify(blockPatterns),
+      }),
+    });
+    result.textContent = `Saved input data policy for ${routePolicyId}.`;
+    await loadRouteInputDataPolicy();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function loadRouteTrafficMirroring(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#routeTrafficMirroringForm");
@@ -9212,7 +12393,7 @@ async function loadRouteTrafficMirroring(evt) {
     const query = buildQueryString({ request_tag: String(raw.request_tag || "").trim() || null });
     const data = await api(`/gateway/routes/${encodeURIComponent(routePolicyId)}/traffic-mirroring${query}`);
     form.elements.route_policy_id.value = routePolicyId;
-    form.elements.tenant_id.value = data.tenant_id || "";
+    syncTenantSelectField(form.elements.tenant_id, data.tenant_id || "");
     form.elements.environment.value = data.environment || "dev";
     form.elements.request_tag.value = data.request_tag || String(raw.request_tag || "").trim();
     form.elements.enabled.value = String(Boolean(data.enabled));
@@ -9254,6 +12435,135 @@ async function saveRouteTrafficMirroring(evt) {
     });
     result.textContent = `Saved traffic mirroring for ${routePolicyId}.`;
     await loadRouteTrafficMirroring();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function renderRouteCanaryRolloutState(data) {
+  const state = qs("#routeCanaryRolloutState");
+  if (!state) return;
+  const status = String(data?.status || "--").trim() || "--";
+  const enabled = Boolean(data?.enabled);
+  const gateLastDecision = String(data?.gate_last_decision || "--").trim() || "--";
+  const promotedAt = data?.promoted_at ? formatComplianceDate(data.promoted_at) : "--";
+  const stoppedAt = data?.stopped_at ? formatComplianceDate(data.stopped_at) : "--";
+  state.textContent = `Status: ${status} | Enabled: ${enabled ? "true" : "false"} | Gate: ${gateLastDecision} | Promoted: ${promotedAt} | Stopped: ${stoppedAt}`;
+}
+
+async function loadRouteCanaryRollout(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#routeCanaryRolloutForm");
+  const result = qs("#routeCanaryRolloutResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const routePolicyId = String(raw.route_policy_id || "").trim();
+  if (!routePolicyId) {
+    result.textContent = "Route policy ID is required to load canary rollout.";
+    return;
+  }
+
+  try {
+    const query = buildQueryString({ request_tag: String(raw.request_tag || "").trim() || null });
+    const data = await api(`/gateway/routes/${encodeURIComponent(routePolicyId)}/canary-rollout${query}`);
+    form.elements.route_policy_id.value = routePolicyId;
+    syncTenantSelectField(form.elements.tenant_id, data.tenant_id || "");
+    form.elements.environment.value = data.environment || "dev";
+    form.elements.request_tag.value = data.request_tag || String(raw.request_tag || "").trim();
+    form.elements.baseline_provider_id.value = data.baseline_provider_id || "";
+    form.elements.enabled.value = String(Boolean(data.enabled));
+    form.elements.canary_targets.value = data.canary_targets || "[]";
+    if (form.elements.cohort_request_tags) form.elements.cohort_request_tags.value = data.cohort_request_tags || "[]";
+    if (form.elements.cohort_owner_scopes) form.elements.cohort_owner_scopes.value = data.cohort_owner_scopes || "[]";
+    if (form.elements.gate_min_requests) form.elements.gate_min_requests.value = data.gate_min_requests ?? "";
+    if (form.elements.gate_max_failure_rate) form.elements.gate_max_failure_rate.value = data.gate_max_failure_rate ?? "";
+    if (form.elements.gate_min_success_rate) form.elements.gate_min_success_rate.value = data.gate_min_success_rate ?? "";
+    form.elements.notes.value = data.notes || "";
+    renderRouteCanaryRolloutState(data);
+    result.textContent = `Loaded canary rollout for ${routePolicyId}.`;
+  } catch (err) {
+    renderRouteCanaryRolloutState(null);
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveRouteCanaryRollout(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#routeCanaryRolloutForm");
+  const result = qs("#routeCanaryRolloutResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const routePolicyId = String(raw.route_policy_id || "").trim();
+  if (!routePolicyId) {
+    result.textContent = "Route policy ID is required.";
+    return;
+  }
+
+  const canaryTargets = parseJsonOrFallback(raw.canary_targets, []);
+  if (!Array.isArray(canaryTargets)) {
+    result.textContent = "Canary Targets must be a JSON array.";
+    return;
+  }
+  const cohortRequestTags = parseJsonOrFallback(raw.cohort_request_tags, []);
+  if (!Array.isArray(cohortRequestTags)) {
+    result.textContent = "Cohort Request Tags must be a JSON array.";
+    return;
+  }
+  const cohortOwnerScopes = parseJsonOrFallback(raw.cohort_owner_scopes, []);
+  if (!Array.isArray(cohortOwnerScopes)) {
+    result.textContent = "Cohort Owner Scopes must be a JSON array.";
+    return;
+  }
+
+  try {
+    const data = await api(`/gateway/routes/${encodeURIComponent(routePolicyId)}/canary-rollout`, {
+      method: "PUT",
+      body: JSON.stringify({
+        tenant_id: String(raw.tenant_id || "").trim(),
+        environment: String(raw.environment || "dev").trim(),
+        request_tag: String(raw.request_tag || "").trim() || null,
+        baseline_provider_id: String(raw.baseline_provider_id || "").trim(),
+        enabled: String(raw.enabled || "true") === "true",
+        canary_targets: JSON.stringify(canaryTargets),
+        cohort_request_tags: JSON.stringify(cohortRequestTags),
+        cohort_owner_scopes: JSON.stringify(cohortOwnerScopes),
+        gate_min_requests: String(raw.gate_min_requests || "").trim() ? Number(raw.gate_min_requests) : null,
+        gate_max_failure_rate: String(raw.gate_max_failure_rate || "").trim() ? Number(raw.gate_max_failure_rate) : null,
+        gate_min_success_rate: String(raw.gate_min_success_rate || "").trim() ? Number(raw.gate_min_success_rate) : null,
+        notes: String(raw.notes || "").trim() || null,
+      }),
+    });
+    renderRouteCanaryRolloutState(data);
+    result.textContent = `Saved canary rollout for ${routePolicyId}.`;
+    await loadRouteCanaryRollout();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runRouteCanaryRolloutAction(action, evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#routeCanaryRolloutForm");
+  const result = qs("#routeCanaryRolloutResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const routePolicyId = String(raw.route_policy_id || "").trim();
+  if (!routePolicyId) {
+    result.textContent = "Route policy ID is required.";
+    return;
+  }
+
+  const query = buildQueryString({ request_tag: String(raw.request_tag || "").trim() || null });
+  try {
+    const data = await api(`/gateway/routes/${encodeURIComponent(routePolicyId)}/canary-rollout/${encodeURIComponent(action)}${query}`, {
+      method: "POST",
+      body: JSON.stringify({
+        notes: String(raw.notes || "").trim() || null,
+      }),
+    });
+    renderRouteCanaryRolloutState(data);
+    result.textContent = `${action === "promote" ? "Promoted" : "Stopped"} canary rollout for ${routePolicyId}.`;
+    await loadRouteCanaryRollout();
   } catch (err) {
     result.textContent = `Error: ${safeText(err.message)}`;
   }
@@ -9478,14 +12788,584 @@ function setComplianceText(selector, message) {
   }
 }
 
-function setComplianceEvidenceBundle(bundle) {
-  const target = qs("#complianceEvidenceBundleResult");
-  if (!target) return;
-  if (!bundle) {
-    target.textContent = "";
+function toHttpUrlOrNull(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (!/^https?:$/.test(parsed.protocol)) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function createComplianceActionButton(label, onClick, options = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ghost";
+  button.textContent = label;
+  if (options.disabled) {
+    button.disabled = true;
+    if (options.title) button.title = options.title;
+    return button;
+  }
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function shouldAutoRefreshComplianceBundleOnRowAction() {
+  return Boolean(qs("#complianceRowActionAutoRefresh")?.checked);
+}
+
+function shouldIncludeComplianceInvestigationContextInExport() {
+  return Boolean(qs("#complianceExportIncludeContext")?.checked);
+}
+
+function renderComplianceInvestigateContext() {
+  const summary = qs("#complianceInvestigateSummary");
+  const ctx = complianceInvestigateContext;
+  const setField = (selector, value) => {
+    const target = qs(selector);
+    if (target) target.textContent = safeText(value || "--");
+  };
+
+  setField("#complianceInvestigateSelectedAt", ctx?.selectedAt ? formatComplianceDate(ctx.selectedAt) : "--");
+  setField("#complianceInvestigateSourceType", ctx?.sourceType || "--");
+  setField("#complianceInvestigateSourceId", ctx?.sourceId || "--");
+  setField("#complianceInvestigateTraceId", ctx?.traceId || "--");
+  setField("#complianceInvestigateActionType", ctx?.actionType || "--");
+  setField("#complianceInvestigateResource", [ctx?.resourceType, ctx?.resourceId].filter(Boolean).join(":") || "--");
+  setField("#complianceInvestigateDecision", ctx?.decisionOutcome || "--");
+  setField("#complianceInvestigateIntegrity", ctx?.integrityHash || "--");
+  setField("#complianceInvestigateArtifactUri", ctx?.artifactUri || "--");
+
+  const openTrace = qs("#complianceInvestigateOpenTrace");
+  const openLogs = qs("#complianceInvestigateOpenLogs");
+  const openAudit = qs("#complianceInvestigateOpenAudit");
+  const openArtifact = qs("#complianceInvestigateOpenArtifact");
+  const copyContext = qs("#complianceInvestigateCopy");
+  if (openTrace) openTrace.disabled = !String(ctx?.traceId || "").trim();
+  if (openLogs) {
+    openLogs.disabled = !ctx || ![
+      String(ctx?.traceId || "").trim(),
+      String(ctx?.sourceType || "").trim(),
+      String(ctx?.sourceId || "").trim(),
+      String(ctx?.actionType || "").trim(),
+      String(ctx?.resourceId || "").trim(),
+    ].some(Boolean);
+  }
+  if (openAudit) openAudit.disabled = false;
+  if (openArtifact) openArtifact.disabled = !toHttpUrlOrNull(ctx?.artifactUri);
+  if (copyContext) copyContext.disabled = !ctx;
+
+  if (!summary) return;
+  if (!ctx) {
+    summary.textContent = "No row selected.";
     return;
   }
+  const summaryTokens = [
+    ctx.sourceType ? `source_type=${ctx.sourceType}` : "",
+    ctx.sourceId ? `source_id=${ctx.sourceId}` : "",
+    ctx.traceId ? `trace_id=${ctx.traceId}` : "",
+    ctx.decisionOutcome ? `outcome=${ctx.decisionOutcome}` : "",
+  ].filter(Boolean);
+  summary.textContent = summaryTokens.length
+    ? `Selected context: ${summaryTokens.join(" | ")}`
+    : "Selected context captured.";
+}
+
+function setComplianceInvestigateContext(context, message) {
+  const drawer = qs("#complianceInvestigateDrawer");
+  if (!context) {
+    complianceInvestigateContext = null;
+    renderComplianceInvestigateContext();
+    if (drawer) drawer.open = false;
+    return;
+  }
+  complianceInvestigateContext = {
+    sourceType: String(context.sourceType || "").trim(),
+    sourceId: String(context.sourceId || "").trim(),
+    traceId: String(context.traceId || "").trim(),
+    actionType: String(context.actionType || "").trim(),
+    resourceType: String(context.resourceType || "").trim(),
+    resourceId: String(context.resourceId || "").trim(),
+    decisionOutcome: String(context.decisionOutcome || "").trim(),
+    integrityHash: String(context.integrityHash || "").trim(),
+    artifactUri: String(context.artifactUri || "").trim(),
+    evidenceEvent: String(context.evidenceEvent || "").trim(),
+    controlId: String(context.controlId || "").trim(),
+    selectedAt: new Date().toISOString(),
+  };
+  renderComplianceInvestigateContext();
+  if (drawer) drawer.open = true;
+  if (message) setComplianceText("#complianceEvidenceResult", message);
+}
+
+function clearComplianceInvestigateContext() {
+  setComplianceInvestigateContext(null);
+  setComplianceText("#complianceEvidenceResult", "Cleared CISO investigation context.");
+}
+
+async function pivotComplianceInvestigateTrace() {
+  const traceId = String(complianceInvestigateContext?.traceId || "").trim();
+  if (!traceId) {
+    setComplianceText("#complianceEvidenceResult", "No trace ID available in the selected context.");
+    return;
+  }
+  switchView("observability");
+  await loadObservabilityTraceById(traceId);
+}
+
+async function pivotComplianceInvestigateLogs() {
+  const ctx = complianceInvestigateContext;
+  const form = qs("#observabilityLogsForm");
+  if (!ctx || !form?.elements) {
+    setComplianceText("#complianceEvidenceResult", "Select a row before pivoting to logs.");
+    return;
+  }
+  form.elements.trace_id.value = String(ctx.traceId || "");
+  form.elements.action_type.value = String(ctx.actionType || "");
+  form.elements.resource_type.value = String(ctx.resourceType || "");
+  form.elements.resource_id.value = String(ctx.resourceId || ctx.sourceId || "");
+  form.elements.search.value = [ctx.sourceType, ctx.sourceId, ctx.integrityHash].filter(Boolean).join(" ");
+  switchView("observability");
+  await loadObservabilityLogs();
+}
+
+async function pivotComplianceInvestigateAudit() {
+  switchView("audit");
+  await loadAudit();
+}
+
+function openComplianceInvestigateArtifact() {
+  const url = toHttpUrlOrNull(complianceInvestigateContext?.artifactUri);
+  if (!url) {
+    setComplianceText("#complianceEvidenceResult", "No valid HTTP(S) artifact URI available.");
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+async function copyComplianceInvestigateContext() {
+  if (!complianceInvestigateContext) {
+    setComplianceText("#complianceEvidenceResult", "No investigation context selected.");
+    return;
+  }
+  const copied = await copyTextToClipboard(JSON.stringify(complianceInvestigateContext, null, 2));
+  setComplianceText(
+    "#complianceEvidenceResult",
+    copied ? "Copied CISO investigation context JSON." : "Unable to copy investigation context."
+  );
+}
+
+async function copyComplianceTextValue(value, successMessage, emptyMessage) {
+  const result = qs("#complianceEvidenceResult");
+  const normalized = String(value || "").trim();
+  if (!normalized || normalized === "--") {
+    if (result) result.textContent = emptyMessage;
+    return;
+  }
+  const copied = await copyTextToClipboard(normalized);
+  if (result) result.textContent = copied ? successMessage : "Unable to copy value.";
+}
+
+function extractComplianceFiltersFromEvent(value) {
+  const rawValue = value === null || value === undefined ? "" : String(value);
+  const trimmed = rawValue.trim();
+  let sourceType = "";
+  let sourceId = "";
+  let traceId = "";
+  let actionType = "";
+  let resourceType = "";
+  let resourceId = "";
+  let decisionOutcome = "";
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      sourceType = String(parsed?.source_type || parsed?.sourceType || "").trim();
+      sourceId = String(parsed?.source_id || parsed?.sourceId || "").trim();
+      traceId = String(parsed?.trace_id || parsed?.traceId || "").trim();
+      actionType = String(parsed?.action_type || parsed?.actionType || "").trim();
+      resourceType = String(parsed?.resource_type || parsed?.resourceType || "").trim();
+      resourceId = String(parsed?.resource_id || parsed?.resourceId || "").trim();
+      decisionOutcome = String(parsed?.decision_outcome || parsed?.decisionOutcome || "").trim();
+    } catch {
+      // Fall through to regex extraction for non-JSON payload variants.
+    }
+  }
+
+  if (!sourceType) {
+    const sourceTypeMatch = trimmed.match(/source[_\s-]*type["'\s:=]+([a-zA-Z0-9._-]+)/i);
+    sourceType = sourceTypeMatch ? String(sourceTypeMatch[1] || "").trim() : "";
+  }
+  if (!sourceId) {
+    const sourceIdMatch = trimmed.match(/source[_\s-]*id["'\s:=]+([a-zA-Z0-9._:/-]+)/i);
+    sourceId = sourceIdMatch ? String(sourceIdMatch[1] || "").trim() : "";
+  }
+  if (!traceId) {
+    const traceIdMatch = trimmed.match(/trace[_\s-]*id["'\s:=]+([a-zA-Z0-9._:-]+)/i);
+    traceId = traceIdMatch ? String(traceIdMatch[1] || "").trim() : "";
+  }
+  if (!actionType) {
+    const actionTypeMatch = trimmed.match(/action[_\s-]*type["'\s:=]+([a-zA-Z0-9._:-]+)/i);
+    actionType = actionTypeMatch ? String(actionTypeMatch[1] || "").trim() : "";
+  }
+  if (!resourceType) {
+    const resourceTypeMatch = trimmed.match(/resource[_\s-]*type["'\s:=]+([a-zA-Z0-9._:-]+)/i);
+    resourceType = resourceTypeMatch ? String(resourceTypeMatch[1] || "").trim() : "";
+  }
+  if (!resourceId) {
+    const resourceIdMatch = trimmed.match(/resource[_\s-]*id["'\s:=]+([a-zA-Z0-9._:/-]+)/i);
+    resourceId = resourceIdMatch ? String(resourceIdMatch[1] || "").trim() : "";
+  }
+  if (!decisionOutcome) {
+    const decisionMatch = trimmed.match(/decision[_\s-]*outcome["'\s:=]+([a-zA-Z0-9._:-]+)/i);
+    decisionOutcome = decisionMatch ? String(decisionMatch[1] || "").trim() : "";
+  }
+
+  if (!sourceType && !sourceId && !traceId && !actionType && !resourceType && !resourceId && !decisionOutcome) return null;
+  return {
+    sourceType,
+    sourceId,
+    traceId,
+    actionType,
+    resourceType,
+    resourceId,
+    decisionOutcome,
+  };
+}
+
+async function applyComplianceArtifactFilters(sourceType, sourceId, options = {}) {
+  const form = qs("#complianceEvidenceForm");
+  const result = qs("#complianceEvidenceResult");
+  if (!form?.elements) return;
+  if (sourceType) form.elements.bundle_source_type.value = String(sourceType).trim();
+  if (sourceId) form.elements.bundle_source_id_prefix.value = String(sourceId).trim();
+  if (sourceType && form.elements.source_type) form.elements.source_type.value = String(sourceType).trim();
+  if (sourceId && form.elements.source_id) form.elements.source_id.value = String(sourceId).trim();
+  if (result) {
+    result.textContent = `Applied source filters: ${safeText(sourceType)} / ${safeText(sourceId)}.`;
+  }
+  if (options.traceId && result) {
+    result.textContent += ` Trace: ${safeText(options.traceId)}.`;
+  }
+  if (shouldAutoRefreshComplianceBundleOnRowAction()) {
+    await loadComplianceEvidenceBundle();
+  }
+}
+
+function setComplianceEvidenceBundle(bundle) {
+  const target = qs("#complianceEvidenceBundleResult");
+  const artifactCount = qs("#complianceBundleArtifactCount");
+  const latestArtifact = qs("#complianceBundleLatestArtifact");
+  const integrity = qs("#complianceBundleIntegrity");
+  const artifactsTable = qs("#complianceBundleArtifactsTable");
+  const eventsTable = qs("#complianceBundleEventsTable");
+  if (!target) return;
+  if (!bundle) {
+    latestComplianceBundle = null;
+    setComplianceInvestigateContext(null);
+    target.textContent = "";
+    if (artifactCount) artifactCount.textContent = "--";
+    if (latestArtifact) latestArtifact.textContent = "--";
+    if (integrity) {
+      integrity.className = "status-pill idle";
+      integrity.textContent = "--";
+    }
+    if (artifactsTable) setTableMessage(artifactsTable, 7, "Load a bundle to inspect artifacts.");
+    if (eventsTable) setTableMessage(eventsTable, 2, "Load a bundle to inspect evidence events.");
+    return;
+  }
+
+  latestComplianceBundle = bundle;
+
+  if (artifactCount) artifactCount.textContent = safeText(bundle.artifact_count ?? 0);
+  if (latestArtifact) latestArtifact.textContent = formatComplianceDate(bundle.latest_artifact_at);
+  if (integrity) {
+    const rawIntegrity = String(bundle.integrity_status || "").trim().toLowerCase();
+    const statusClass = rawIntegrity === "pass" ? "success" : rawIntegrity === "warn" ? "loading" : "error";
+    integrity.className = `status-pill ${statusClass}`;
+    integrity.textContent = safeText(rawIntegrity || "--");
+  }
+
+  if (artifactsTable) {
+    const artifacts = Array.isArray(bundle.artifacts) ? bundle.artifacts : [];
+    if (!artifacts.length) {
+      setTableMessage(artifactsTable, 7, "No bundle artifacts found.");
+    } else {
+      artifactsTable.textContent = "";
+      artifacts.forEach((row) => {
+        const tr = document.createElement("tr");
+        [
+          row.evidence_id || "--",
+          formatComplianceDate(row.generated_at),
+          `${row.source_type || "--"}:${row.source_id || "--"}`,
+          row.trace_id || "--",
+          row.integrity_hash || "--",
+          row.artifact_uri || "--",
+        ].forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = safeText(value);
+          tr.appendChild(td);
+        });
+
+        const actionCell = document.createElement("td");
+        actionCell.className = "cell-actions";
+        const sourceType = String(row.source_type || "").trim();
+        const sourceId = String(row.source_id || "").trim();
+        const traceId = String(row.trace_id || "").trim();
+        const artifactUrl = toHttpUrlOrNull(row.artifact_uri);
+
+        const useSourceButton = createComplianceActionButton("Use Source", async () => {
+          setComplianceInvestigateContext(
+            {
+              sourceType,
+              sourceId,
+              traceId,
+              integrityHash: String(row.integrity_hash || "").trim(),
+              artifactUri: String(row.artifact_uri || "").trim(),
+              controlId: String(bundle.control_id || "").trim(),
+            },
+            "Selected artifact row for investigation context."
+          );
+          await applyComplianceArtifactFilters(sourceType, sourceId, { traceId });
+        });
+        actionCell.appendChild(useSourceButton);
+
+        const investigateButton = createComplianceActionButton("Investigate", () => {
+          setComplianceInvestigateContext(
+            {
+              sourceType,
+              sourceId,
+              traceId,
+              integrityHash: String(row.integrity_hash || "").trim(),
+              artifactUri: String(row.artifact_uri || "").trim(),
+              decisionOutcome: String(row.decision_outcome || "").trim(),
+              controlId: String(bundle.control_id || "").trim(),
+            },
+            "Selected artifact row for CISO investigation pivoting."
+          );
+        });
+        actionCell.appendChild(investigateButton);
+
+        const copyTraceButton = createComplianceActionButton(
+          "Copy Trace",
+          () => copyComplianceTextValue(traceId, `Copied trace ${safeText(traceId)}.`, "No trace ID available for this artifact."),
+          {
+            disabled: !traceId,
+            title: "No trace ID available",
+          }
+        );
+        actionCell.appendChild(copyTraceButton);
+
+        if (artifactUrl) {
+          const openLink = document.createElement("a");
+          openLink.href = artifactUrl;
+          openLink.target = "_blank";
+          openLink.rel = "noreferrer";
+          openLink.className = "ghost inline-link-button";
+          openLink.textContent = "Open URI";
+          actionCell.appendChild(openLink);
+        } else {
+          const copyUriButton = createComplianceActionButton(
+            "Copy URI",
+            () => copyComplianceTextValue(row.artifact_uri, "Copied artifact URI.", "No artifact URI available for this row."),
+            {
+              disabled: !String(row.artifact_uri || "").trim(),
+              title: "No artifact URI available",
+            }
+          );
+          actionCell.appendChild(copyUriButton);
+        }
+
+        tr.appendChild(actionCell);
+        artifactsTable.appendChild(tr);
+      });
+    }
+  }
+
+  if (eventsTable) {
+    const items = Array.isArray(bundle.evidence_items) ? bundle.evidence_items : [];
+    if (!items.length) {
+      setTableMessage(eventsTable, 2, "No bundle evidence events found.");
+    } else {
+      eventsTable.textContent = "";
+      items.forEach((value) => {
+        const filterHint = extractComplianceFiltersFromEvent(value);
+        const tr = document.createElement("tr");
+        const valueCell = document.createElement("td");
+        valueCell.textContent = safeText(value || "--");
+        tr.appendChild(valueCell);
+
+        const actionCell = document.createElement("td");
+        actionCell.className = "cell-actions";
+        const copyEventButton = createComplianceActionButton("Copy", () =>
+          copyComplianceTextValue(value, "Copied evidence event.", "No evidence event available for this row.")
+        );
+        actionCell.appendChild(copyEventButton);
+
+        const useFilterButton = createComplianceActionButton(
+          "Use Filter",
+          async () => {
+            setComplianceInvestigateContext(
+              {
+                sourceType: filterHint?.sourceType,
+                sourceId: filterHint?.sourceId,
+                traceId: filterHint?.traceId,
+                actionType: filterHint?.actionType,
+                resourceType: filterHint?.resourceType,
+                resourceId: filterHint?.resourceId,
+                decisionOutcome: filterHint?.decisionOutcome,
+                evidenceEvent: String(value || "").trim(),
+                controlId: String(bundle.control_id || "").trim(),
+              },
+              "Selected evidence event context for investigation pivoting."
+            );
+            await applyComplianceArtifactFilters(filterHint?.sourceType, filterHint?.sourceId, {
+              traceId: filterHint?.traceId,
+            });
+          },
+          {
+            disabled: !filterHint,
+            title: "No recognizable source fields in this event",
+          }
+        );
+        actionCell.appendChild(useFilterButton);
+
+        const investigateEventButton = createComplianceActionButton("Investigate", () => {
+          setComplianceInvestigateContext(
+            {
+              sourceType: filterHint?.sourceType,
+              sourceId: filterHint?.sourceId,
+              traceId: filterHint?.traceId,
+              actionType: filterHint?.actionType,
+              resourceType: filterHint?.resourceType,
+              resourceId: filterHint?.resourceId,
+              decisionOutcome: filterHint?.decisionOutcome,
+              evidenceEvent: String(value || "").trim(),
+              controlId: String(bundle.control_id || "").trim(),
+            },
+            "Selected evidence event for CISO investigation pivoting."
+          );
+        });
+        actionCell.appendChild(investigateEventButton);
+        tr.appendChild(actionCell);
+
+        eventsTable.appendChild(tr);
+      });
+    }
+  }
+
   target.textContent = JSON.stringify(bundle, null, 2);
+}
+
+function applyComplianceBundlePreset(mode) {
+  const form = qs("#complianceEvidenceForm");
+  const result = qs("#complianceEvidenceResult");
+  if (!form) return;
+  if (mode === "prod") {
+    form.elements.bundle_since_hours.value = "168";
+    form.elements.bundle_decision_outcome.value = "deny";
+    form.elements.bundle_action_type_prefix.value = "compliance.";
+    form.elements.bundle_environment.value = "prod";
+    form.elements.bundle_limit_events.value = "100";
+    form.elements.bundle_limit_artifacts.value = "100";
+  } else if (mode === "tenant") {
+    form.elements.bundle_since_hours.value = "72";
+    form.elements.bundle_decision_outcome.value = "allow";
+    form.elements.bundle_action_type_prefix.value = "compliance.";
+    form.elements.bundle_limit_events.value = "40";
+    form.elements.bundle_limit_artifacts.value = "40";
+  }
+  if (result) result.textContent = "Applied compliance bundle filter preset.";
+}
+
+function resetComplianceBundleFilters() {
+  const form = qs("#complianceEvidenceForm");
+  const result = qs("#complianceEvidenceResult");
+  if (!form) return;
+  form.elements.bundle_since_hours.value = "24";
+  form.elements.bundle_decision_outcome.value = "";
+  form.elements.bundle_action_type_prefix.value = "";
+  syncTenantSelectField(form.elements.bundle_tenant_id, "");
+  form.elements.bundle_environment.value = "";
+  form.elements.bundle_source_type.value = "";
+  form.elements.bundle_source_id_prefix.value = "";
+  form.elements.bundle_limit_events.value = "20";
+  form.elements.bundle_limit_artifacts.value = "20";
+  if (result) result.textContent = "Compliance bundle filters reset.";
+}
+
+async function copyComplianceBundleSummary() {
+  const result = qs("#complianceEvidenceResult");
+  if (!latestComplianceBundle) {
+    if (result) result.textContent = "Load a bundle before copying summary.";
+    return;
+  }
+  const summary = {
+    control_id: latestComplianceBundle.control_id,
+    generated_at: latestComplianceBundle.generated_at,
+    artifact_count: latestComplianceBundle.artifact_count,
+    latest_artifact_at: latestComplianceBundle.latest_artifact_at,
+    integrity_status: latestComplianceBundle.integrity_status,
+    query: latestComplianceBundleQuery,
+  };
+  const copied = await copyTextToClipboard(JSON.stringify(summary, null, 2));
+  if (result) result.textContent = copied ? "Copied compliance bundle summary." : "Unable to copy summary.";
+}
+
+function exportComplianceBundle() {
+  const result = qs("#complianceEvidenceResult");
+  if (!latestComplianceBundle) {
+    if (result) result.textContent = "Load a bundle before exporting.";
+    return;
+  }
+  const includeContext = shouldIncludeComplianceInvestigationContextInExport();
+  const selectedContext = includeContext && complianceInvestigateContext
+    ? {
+      ...complianceInvestigateContext,
+      selectedAt: complianceInvestigateContext.selectedAt || new Date().toISOString(),
+    }
+    : null;
+  const pivotMetadata = {
+    trace_pivot_available: Boolean(String(selectedContext?.traceId || "").trim()),
+    logs_pivot_available: Boolean(selectedContext && [
+      String(selectedContext.traceId || "").trim(),
+      String(selectedContext.sourceType || "").trim(),
+      String(selectedContext.sourceId || "").trim(),
+      String(selectedContext.actionType || "").trim(),
+      String(selectedContext.resourceId || "").trim(),
+    ].some(Boolean)),
+    audit_pivot_available: true,
+    artifact_http_url_available: Boolean(toHttpUrlOrNull(selectedContext?.artifactUri)),
+  };
+  const payload = {
+    exported_at: new Date().toISOString(),
+    export_scope: "compliance_bundle",
+    query: latestComplianceBundleQuery,
+    export_controls: {
+      include_investigation_context: includeContext,
+    },
+    investigation_context: selectedContext,
+    pivot_metadata: pivotMetadata,
+    bundle: latestComplianceBundle,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `compliance-bundle-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  if (result) {
+    result.textContent = includeContext
+      ? `Exported compliance bundle (${safeText(latestComplianceBundle.artifact_count ?? 0)} artifacts) with investigation context.`
+      : `Exported compliance bundle (${safeText(latestComplianceBundle.artifact_count ?? 0)} artifacts).`;
+  }
 }
 
 function updateComplianceControlOptions(rows) {
@@ -9574,6 +13454,24 @@ function renderComplianceFreshnessTable(rows) {
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
+  });
+}
+
+function renderComplianceCoverageItemsTable(rows) {
+  const tbody = qs("#complianceCoverageItemsTable");
+  if (!tbody) return;
+  if (!rows.length) {
+    setTableMessage(tbody, 4, "No route coverage items found.");
+    return;
+  }
+  tbody.textContent = "";
+  rows.slice(0, 120).forEach((row) => {
+    appendTableRow(tbody, [
+      row.path || "--",
+      Array.isArray(row.methods) ? row.methods.join(", ") : "--",
+      Array.isArray(row.control_ids) && row.control_ids.length ? row.control_ids.join(", ") : "--",
+      row.covered ? "yes" : "no",
+    ]);
   });
 }
 
@@ -9729,8 +13627,10 @@ async function loadComplianceControls() {
 async function loadComplianceCoverage() {
   const summary = qs("#complianceSummary");
   const paths = qs("#complianceCoveragePaths");
+  const itemsTable = qs("#complianceCoverageItemsTable");
   if (summary) summary.textContent = "Loading compliance coverage...";
   if (paths) paths.textContent = "";
+  if (itemsTable) setTableMessage(itemsTable, 4, "Loading...");
   try {
     const data = await api("/compliance/controls/coverage");
     const total = Number(data?.total_routes || 0);
@@ -9754,8 +13654,10 @@ async function loadComplianceCoverage() {
         });
       }
     }
+    renderComplianceCoverageItemsTable(Array.isArray(data?.items) ? data.items : []);
   } catch (err) {
     if (summary) summary.textContent = `Error: ${safeText(err.message)}`;
+    if (itemsTable) setTableMessage(itemsTable, 4, `Error: ${safeText(err.message)}`);
   }
 }
 
@@ -9853,6 +13755,7 @@ async function loadComplianceEvidence() {
 async function loadComplianceEvidenceBundle() {
   const form = qs("#complianceEvidenceForm");
   const result = qs("#complianceEvidenceResult");
+  const scopeSummary = qs("#complianceBundleScopeSummary");
   if (!form || !result) return;
   const raw = Object.fromEntries(new FormData(form).entries());
   const controlId = String(raw.control_id || selectedComplianceControlId || "").trim();
@@ -9863,12 +13766,39 @@ async function loadComplianceEvidenceBundle() {
 
   result.textContent = `Loading bundle for ${controlId}...`;
   try {
-    const data = await api(`/compliance/evidence/${encodeURIComponent(controlId)}/bundle`);
+    const query = buildQueryString({
+      since_hours: raw.bundle_since_hours,
+      decision_outcome: raw.bundle_decision_outcome,
+      action_type_prefix: raw.bundle_action_type_prefix,
+      tenant_id: raw.bundle_tenant_id,
+      environment: raw.bundle_environment,
+      source_type: raw.bundle_source_type,
+      source_id_prefix: raw.bundle_source_id_prefix,
+      limit_events: raw.bundle_limit_events,
+      limit_artifacts: raw.bundle_limit_artifacts,
+    });
+    latestComplianceBundleQuery = query || "";
+    const data = await api(`/compliance/evidence/${encodeURIComponent(controlId)}/bundle${query}`);
     setComplianceEvidenceBundle(data);
-    result.textContent = `${data?.control_id || controlId} bundle generated ${formatComplianceDate(data?.generated_at)}.`;
+    result.textContent = `${data?.control_id || controlId} bundle generated ${formatComplianceDate(data?.generated_at)} with ${safeText(data?.artifact_count ?? 0)} artifacts.`;
+    if (scopeSummary) {
+      const readableScope = (() => {
+        if (!query) return "";
+        try {
+          return decodeURIComponent(query.replace(/^\?/, ""));
+        } catch (_err) {
+          return query.replace(/^\?/, "");
+        }
+      })();
+      scopeSummary.textContent = query
+        ? `Bundle scope: ${readableScope}`
+        : "Bundle scope: default filters";
+    }
   } catch (err) {
+    latestComplianceBundleQuery = "";
     setComplianceEvidenceBundle(null);
     result.textContent = `Error: ${safeText(err.message)}`;
+    if (scopeSummary) scopeSummary.textContent = "";
   }
 }
 
@@ -11141,41 +15071,50 @@ async function runRoleBindingExplainability(evt) {
   const combinations = [];
   actions.forEach((action) => {
     resources.forEach((resourcePattern) => {
-      combinations.push({ role_name: roleName, action, resource_pattern: resourcePattern });
+      combinations.push({
+        actor_role: roleName,
+        actor_id: "ui-explainability",
+        action,
+        resource_type: "role_binding",
+        resource_id: resourcePattern,
+      });
     });
   });
 
   try {
-    const responses = await Promise.all(combinations.map((payload) => api("/auth/roles/bindings/validate", {
+    const responses = await Promise.all(combinations.map((payload) => api("/auth/authz/explain", {
       method: "POST",
       body: JSON.stringify(payload),
     }).then((data) => ({ payload, data, error: null })).catch((error) => ({ payload, data: null, error }))));
 
     table.textContent = "";
-    let validCount = 0;
-    let invalidCount = 0;
+    let allowCount = 0;
+    let denyCount = 0;
+    let warnCount = 0;
     responses.forEach((entry) => {
-      const decision = entry.data?.valid === true ? "valid" : "invalid";
-      if (entry.data?.valid === true) validCount += 1;
-      else invalidCount += 1;
+      const decision = String(entry.data?.decision || "error");
+      if (decision === "allow") allowCount += 1;
+      else if (decision === "deny") denyCount += 1;
+      else if (decision === "warn") warnCount += 1;
       appendTableRow(table, [
-        entry.payload.role_name,
+        entry.payload.actor_role,
         entry.payload.action,
-        entry.payload.resource_pattern,
+        entry.payload.resource_id,
         decision,
-        entry.error ? safeText(entry.error.message) : "policy validation",
+        entry.error ? safeText(entry.error.message) : safeText((entry.data?.reasons || []).join(", ") || "evaluated"),
       ]);
     });
 
     if (details) {
       details.textContent = JSON.stringify({
-        role_name: roleName,
+        actor_role: roleName,
         combinations_tested: responses.length,
-        valid_count: validCount,
-        invalid_count: invalidCount,
+        allow_count: allowCount,
+        deny_count: denyCount,
+        warn_count: warnCount,
       }, null, 2);
     }
-    result.textContent = `Explainability matrix complete for ${safeText(roleName)}: ${validCount} valid, ${invalidCount} invalid.`;
+    result.textContent = `Explainability matrix complete for ${safeText(roleName)}: allow ${allowCount}, deny ${denyCount}, warn ${warnCount}.`;
     await loadRoleBindingEvidence(roleName);
   } catch (err) {
     setTableMessage(table, 5, `Error: ${safeText(err.message)}`);
@@ -11564,9 +15503,428 @@ async function transferOwner(evt) {
   }
 }
 
+// ── GuardBridge Browser Security Console ─────────────────────────────────────
+
+function switchBrowserConsole(name) {
+  const panelId = "bsecConsole" + name.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
+  qsa("[data-browser-console]").forEach((btn) => btn.classList.toggle("active", btn.dataset.browserConsole === name));
+  qsa(".browser-security-console").forEach((panel) => { panel.hidden = panel.id !== panelId; });
+}
+
+function _bsecRiskBadgeClass(decision) {
+  return { deny: "risk-high", warn: "risk-medium", challenge: "risk-medium", mask: "risk-medium" }[decision] || "risk-low";
+}
+
+function _bsecAppendTextCell(tr, value, className = "") {
+  const td = document.createElement("td");
+  if (className) td.className = className;
+  td.textContent = safeText(value);
+  tr.appendChild(td);
+  return td;
+}
+
+function _bsecAppendCodeCell(tr, value) {
+  const td = document.createElement("td");
+  const code = document.createElement("code");
+  code.textContent = safeText(value);
+  td.appendChild(code);
+  tr.appendChild(td);
+  return td;
+}
+
+function _bsecAppendBadgeCell(tr, value, cls) {
+  const td = document.createElement("td");
+  const span = document.createElement("span");
+  span.className = `risk-badge ${cls}`;
+  span.textContent = safeText(value);
+  td.appendChild(span);
+  tr.appendChild(td);
+  return td;
+}
+
+async function loadBrowserRiskSummary() {
+  try {
+    const env = qs("#environmentProfile")?.value || "";
+    const params = env ? `?environment=${encodeURIComponent(env)}` : "";
+    const data = await api(`/browser/extensions/risk/summary${params}`);
+    [["bsecEventCount", data.total_events_24h], ["bsecDenyCount", data.deny_events_24h],
+     ["bsecShadowCount", data.shadow_ai_apps], ["bsecSessionCount", data.active_sessions]].forEach(([id, val]) => {
+      const el = qs(`#${id}`); if (el) el.textContent = val ?? "--";
+    });
+  } catch { ["bsecEventCount","bsecDenyCount","bsecShadowCount","bsecSessionCount"].forEach((id) => { const el = qs(`#${id}`); if (el) el.textContent = "err"; }); }
+}
+
+async function loadBrowserEvents(evt) {
+  if (evt) evt.preventDefault();
+  const form = qs("#browserEventFilters");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({ limit: "100" });
+  if (raw.decision_outcome) params.set("decision_outcome", raw.decision_outcome);
+  if (raw.browser_name) params.set("browser_name", raw.browser_name);
+  if (raw.action_type) params.set("action_type", raw.action_type);
+  if (raw.data_class) params.set("data_class", raw.data_class);
+  if (raw.geo_country) params.set("geo_country", raw.geo_country.trim().toUpperCase());
+  if (raw.since_hours) params.set("since_hours", raw.since_hours);
+  try {
+    const events = await api(`/browser/extensions/events?${params}`);
+    const tbody = qs("#browserEventsTable");
+    if (!tbody) return;
+    tbody.textContent = "";
+    if (!events.length) { setTableMessage(tbody, 10, "No events found"); return; }
+    events.forEach((e) => {
+      const tr = document.createElement("tr");
+      _bsecAppendTextCell(tr, (e.created_at || "").slice(0, 19).replace("T", " "), "mono");
+      _bsecAppendTextCell(tr, e.actor_id || "--");
+      _bsecAppendCodeCell(tr, e.action_type || "--");
+      _bsecAppendBadgeCell(tr, e.decision_outcome, _bsecRiskBadgeClass(e.decision_outcome));
+      _bsecAppendTextCell(tr, e.destination_domain || "--");
+      _bsecAppendTextCell(tr, e.browser_name || "--");
+      _bsecAppendTextCell(tr, e.os_name || "--");
+      _bsecAppendTextCell(tr, e.device_type || "--");
+      _bsecAppendTextCell(tr, e.geo_country || "--");
+      _bsecAppendCodeCell(tr, e.data_class || "--");
+      tbody.appendChild(tr);
+    });
+  } catch (err) { const t = qs("#browserEventsTable"); if (t) setTableMessage(t, 10, `Error: ${safeText(err.message)}`); }
+}
+
+async function loadBrowserSessions(evt) {
+  if (evt) evt.preventDefault();
+  const form = qs("#browserSessionFilters");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({ limit: "100" });
+  if (raw.browser_name) params.set("browser_name", raw.browser_name);
+  if (raw.status) params.set("status", raw.status);
+  if (raw.geo_country) params.set("geo_country", raw.geo_country.trim().toUpperCase());
+  try {
+    const sessions = await api(`/browser/extensions/sessions?${params}`);
+    const tbody = qs("#browserSessionsTable");
+    if (!tbody) return;
+    tbody.textContent = "";
+    if (!sessions.length) { setTableMessage(tbody, 12, "No sessions"); return; }
+    sessions.forEach((s) => {
+      const tr = document.createElement("tr");
+      _bsecAppendTextCell(tr, (s.session_id || "").slice(-12), "mono");
+      _bsecAppendTextCell(tr, s.actor_id || "--");
+      _bsecAppendTextCell(tr, s.browser_name || "--");
+      _bsecAppendTextCell(tr, s.browser_version || "--");
+      _bsecAppendTextCell(tr, s.os_name || "--");
+      _bsecAppendTextCell(tr, s.device_type || "--");
+      _bsecAppendTextCell(tr, s.device_managed ? "✓" : "—");
+      _bsecAppendTextCell(tr, s.geo_country || "--");
+      _bsecAppendTextCell(tr, s.geo_region || "--");
+      _bsecAppendBadgeCell(tr, s.status, s.status === "active" ? "risk-low" : "risk-medium");
+      _bsecAppendTextCell(tr, (s.last_heartbeat_at || "").slice(0, 19).replace("T", " "), "mono");
+      _bsecAppendTextCell(tr, (s.created_at || "").slice(0, 19).replace("T", " "), "mono");
+      tbody.appendChild(tr);
+    });
+  } catch (err) { const t = qs("#browserSessionsTable"); if (t) setTableMessage(t, 12, `Error: ${safeText(err.message)}`); }
+}
+
+async function loadShadowAiApps(evt) {
+  if (evt) evt.preventDefault();
+  const form = qs("#shadowAiFilters");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({ limit: "100" });
+  if (raw.status) params.set("status", raw.status);
+  if (raw.min_risk_score) params.set("min_risk_score", raw.min_risk_score);
+  try {
+    const apps = await api(`/browser/extensions/shadow-ai/apps?${params}`);
+    const tbody = qs("#shadowAiAppsTable");
+    if (!tbody) return;
+    tbody.textContent = "";
+    if (!apps.length) { setTableMessage(tbody, 11, "No shadow AI apps detected"); return; }
+    apps.forEach((app) => {
+      const rCls = app.risk_score >= 70 ? "risk-high" : app.risk_score >= 40 ? "risk-medium" : "risk-low";
+      const sCls = app.status === "blocked" ? "risk-high" : app.status === "unsanctioned" ? "risk-medium" : "risk-low";
+      const tr = document.createElement("tr");
+      const domainTd = document.createElement("td");
+      const strong = document.createElement("strong");
+      strong.textContent = safeText(app.domain);
+      domainTd.appendChild(strong);
+      tr.appendChild(domainTd);
+      _bsecAppendTextCell(tr, app.app_name || "--");
+      _bsecAppendTextCell(tr, app.category || "--");
+      _bsecAppendBadgeCell(tr, app.risk_score, rCls);
+      _bsecAppendBadgeCell(tr, app.status, sCls);
+      _bsecAppendTextCell(tr, app.active_user_count);
+      _bsecAppendTextCell(tr, app.data_upload_events);
+      _bsecAppendTextCell(tr, (app.first_seen_at || "").slice(0, 10), "mono");
+      _bsecAppendTextCell(tr, (app.last_seen_at || "").slice(0, 10), "mono");
+      _bsecAppendTextCell(tr, app.reviewed_by || "--");
+      const actionTd = document.createElement("td");
+      const reviewBtn = document.createElement("button");
+      reviewBtn.type = "button";
+      reviewBtn.className = "ghost";
+      reviewBtn.dataset.appId = safeText(app.app_id);
+      reviewBtn.dataset.appDomain = safeText(app.domain);
+      reviewBtn.textContent = "Review";
+      reviewBtn.addEventListener("click", () => openShadowAiReview(reviewBtn));
+      actionTd.appendChild(reviewBtn);
+      tr.appendChild(actionTd);
+      tbody.appendChild(tr);
+    });
+  } catch (err) { const t = qs("#shadowAiAppsTable"); if (t) setTableMessage(t, 11, `Error: ${safeText(err.message)}`); }
+}
+
+async function openShadowAiReview(btn) {
+  const appId = btn.dataset.appId;
+  const domain = btn.dataset.appDomain;
+  const status = window.prompt(`Review "${domain}"\n\nNew status: unsanctioned / under-review / sanctioned / blocked`);
+  if (!status) return;
+  try {
+    await api(`/browser/extensions/shadow-ai/apps/${encodeURIComponent(appId)}`, { method: "PATCH", body: JSON.stringify({ status }) });
+    await loadShadowAiApps();
+  } catch (err) { alert(`Error: ${err.message}`); }
+}
+
+async function loadBrowserRiskPolicies() {
+  try {
+    const policies = await api("/browser/risk-policies?limit=100");
+    const tbody = qs("#browserRiskPoliciesTable");
+    if (!tbody) return;
+    tbody.textContent = "";
+    if (!policies.length) { setTableMessage(tbody, 11, "No policies"); return; }
+    policies.forEach((p) => {
+      const dCls = p.decision_mode === "deny" ? "risk-high" : ["warn","challenge"].includes(p.decision_mode) ? "risk-medium" : "risk-low";
+      const tr = document.createElement("tr");
+      _bsecAppendTextCell(tr, p.name);
+      _bsecAppendCodeCell(tr, `${safeText(p.scope_type)}${p.scope_value ? `:${safeText(p.scope_value)}` : ""}`);
+      _bsecAppendCodeCell(tr, p.action_type_pattern);
+      _bsecAppendCodeCell(tr, p.domain_pattern);
+      _bsecAppendCodeCell(tr, p.data_class_filter);
+      _bsecAppendBadgeCell(tr, p.decision_mode, dCls);
+      _bsecAppendTextCell(tr, p.environment);
+      _bsecAppendTextCell(tr, p.geo_collection_enabled ? "on" : "off");
+      _bsecAppendTextCell(tr, p.geo_detail_level);
+      _bsecAppendTextCell(tr, p.enabled ? "✓" : "—");
+      const actionTd = document.createElement("td");
+      const editBtn = document.createElement("button");
+      editBtn.className = "ghost";
+      editBtn.type = "button";
+      editBtn.textContent = "Edit";
+      editBtn.addEventListener("click", () => editBrowserRiskPolicy(p));
+      const spacer = document.createTextNode(" ");
+      const delBtn = document.createElement("button");
+      delBtn.className = "ghost";
+      delBtn.type = "button";
+      delBtn.textContent = "Del";
+      delBtn.addEventListener("click", () => deleteBrowserRiskPolicy(p.policy_id, p.name));
+      actionTd.append(editBtn, spacer, delBtn);
+      tr.appendChild(actionTd);
+      tbody.appendChild(tr);
+    });
+  } catch (err) { const t = qs("#browserRiskPoliciesTable"); if (t) setTableMessage(t, 11, `Error: ${safeText(err.message)}`); }
+}
+
+function editBrowserRiskPolicy(pJson) {
+  const p = typeof pJson === "string" ? JSON.parse(pJson) : pJson;
+  const form = qs("#browserRiskPolicyForm");
+  if (!form) return;
+  Object.entries(p).forEach(([k, v]) => { const el = form.elements[k]; if (el) el.value = v == null ? "" : String(v); });
+  form.scrollIntoView({ behavior: "smooth" });
+  const r = qs("#browserRiskPolicyResult"); if (r) r.textContent = `Editing: ${p.name}`;
+}
+
+async function deleteBrowserRiskPolicy(policyId, name) {
+  if (!confirm(`Delete policy "${name}"?`)) return;
+  try {
+    await api(`/browser/risk-policies/${encodeURIComponent(policyId)}`, { method: "DELETE" });
+    await loadBrowserRiskPolicies();
+  } catch (err) { alert(`Error: ${err.message}`); }
+}
+
+async function saveBrowserRiskPolicy(evt) {
+  evt.preventDefault();
+  const form = evt.currentTarget;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const policyId = String(raw.policy_id || "").trim();
+  const payload = {
+    name: String(raw.name||"").trim(), description: String(raw.description||"").trim(),
+    scope_type: raw.scope_type||"global", scope_value: String(raw.scope_value||"").trim(),
+    action_type_pattern: String(raw.action_type_pattern||"*").trim(),
+    domain_pattern: String(raw.domain_pattern||"*").trim(),
+    data_class_filter: String(raw.data_class_filter||"*").trim(),
+    decision_mode: raw.decision_mode||"warn", enabled: raw.enabled==="true",
+    environment: raw.environment||"dev",
+    geo_collection_enabled: raw.geo_collection_enabled==="true",
+    geo_detail_level: raw.geo_detail_level||"country",
+    analytics_retention_days: parseInt(raw.analytics_retention_days||"90", 10),
+  };
+  const result = qs("#browserRiskPolicyResult");
+  try {
+    const saved = policyId
+      ? await api(`/browser/risk-policies/${encodeURIComponent(policyId)}`, { method: "PATCH", body: JSON.stringify(payload) })
+      : await api("/browser/risk-policies", { method: "POST", body: JSON.stringify(payload) });
+    if (result) result.textContent = `Saved: ${saved.name}`;
+    form.reset();
+    await loadBrowserRiskPolicies();
+  } catch (err) { if (result) result.textContent = `Error: ${safeText(err.message)}`; }
+}
+
+async function loadBrowserAnalytics(evt) {
+  if (evt) evt.preventDefault();
+  const form = qs("#browserAnalyticsFilters");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({ group_by: raw.group_by||"browser_name", since_hours: raw.since_hours||"168", limit: "20" });
+  if (raw.environment) params.set("environment", raw.environment);
+  const summaryEl = qs("#browserAnalyticsSummary");
+  try {
+    const data = await api(`/browser/analytics?${params}`);
+    if (summaryEl) summaryEl.textContent = `${data.total_events} total events · grouped by ${data.group_by} · last ${data.since_hours}h`;
+    const headerEl = qs("#bsecAnalyticsGroupHeader"); if (headerEl) headerEl.textContent = data.group_by.replace(/_/g," ");
+    const tbody = qs("#browserAnalyticsTable");
+    if (!tbody) return;
+    tbody.textContent = "";
+    const maxCount = data.rows[0]?.count || 1;
+    data.rows.forEach((row) => {
+      const pct = Math.round((row.count/maxCount)*100);
+      const tr = document.createElement("tr");
+      _bsecAppendTextCell(tr, row.group || "(empty)");
+      const countTd = document.createElement("td");
+      countTd.textContent = `${row.count} `;
+      const pctSpan = document.createElement("span");
+      pctSpan.className = "mono";
+      pctSpan.style.color = "var(--text-muted)";
+      pctSpan.style.fontSize = ".8em";
+      pctSpan.textContent = `(${pct}%)`;
+      countTd.appendChild(pctSpan);
+      tr.appendChild(countTd);
+      tbody.appendChild(tr);
+    });
+    const chartEl = qs("#bsecAnalyticsChart");
+    if (chartEl) {
+      chartEl.textContent = "";
+      data.rows.slice(0, 10).forEach((row) => {
+        const pct = Math.round((row.count/maxCount)*100);
+        const rowEl = document.createElement("div");
+        rowEl.className = "spend-bar-row";
+        const labelEl = document.createElement("span");
+        labelEl.className = "spend-label";
+        labelEl.textContent = safeText(row.group || "(empty)");
+        const trackEl = document.createElement("div");
+        trackEl.className = "spend-bar-track";
+        const fillEl = document.createElement("div");
+        fillEl.className = "spend-bar-fill";
+        fillEl.style.width = `${pct}%`;
+        fillEl.style.minWidth = "2px";
+        trackEl.appendChild(fillEl);
+        const valueEl = document.createElement("span");
+        valueEl.className = "spend-value";
+        valueEl.textContent = String(row.count);
+        rowEl.append(labelEl, trackEl, valueEl);
+        chartEl.appendChild(rowEl);
+      });
+    }
+  } catch (err) { if (summaryEl) summaryEl.textContent = `Error: ${safeText(err.message)}`; }
+}
+
+let _bsecIncidentBundle = null;
+
+async function exportBrowserIncident(evt) {
+  evt.preventDefault();
+  const form = evt.currentTarget;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const params = new URLSearchParams({ since_hours: raw.since_hours||"24", include_analytics: raw.include_analytics||"true" });
+  if (raw.actor_id) params.set("actor_id", raw.actor_id.trim());
+  if (raw.environment) params.set("environment", raw.environment);
+  if (raw.decision_outcome) params.set("decision_outcome", raw.decision_outcome);
+  const resultEl = qs("#browserIncidentResult");
+  const bundleEl = qs("#browserIncidentBundle");
+  const dlBtn = qs("#downloadBrowserIncidentBundle");
+  try {
+    const bundle = await api(`/browser/extensions/incidents/export?${params}`, { method: "POST" });
+    _bsecIncidentBundle = bundle;
+    if (resultEl) resultEl.textContent = `Bundle: ${bundle.event_count} events · ${bundle.generated_at}`;
+    if (bundleEl) { bundleEl.textContent = JSON.stringify(bundle, null, 2); bundleEl.style.display = "block"; }
+    if (dlBtn) dlBtn.style.display = "";
+  } catch (err) { if (resultEl) resultEl.textContent = `Error: ${safeText(err.message)}`; }
+}
+
+function downloadBrowserIncidentBundle() {
+  if (!_bsecIncidentBundle) return;
+  const blob = new Blob([JSON.stringify(_bsecIncidentBundle, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = `guardbrige-incident-${Date.now()}.json`; a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function loadBrowserSecurityConsole() {
+  await loadBrowserRiskSummary();
+  await loadBrowserEvents();
+}
+
+function bindBrowserSecurityEvents() {
+  qsa("[data-browser-console]").forEach((btn) => btn.addEventListener("click", () => switchBrowserConsole(btn.dataset.browserConsole)));
+  const ef = qs("#browserEventFilters"); if (ef) ef.addEventListener("submit", loadBrowserEvents);
+  const lb = qs("#loadBrowserEvents"); if (lb) lb.addEventListener("click", loadBrowserEvents);
+  const sf = qs("#browserSessionFilters"); if (sf) sf.addEventListener("submit", loadBrowserSessions);
+  const ls = qs("#loadBrowserSessions"); if (ls) ls.addEventListener("click", loadBrowserSessions);
+  const shf = qs("#shadowAiFilters"); if (shf) shf.addEventListener("submit", loadShadowAiApps);
+  const lsh = qs("#loadShadowAiApps"); if (lsh) lsh.addEventListener("click", loadShadowAiApps);
+  const pf = qs("#browserRiskPolicyForm"); if (pf) pf.addEventListener("submit", saveBrowserRiskPolicy);
+  const rp = qs("#resetBrowserRiskPolicyForm"); if (rp) rp.addEventListener("click", () => { const f = qs("#browserRiskPolicyForm"); if (f) f.reset(); const r = qs("#browserRiskPolicyResult"); if (r) r.textContent = "Reset."; });
+  const lp = qs("#loadBrowserRiskPolicies"); if (lp) lp.addEventListener("click", loadBrowserRiskPolicies);
+  const af = qs("#browserAnalyticsFilters"); if (af) af.addEventListener("submit", loadBrowserAnalytics);
+  const la = qs("#loadBrowserAnalytics"); if (la) la.addEventListener("click", loadBrowserAnalytics);
+  const inc = qs("#browserIncidentExportForm"); if (inc) inc.addEventListener("submit", exportBrowserIncident);
+  const dl = qs("#downloadBrowserIncidentBundle"); if (dl) dl.addEventListener("click", downloadBrowserIncidentBundle);
+}
+
+// ── End GuardBridge ────────────────────────────────────────────────────────────
+
 function bindEvents() {
+  document.addEventListener("change", (evt) => {
+    const target = evt.target;
+    if (!(target instanceof HTMLSelectElement)) return;
+    if (!target.matches("[data-tenant-select]")) return;
+    syncTenantMetadataFields(target.closest("form"));
+  });
+
   qsa(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => switchView(btn.dataset.view));
+  });
+
+  qsa(".quick-start-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const viewName = btn.dataset.view;
+      const scrollTarget = btn.dataset.scrollTarget;
+      if (viewName) switchView(viewName);
+      if (scrollTarget) {
+        const target = qs(`#${scrollTarget}`);
+        if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+  });
+
+  const sidebarToggle = qs("#sidebarToggle");
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener("click", toggleSidebar);
+  }
+
+  document.addEventListener("click", (evt) => {
+    const sidebar = qs("#sidebar");
+    const toggle = qs("#sidebarToggle");
+    if (!sidebar || !sidebar.classList.contains("open")) return;
+    const target = evt.target;
+    if (!(target instanceof Element)) return;
+    if (sidebar.contains(target) || toggle?.contains(target)) return;
+    closeSidebar();
+  });
+
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > 1080) closeSidebar();
+  });
+
+  qsa("[data-nav-group]").forEach((group) => {
+    const toggle = group.querySelector(".nav-group-toggle");
+    const submenu = group.querySelector(".nav-submenu");
+    if (!toggle || !submenu) return;
+    toggle.addEventListener("click", () => {
+      const willExpand = submenu.hidden;
+      submenu.hidden = !willExpand;
+      toggle.setAttribute("aria-expanded", willExpand ? "true" : "false");
+    });
   });
 
   const themeToggle = qs("#themeToggle");
@@ -11581,6 +15939,7 @@ function bindEvents() {
     try {
       saveContext();
       switchRuntimeRuleValidationContext("Loaded validation status for the current context.");
+      renderCursorAutomationRecipe();
       await refreshUiFeatureFlags();
       await loadOverview();
     } catch (err) {
@@ -11642,6 +16001,7 @@ function bindEvents() {
       loadSessionPolicy(),
       loadSessionPolicyRevisions(),
       loadObservability(),
+      loadBrowserSecurityConsole(),
     ]);
   });
 
@@ -11664,13 +16024,27 @@ function bindEvents() {
   qs("#syncRuntimeInventory").addEventListener("click", () => syncDiscoverySource("runtime_inventory"));
   qs("#syncCodeMetadata").addEventListener("click", () => syncDiscoverySource("code_metadata"));
   qs("#syncGatewayTelemetry").addEventListener("click", () => syncDiscoverySource("gateway_telemetry"));
+  qs("#syncAwsS3").addEventListener("click", () => syncDiscoverySource("aws_s3"));
+  qs("#syncAwsIam").addEventListener("click", () => syncDiscoverySource("aws_iam"));
+  qs("#syncAwsEc2").addEventListener("click", () => syncDiscoverySource("aws_ec2"));
+  qs("#syncAzureBlobStorage").addEventListener("click", () => syncDiscoverySource("azure_blob_storage"));
+  qs("#syncAzureManagedIdentity").addEventListener("click", () => syncDiscoverySource("azure_managed_identity"));
+  qs("#syncAzureVirtualMachines").addEventListener("click", () => syncDiscoverySource("azure_virtual_machines"));
+  qs("#syncGcpCloudStorage").addEventListener("click", () => syncDiscoverySource("gcp_cloud_storage"));
+  qs("#syncGcpServiceAccounts").addEventListener("click", () => syncDiscoverySource("gcp_service_accounts"));
+  qs("#syncGcpComputeEngine").addEventListener("click", () => syncDiscoverySource("gcp_compute_engine"));
   qs("#loadDiscoveryConflicts").addEventListener("click", loadDiscoveryConflicts);
   qs("#loadDiscoveryAlerts").addEventListener("click", loadDiscoveryAlerts);
   qs("#loadDiscoveryPromoteQueue").addEventListener("click", loadDiscoveryPromoteQueue);
+  qs("#loadDiscoveryTriage").addEventListener("click", loadDiscoveryTriageWorkspace);
+  qs("#discoveryTriageTypeFilter").addEventListener("change", (evt) => setDiscoveryTriageFilter("type", evt.target.value));
+  qs("#discoveryTriageSeverityFilter").addEventListener("change", (evt) => setDiscoveryTriageFilter("severity", evt.target.value));
+  qs("#discoveryTriageSearch").addEventListener("input", (evt) => setDiscoveryTriageFilter("search", evt.target.value));
   qs("#loadTenantCatalog").addEventListener("click", loadTenantCatalog);
   qs("#loadWorkloadIdentityProviders").addEventListener("click", loadWorkloadIdentityProviders);
   qs("#loadSecretProviders").addEventListener("click", loadSecretProviders);
   qs("#loadModules").addEventListener("click", loadModules);
+  qs("#loadAiSkills").addEventListener("click", loadAiSkills);
   qs("#moduleRegisterForm").addEventListener("submit", registerModule);
   qs("#moduleVersionsForm").addEventListener("submit", submitModuleVersionsForm);
   qs("#moduleValidateForm").addEventListener("submit", validateModuleForAgent);
@@ -11717,6 +16091,7 @@ function bindEvents() {
     syncTenantMetadataFields(qs("#createSecretProviderForm"));
   });
   qs("#supportedModelForm").addEventListener("submit", saveSupportedModel);
+  qs("#supportedModelApprovalForm").addEventListener("submit", submitSupportedModelApproval);
   qs("#supportedModelFilters").addEventListener("submit", loadSupportedModels);
   qs("#resetSupportedModelForm").addEventListener("click", () => resetSupportedModelForm("Form reset."));
   qs("#tenantModelEntitlementForm").addEventListener("submit", saveTenantModelEntitlement);
@@ -11726,6 +16101,7 @@ function bindEvents() {
   );
   qs("#loadCost").addEventListener("click", loadCost);
   qs("#loadCostPricingCatalog").addEventListener("click", loadCostPricingCatalog);
+  qs("#loadCostModelCatalog").addEventListener("click", loadCostModelCatalog);
   qs("#costPricingCalculatorForm").addEventListener("submit", calculateCostPricing);
   qs("#costSpendTrackForm").addEventListener("submit", trackSpendEvent);
   qs("#loadGatewayAnalytics").addEventListener("click", loadGatewayAnalytics);
@@ -11770,6 +16146,17 @@ function bindEvents() {
   qs("#loadComplianceEvidence").addEventListener("click", loadComplianceEvidence);
   qs("#loadComplianceEvidenceBundle").addEventListener("click", loadComplianceEvidenceBundle);
   qs("#refreshComplianceEvidence").addEventListener("click", loadComplianceEvidence);
+  qs("#complianceBundlePresetProd").addEventListener("click", () => applyComplianceBundlePreset("prod"));
+  qs("#complianceBundlePresetTenant").addEventListener("click", () => applyComplianceBundlePreset("tenant"));
+  qs("#complianceBundleResetFilters").addEventListener("click", resetComplianceBundleFilters);
+  qs("#copyComplianceBundleSummary").addEventListener("click", copyComplianceBundleSummary);
+  qs("#exportComplianceBundle").addEventListener("click", exportComplianceBundle);
+  qs("#complianceInvestigateOpenTrace").addEventListener("click", pivotComplianceInvestigateTrace);
+  qs("#complianceInvestigateOpenLogs").addEventListener("click", pivotComplianceInvestigateLogs);
+  qs("#complianceInvestigateOpenAudit").addEventListener("click", pivotComplianceInvestigateAudit);
+  qs("#complianceInvestigateOpenArtifact").addEventListener("click", openComplianceInvestigateArtifact);
+  qs("#complianceInvestigateCopy").addEventListener("click", copyComplianceInvestigateContext);
+  qs("#complianceInvestigateClear").addEventListener("click", clearComplianceInvestigateContext);
   qs("#complianceMappingForm").addEventListener("submit", saveComplianceMapping);
   qs("#resetComplianceMappingForm").addEventListener("click", () => {
     const form = qs("#complianceMappingForm");
@@ -11799,7 +16186,25 @@ function bindEvents() {
   qs("#playgroundRunHistoryFilters").addEventListener("submit", loadPlaygroundRuns);
   qs("#loadPlaygroundRuns").addEventListener("click", loadPlaygroundRuns);
   qs("#loadSelectedPlaygroundRun").addEventListener("click", () => loadPlaygroundRunDetails());
+  qs("#playgroundFeedbackForm").addEventListener("submit", savePlaygroundRunFeedback);
+  qs("#loadPlaygroundRunFeedback").addEventListener("click", () => loadPlaygroundRunFeedback());
+  qs("#playgroundQualityTriageForm").addEventListener("submit", loadPlaygroundQualityTriageQueue);
+  qs("#loadPlaygroundQualityTriage").addEventListener("click", loadPlaygroundQualityTriageQueue);
+  qs("#playgroundQualityEscalationCreateForm").addEventListener("submit", createPlaygroundQualityEscalation);
+  qs("#playgroundQualityEscalationFiltersForm").addEventListener("submit", loadPlaygroundQualityEscalations);
+  qs("#loadPlaygroundQualityEscalations").addEventListener("click", loadPlaygroundQualityEscalations);
+  qs("#acknowledgePlaygroundQualityEscalation").addEventListener("click", acknowledgePlaygroundQualityEscalation);
+  qs("#notifyPlaygroundQualityEscalation").addEventListener("click", notifyPlaygroundQualityEscalation);
+  qs("#playgroundQualityEscalationResolveForm").addEventListener("submit", resolvePlaygroundQualityEscalation);
+  qs("#playgroundQualityRollupsForm").addEventListener("submit", loadPlaygroundQualityRollups);
+  qs("#loadPlaygroundQualityRollups").addEventListener("click", loadPlaygroundQualityRollups);
   qs("#loadPlaygroundTestSets").addEventListener("click", loadPlaygroundTestSets);
+  qs("#promptRegistryForm").addEventListener("submit", savePromptRegistryItem);
+  qs("#promptRegistryPromotionForm").addEventListener("submit", submitPromptRegistryPromotion);
+  qs("#loadPromptRegistryItems").addEventListener("click", loadPromptRegistryItems);
+  qs("#deletePromptRegistryItem").addEventListener("click", deletePromptRegistryItem);
+  qs("#loadPromptRegistryVersions").addEventListener("click", () => loadPromptRegistryVersions());
+  qs("#previewPromptRegistryPromotion").addEventListener("click", () => promotePromptRegistryItem(true));
   qs("#clearPlaygroundStream").addEventListener("click", () => {
     stopPlaygroundStream();
     updatePlaygroundStreamLog("");
@@ -11865,8 +16270,16 @@ function bindEvents() {
   qs("#loadRouteProviderHealth").addEventListener("click", loadRouteProviderHealth);
   qs("#routePreCallFiltersForm").addEventListener("submit", saveRoutePreCallFilters);
   qs("#loadRoutePreCallFilters").addEventListener("click", loadRoutePreCallFilters);
+  qs("#routeOutputGuardrailsForm").addEventListener("submit", saveRouteOutputGuardrails);
+  qs("#loadRouteOutputGuardrails").addEventListener("click", loadRouteOutputGuardrails);
+  qs("#routeInputDataPolicyForm").addEventListener("submit", saveRouteInputDataPolicy);
+  qs("#loadRouteInputDataPolicy").addEventListener("click", loadRouteInputDataPolicy);
   qs("#routeTrafficMirroringForm").addEventListener("submit", saveRouteTrafficMirroring);
   qs("#loadRouteTrafficMirroring").addEventListener("click", loadRouteTrafficMirroring);
+  qs("#routeCanaryRolloutForm").addEventListener("submit", saveRouteCanaryRollout);
+  qs("#loadRouteCanaryRollout").addEventListener("click", loadRouteCanaryRollout);
+  qs("#stopRouteCanaryRollout").addEventListener("click", (evt) => runRouteCanaryRolloutAction("stop", evt));
+  qs("#promoteRouteCanaryRollout").addEventListener("click", (evt) => runRouteCanaryRolloutAction("promote", evt));
   qs("#routeTrafficMirroringAnalyticsForm").addEventListener("submit", loadRouteTrafficMirroringAnalytics);
   qs("#loadRouteTrafficMirroringAnalytics").addEventListener("click", loadRouteTrafficMirroringAnalytics);
   qs("#loadRouteTrafficMirroringReport").addEventListener("click", loadRouteTrafficMirroringReport);
@@ -11885,8 +16298,53 @@ function bindEvents() {
   qs("#gatewayGovernanceEvidenceForm").addEventListener("submit", loadGatewayGovernanceEvidence);
   qs("#loadGatewayGovernanceEvidence").addEventListener("click", loadGatewayGovernanceEvidence);
   qs("#exportGatewayGovernanceEvidence").addEventListener("click", exportGatewayGovernanceEvidence);
+  qs("#loadGatewaySystemControls").addEventListener("click", loadGatewaySystemControls);
+  qs("#saveGatewaySystemControls").addEventListener("click", saveGatewaySystemControls);
+
+  qsa("[data-gateway-ops-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => switchGatewayOpsTab(btn.dataset.gatewayOpsTab));
+  });
+  qsa(".cursor-integration-types .quick-start-chip[data-gateway-ops-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      switchView("routing-gateway");
+      switchGatewayOpsTab(btn.dataset.gatewayOpsTab);
+    });
+  });
+  const refreshCursorHub = qs("#refreshCursorIntegrationHub");
+  if (refreshCursorHub) refreshCursorHub.addEventListener("click", refreshCursorIntegrationHub);
+  const openCursorToken = qs("#openCursorTokenPanel");
+  if (openCursorToken) openCursorToken.addEventListener("click", openCursorTokenPanel);
+  const openCursorModules = qs("#openCursorModulesPanel");
+  if (openCursorModules) openCursorModules.addEventListener("click", openCursorModulesPanel);
+  const refreshAutomationRecipe = qs("#refreshCursorAutomationRecipe");
+  if (refreshAutomationRecipe) refreshAutomationRecipe.addEventListener("click", renderCursorAutomationRecipe);
+  const copyAutomationRecipe = qs("#copyCursorAutomationRecipe");
+  if (copyAutomationRecipe) copyAutomationRecipe.addEventListener("click", copyCursorAutomationRecipe);
+  const automationRecipeSelect = qs("#cursorAutomationRecipe");
+  if (automationRecipeSelect) automationRecipeSelect.addEventListener("change", renderCursorAutomationRecipe);
+
   qs("#gatewayOpenAiChatForm").addEventListener("submit", runGatewayOpenAiChatCompletion);
   qs("#runGatewayOpenAiChat").addEventListener("click", runGatewayOpenAiChatCompletion);
+  qs("#loadGatewayConfiguredModels").addEventListener("click", loadGatewayConfiguredModels);
+  const applyGatewayCursorModel = qs("#applyGatewayCursorModel");
+  if (applyGatewayCursorModel) applyGatewayCursorModel.addEventListener("click", applyGatewayCursorModelToActivePanel);
+  const gatewayCursorModelPicker = qs("#gatewayCursorModelPicker");
+  if (gatewayCursorModelPicker) {
+    gatewayCursorModelPicker.addEventListener("change", applyGatewayCursorModelToActivePanel);
+  }
+  qs("#gatewayOpenAiEmbeddingsForm").addEventListener("submit", createGatewayOpenAiEmbeddings);
+  const audioTranscriptionsForm = qs("#gatewayOpenAiAudioTranscriptionsForm");
+  if (audioTranscriptionsForm) audioTranscriptionsForm.addEventListener("submit", runGatewayOpenAiAudioTranscription);
+  const audioTranslationsForm = qs("#gatewayOpenAiAudioTranslationsForm");
+  if (audioTranslationsForm) audioTranslationsForm.addEventListener("submit", runGatewayOpenAiAudioTranslation);
+  const imagesForm = qs("#gatewayOpenAiImagesForm");
+  if (imagesForm) imagesForm.addEventListener("submit", runGatewayOpenAiImages);
+  const messagesForm = qs("#gatewayOpenAiMessagesForm");
+  if (messagesForm) messagesForm.addEventListener("submit", runGatewayOpenAiMessages);
+  const a2aForm = qs("#gatewayOpenAiA2aForm");
+  if (a2aForm) a2aForm.addEventListener("submit", runGatewayOpenAiA2aMessage);
+  const rerankForm = qs("#gatewayOpenAiRerankForm");
+  if (rerankForm) rerankForm.addEventListener("submit", runGatewayOpenAiRerank);
   qs("#gatewayOpenAiResponsesCreateForm").addEventListener("submit", createGatewayOpenAiResponse);
   qs("#createGatewayOpenAiResponse").addEventListener("click", createGatewayOpenAiResponse);
   qs("#loadGatewayOpenAiResponses").addEventListener("click", loadGatewayOpenAiResponses);
@@ -11900,6 +16358,13 @@ function bindEvents() {
   qs("#applyGatewayOpenAiResponsesFilter").addEventListener("click", renderGatewayOpenAiResponsesRows);
   qs("#gatewayOpenAiFilesCreateForm").addEventListener("submit", createGatewayOpenAiFile);
   qs("#createGatewayOpenAiFile").addEventListener("click", createGatewayOpenAiFile);
+  qs("#gatewayOpenAiRealtimeCreateForm").addEventListener("submit", createGatewayOpenAiRealtimeSession);
+  qs("#createGatewayOpenAiRealtimeSession").addEventListener("click", createGatewayOpenAiRealtimeSession);
+  qs("#loadGatewayOpenAiRealtimeSessions").addEventListener("click", loadGatewayOpenAiRealtimeSessions);
+  qs("#getGatewayOpenAiRealtimeSession").addEventListener("click", () => loadGatewayOpenAiRealtimeSessionById());
+  qs("#loadGatewayOpenAiRealtimeEvents").addEventListener("click", loadGatewayOpenAiRealtimeEvents);
+  qs("#appendGatewayOpenAiRealtimeEvent").addEventListener("click", appendGatewayOpenAiRealtimeEvent);
+  qs("#closeGatewayOpenAiRealtimeSession").addEventListener("click", () => closeGatewayOpenAiRealtimeSessionById());
   qs("#loadGatewayOpenAiFiles").addEventListener("click", loadGatewayOpenAiFiles);
   qs("#getGatewayOpenAiFile").addEventListener("click", () => loadGatewayOpenAiFileById());
   qs("#deleteGatewayOpenAiFile").addEventListener("click", () => deleteGatewayOpenAiFileById());
@@ -11919,8 +16384,10 @@ function bindEvents() {
   qs("#loadGatewayCacheHealth").addEventListener("click", loadGatewayCacheHealth);
   qs("#gatewayCachePolicyForm").addEventListener("submit", saveGatewayCachePolicy);
   qs("#gatewayCachePolicyFilters").addEventListener("submit", loadGatewayCachePolicies);
+  qs("#gatewayCacheDecisionFilters").addEventListener("submit", loadGatewayCacheDecisions);
   qs("#gatewayCacheInvalidateForm").addEventListener("submit", invalidateGatewayCache);
   qs("#loadGatewayCachePolicies").addEventListener("click", loadGatewayCachePolicies);
+  qs("#loadGatewayCacheDecisions").addEventListener("click", loadGatewayCacheDecisions);
   qs("#loadEndpointCompatibility").addEventListener("click", loadEndpointCompatibility);
   qs("#gatewayTransformForm").addEventListener("submit", runGatewayTransformDebug);
   qs("#gatewayAuthzExplainForm").addEventListener("submit", explainGatewayAuthorization);
@@ -12003,7 +16470,9 @@ function bindEvents() {
   qs("#importAgentConfigs").addEventListener("change", importAgentConfigs);
   qs("#runConfigSecurityReview").addEventListener("click", runConfigSecurityReview);
   qs("#exportCisoAuditBundle").addEventListener("click", exportCisoAuditBundle);
+  renderComplianceInvestigateContext();
   switchSecurityConsole("users");
+  bindBrowserSecurityEvents();
   syncScopeIdPicker("#keyLifecycleForm", "owner_scope_type", "owner_scope_id", "keyOwnerScopeIdList");
   renderKeyGuardrailPolicySummary(qs('#keyLifecycleForm textarea[name="guardrail_policy"]').value);
   syncScopeIdPicker("#routeFallbackForm", "owner_scope_type", "owner_scope_id", "routeFallbackOwnerScopeIdList");
@@ -12032,6 +16501,9 @@ function bindEvents() {
     }
     // Keep browser/runtime noise from surfacing a stale incident banner.
   });
+
+  bindGlobalSearchInput("#globalSearchInput", "#globalSearchResults");
+  bindGlobalSearchInput("#sidebarGlobalSearchInput", "#sidebarGlobalSearchResults");
 }
 
 async function init() {
@@ -12042,7 +16514,8 @@ async function init() {
     state.apiBase = ENVIRONMENT_PROFILES.local.apiBase;
     localStorage.setItem("apiBase", state.apiBase);
   }
-  state.environmentProfile = detectProfileFromBaseUrl(state.apiBase);
+  const storedProfile = localStorage.getItem("environmentProfile") || state.environmentProfile || "local";
+  state.environmentProfile = detectProfileFromBaseUrl(state.apiBase, storedProfile);
   localStorage.setItem("environmentProfile", state.environmentProfile);
   enforceKnownActorRole();
   localStorage.setItem("actorRole", state.actorRole);
@@ -12051,11 +16524,17 @@ async function init() {
     return;
   }
   applyTheme(state.theme);
+  if (typeof ViewLoader !== "undefined") {
+    await ViewLoader.bootstrap("overview");
+    initGatewayConsoleTabs();
+  }
   updateContextInputs();
   clearGlobalError();
+  annotateFormFieldRequirements();
   restoreRuntimeRuleValidationState();
   renderRuntimeValidationContext();
   bindEvents();
+  buildGlobalSearchIndex();
   initTablePagination();
   renderGatewayMcpSummary();
   updateSpendFilterControls();
@@ -12073,10 +16552,11 @@ async function init() {
   await runConfigSecurityReview();
   resetAgentConfigForm();
   resetRuntimeConfigForm();
-  await probeProfiles([state.environmentProfile || "local"]);
+  await probeProfiles();
   await loadOverview();
   await loadCost();
   await loadCostPricingCatalog();
+  await loadCostModelCatalog();
   await loadGatewayAnalytics();
   await loadCostBudgetPolicies();
   resetCostBudgetForm();
@@ -12084,27 +16564,43 @@ async function init() {
   await loadCostAnomalies();
   renderPlaygroundAttachments();
   renderPlaygroundRuns();
+  renderPlaygroundRunFeedback();
+  renderPromptRegistryItems();
+  renderPromptRegistryVersions();
   renderGatewayAccessReviewCampaign(null);
   renderGatewayGovernanceEvidenceSummary([]);
   renderGatewayOpenAiResponsesRows();
   renderGatewayOpenAiFilesRows();
+  renderGatewayOpenAiRealtimeRows();
+  renderGatewayOpenAiRealtimeEventRows();
   renderBenchmarkTable(latestBenchmarkRun);
   renderScanTable(latestScanRun);
   await loadBenchmarkHistory();
   await loadScanHistory();
   updatePlaygroundMicStatus("Microphone off.");
   await loadPlaygroundTestSets();
+  await loadPromptRegistryItems();
   await loadPlaygroundRuns();
+  await loadPlaygroundRunFeedback();
   await loadRoutePolicies();
   await loadGatewayEntitlements();
   await loadGatewayNhiInventory();
   await loadGatewayNhiHygiene();
   await loadGatewayLeastPrivilegeRecommendations();
+  await loadGatewaySystemControls();
+  renderCursorGatewayOpsMatrix();
+  renderCursorAutomationRecipe();
+  switchGatewayOpsTab("core");
+  await loadGatewayCursorTokenConfig();
+  await loadKeys();
+  await loadGatewayConfiguredModels();
   await loadGatewayOpenAiResponses();
   await loadGatewayOpenAiFiles();
+  await loadGatewayOpenAiRealtimeSessions();
+  await loadGatewayOpenAiRealtimeEventsBySessionId(selectedGatewayOpenAiRealtimeSessionId, { suppressMessage: true });
   await loadGatewayExternalCallbacks();
   await loadGatewayCachePolicies();
-  await loadKeys();
+  await loadGatewayCacheDecisions();
   await loadRouteDrafts();
   await loadDiscoverySources();
   await loadDiscoveryConflicts();
@@ -12117,6 +16613,7 @@ async function init() {
   await loadSessionPolicyRevisions();
   await loadComplianceWorkspace();
   await loadObservability();
+  await loadBrowserSecurityConsole();
 }
 
 init();

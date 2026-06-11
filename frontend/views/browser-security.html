@@ -1,0 +1,412 @@
+<section id="browser-security" class="view">
+          <!-- GuardBridge — browser extension governance console -->
+          <!-- Data minimization contract:
+               - browser_name / version / extension_version: canonical slug only (chrome|firefox|safari|edge|opera|brave|arc|vivaldi|samsung)
+               - os_name / os_version / device_type: coarse classification, never raw UA string
+               - user_agent_digest: SHA-256 of UA, computed client-side; raw UA never transmitted
+               - ip_hash: HMAC-SHA256 of IP, computed at gateway; raw IP never stored
+               - geo: country (ISO 3166-1 α-2) and region only; city requires explicit CISO policy + jurisdiction notice
+               - content_fingerprint: hash of prompt/content; raw prompt text never sent or stored
+               - All fields are optional at ingestion; missing fields default to empty string -->
+          <!-- ── GuardBridge Overview ── -->
+          <article class="card">
+            <h3>GuardBridge — Browser Extension Governance</h3>
+            <p class="mono" style="margin-top:0.25rem">
+              GuardBridge is the browser extension component of AgentHub. It operates independently under its own extension identity,
+              governs AI interactions at the browser layer, and reports minimal, privacy-safe telemetry back to this control plane.
+              No raw prompt text, raw IP addresses, or raw user-agent strings are ever transmitted or stored.
+            </p>
+          </article>
+          <div class="card-grid">
+            <article class="card metric">
+              <h3>Events (24h)</h3>
+              <p class="metric-value" id="bsecEventCount">--</p>
+            </article>
+            <article class="card metric">
+              <h3>Denied (24h)</h3>
+              <p class="metric-value" id="bsecDenyCount">--</p>
+            </article>
+            <article class="card metric">
+              <h3>Shadow AI Apps</h3>
+              <p class="metric-value" id="bsecShadowCount">--</p>
+            </article>
+            <article class="card metric">
+              <h3>Active Sessions</h3>
+              <p class="metric-value" id="bsecSessionCount">--</p>
+            </article>
+          </div>
+
+          <!-- ── Console tabs ── -->
+          <div class="card security-console-tabs">
+            <button class="ghost active" type="button" data-browser-console="events">Events</button>
+            <button class="ghost" type="button" data-browser-console="sessions">Sessions</button>
+            <button class="ghost" type="button" data-browser-console="shadow-ai">Shadow AI</button>
+            <button class="ghost" type="button" data-browser-console="policies">Risk Policies</button>
+            <button class="ghost" type="button" data-browser-console="analytics">Analytics</button>
+            <button class="ghost" type="button" data-browser-console="incident">Incident Export</button>
+          </div>
+
+          <!-- ── Events panel ── -->
+          <article id="bsecConsoleEvents" class="card browser-security-console active">
+            <div class="card-head">
+              <h3>Interaction Events</h3>
+              <button id="loadBrowserEvents" class="ghost" type="button">Load</button>
+            </div>
+            <form id="browserEventFilters" class="form-grid" style="margin-bottom:0.75rem">
+              <label>Decision
+                <select name="decision_outcome">
+                  <option value="">All</option>
+                  <option value="allow">allow</option>
+                  <option value="warn">warn</option>
+                  <option value="challenge">challenge</option>
+                  <option value="deny">deny</option>
+                  <option value="mask">mask</option>
+                </select>
+              </label>
+              <label>Browser
+                <select name="browser_name">
+                  <option value="">All</option>
+                  <option>chrome</option>
+                  <option>firefox</option>
+                  <option>safari</option>
+                  <option>edge</option>
+                  <option>opera</option>
+                  <option>brave</option>
+                  <option>arc</option>
+                  <option>vivaldi</option>
+                  <option>samsung</option>
+                  <option>other</option>
+                </select>
+              </label>
+              <label>Action
+                <select name="action_type">
+                  <option value="">All</option>
+                  <option>prompt_send</option>
+                  <option>file_upload</option>
+                  <option>file_download</option>
+                  <option>paste</option>
+                  <option>copy</option>
+                  <option>screenshot</option>
+                  <option>extension_install</option>
+                  <option>extension_update</option>
+                  <option>navigation</option>
+                  <option>form_submit</option>
+                  <option>api_call</option>
+                  <option>other</option>
+                </select>
+              </label>
+              <label>Data Class
+                <select name="data_class">
+                  <option value="">All</option>
+                  <option>standard</option>
+                  <option>pii</option>
+                  <option>credentials</option>
+                  <option>regulated</option>
+                </select>
+              </label>
+              <label>Country
+                <input name="geo_country" type="text" placeholder="US" maxlength="2" style="width:4rem" />
+              </label>
+              <label>Hours
+                <input name="since_hours" type="number" value="24" min="1" max="720" style="width:5rem" />
+              </label>
+              <button type="submit" class="ghost">Filter</button>
+            </form>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Browser security interaction events</caption>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Actor</th>
+                    <th>Action</th>
+                    <th>Decision</th>
+                    <th>Domain</th>
+                    <th>Browser</th>
+                    <th>OS</th>
+                    <th>Device</th>
+                    <th>Country</th>
+                    <th>Data Class</th>
+                  </tr>
+                </thead>
+                <tbody id="browserEventsTable"></tbody>
+              </table>
+            </div>
+            <div id="browserEventsPagination" class="pagination-row"></div>
+          </article>
+
+          <!-- ── Sessions panel ── -->
+          <article id="bsecConsoleSessions" class="card browser-security-console" hidden>
+            <div class="card-head">
+              <h3>Extension Sessions</h3>
+              <button id="loadBrowserSessions" class="ghost" type="button">Load</button>
+            </div>
+            <form id="browserSessionFilters" class="form-grid" style="margin-bottom:0.75rem">
+              <label>Browser
+                <select name="browser_name">
+                  <option value="">All</option>
+                  <option>chrome</option>
+                  <option>firefox</option>
+                  <option>safari</option>
+                  <option>edge</option>
+                  <option>opera</option>
+                  <option>brave</option>
+                  <option>arc</option>
+                  <option>vivaldi</option>
+                  <option>samsung</option>
+                </select>
+              </label>
+              <label>Status
+                <select name="status">
+                  <option value="">All</option>
+                  <option value="active">active</option>
+                  <option value="expired">expired</option>
+                </select>
+              </label>
+              <label>Country
+                <input name="geo_country" type="text" placeholder="US" maxlength="2" style="width:4rem" />
+              </label>
+              <button type="submit" class="ghost">Filter</button>
+            </form>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Browser extension sessions</caption>
+                <thead>
+                  <tr>
+                    <th>Session ID</th>
+                    <th>Actor</th>
+                    <th>Browser</th>
+                    <th>Version</th>
+                    <th>OS</th>
+                    <th>Device</th>
+                    <th>Managed</th>
+                    <th>Country</th>
+                    <th>Region</th>
+                    <th>Status</th>
+                    <th>Last Heartbeat</th>
+                    <th>Created</th>
+                  </tr>
+                </thead>
+                <tbody id="browserSessionsTable"></tbody>
+              </table>
+            </div>
+            <div id="browserSessionsPagination" class="pagination-row"></div>
+          </article>
+
+          <!-- ── Shadow AI panel ── -->
+          <article id="bsecConsoleShadowAi" class="card browser-security-console" hidden>
+            <div class="card-head">
+              <h3>Shadow AI App Inventory</h3>
+              <button id="loadShadowAiApps" class="ghost" type="button">Load</button>
+            </div>
+            <form id="shadowAiFilters" class="form-grid" style="margin-bottom:0.75rem">
+              <label>Status
+                <select name="status">
+                  <option value="">All</option>
+                  <option value="unsanctioned">unsanctioned</option>
+                  <option value="under-review">under-review</option>
+                  <option value="sanctioned">sanctioned</option>
+                  <option value="blocked">blocked</option>
+                </select>
+              </label>
+              <label>Min Risk Score
+                <input name="min_risk_score" type="number" value="0" min="0" max="100" style="width:5rem" />
+              </label>
+              <button type="submit" class="ghost">Filter</button>
+            </form>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Shadow AI app inventory</caption>
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>App Name</th>
+                    <th>Category</th>
+                    <th>Risk Score</th>
+                    <th>Status</th>
+                    <th>Active Users</th>
+                    <th>Upload Events</th>
+                    <th>First Seen</th>
+                    <th>Last Seen</th>
+                    <th>Reviewed By</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="shadowAiAppsTable"></tbody>
+              </table>
+            </div>
+            <div id="shadowAiPagination" class="pagination-row"></div>
+          </article>
+
+          <!-- ── Risk Policies panel ── -->
+          <article id="bsecConsolePolicies" class="card browser-security-console" hidden>
+            <div class="card-head">
+              <h3>Browser Risk Policies</h3>
+              <button id="loadBrowserRiskPolicies" class="ghost" type="button">Load</button>
+            </div>
+            <form id="browserRiskPolicyForm" class="form-grid">
+              <input type="hidden" name="policy_id" />
+              <label>Name<input name="name" required placeholder="Block PII to ChatGPT" /></label>
+              <label>Description<input name="description" placeholder="Optional description" /></label>
+              <label>Scope Type
+                <select name="scope_type">
+                  <option value="global">global</option>
+                  <option value="tenant">tenant</option>
+                  <option value="team">team</option>
+                  <option value="user">user</option>
+                </select>
+              </label>
+              <label>Scope Value<input name="scope_value" placeholder="e.g. team-id or user-id" /></label>
+              <label>Action Pattern<input name="action_type_pattern" value="*" placeholder="* or prompt_send" /></label>
+              <label>Domain Pattern<input name="domain_pattern" value="*" placeholder="* or *.openai.com" /></label>
+              <label>Data Class Filter<input name="data_class_filter" value="*" placeholder="* or pii" /></label>
+              <label>Decision Mode
+                <select name="decision_mode">
+                  <option value="warn" selected>warn</option>
+                  <option value="allow">allow</option>
+                  <option value="challenge">challenge</option>
+                  <option value="deny">deny</option>
+                  <option value="mask">mask</option>
+                </select>
+              </label>
+              <label>Environment
+                <select name="environment">
+                  <option value="dev">dev</option>
+                  <option value="stage">stage</option>
+                  <option value="prod">prod</option>
+                </select>
+              </label>
+              <label>Geo Collection
+                <select name="geo_collection_enabled">
+                  <option value="false" selected>Disabled (default, GDPR-safe)</option>
+                  <option value="true">Enabled (requires jurisdiction notice)</option>
+                </select>
+              </label>
+              <label>Geo Detail Level
+                <select name="geo_detail_level">
+                  <option value="country" selected>country (default)</option>
+                  <option value="region">region (country + state)</option>
+                  <option value="city">city (requires explicit CISO approval)</option>
+                </select>
+              </label>
+              <label>Retention Days<input name="analytics_retention_days" type="number" value="90" min="0" /></label>
+              <label>Enabled
+                <select name="enabled">
+                  <option value="true" selected>yes</option>
+                  <option value="false">no</option>
+                </select>
+              </label>
+              <div class="inline-row">
+                <button type="submit" class="primary">Save Policy</button>
+                <button id="resetBrowserRiskPolicyForm" type="button" class="ghost">Reset</button>
+              </div>
+            </form>
+            <p id="browserRiskPolicyResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Browser risk policies</caption>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Scope</th>
+                    <th>Action Pattern</th>
+                    <th>Domain Pattern</th>
+                    <th>Data Class</th>
+                    <th>Decision</th>
+                    <th>Env</th>
+                    <th>Geo</th>
+                    <th>Geo Level</th>
+                    <th>Enabled</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="browserRiskPoliciesTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <!-- ── Analytics panel ── -->
+          <article id="bsecConsoleAnalytics" class="card browser-security-console" hidden>
+            <div class="card-head">
+              <h3>Browser Security Analytics</h3>
+              <button id="loadBrowserAnalytics" class="ghost" type="button">Load</button>
+            </div>
+            <form id="browserAnalyticsFilters" class="form-grid" style="margin-bottom:0.75rem">
+              <label>Group By
+                <select name="group_by" id="bsecGroupBy">
+                  <option value="browser_name">Browser</option>
+                  <option value="os_name">OS</option>
+                  <option value="device_type">Device Type</option>
+                  <option value="geo_country">Country</option>
+                  <option value="action_type">Action Type</option>
+                  <option value="decision_outcome">Decision</option>
+                  <option value="data_class">Data Class</option>
+                  <option value="destination_domain">Domain</option>
+                </select>
+              </label>
+              <label>Hours
+                <input name="since_hours" type="number" value="168" min="1" max="720" style="width:5rem" />
+              </label>
+              <label>Environment
+                <select name="environment">
+                  <option value="">All</option>
+                  <option value="dev">dev</option>
+                  <option value="stage">stage</option>
+                  <option value="prod">prod</option>
+                </select>
+              </label>
+              <button type="submit" class="ghost">Analyze</button>
+            </form>
+            <p id="browserAnalyticsSummary" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Browser analytics grouped breakdown</caption>
+                <thead>
+                  <tr><th id="bsecAnalyticsGroupHeader">Group</th><th>Count</th></tr>
+                </thead>
+                <tbody id="browserAnalyticsTable"></tbody>
+              </table>
+            </div>
+            <div id="bsecAnalyticsChart" class="spend-breakdown-chart" role="img" aria-label="Browser analytics bar chart"></div>
+          </article>
+
+          <!-- ── Incident Export panel ── -->
+          <article id="bsecConsoleIncident" class="card browser-security-console" hidden>
+            <div class="card-head">
+              <h3>Incident Evidence Export</h3>
+            </div>
+            <p class="mono">Produces a CISO-grade evidence bundle. No raw prompt content is included — only content fingerprints, decision metadata, browser/geo analytics, and risk signals.</p>
+            <form id="browserIncidentExportForm" class="form-grid">
+              <label>Actor ID<input name="actor_id" placeholder="Optional: filter to specific actor" /></label>
+              <label>Environment
+                <select name="environment">
+                  <option value="">All</option>
+                  <option value="dev">dev</option>
+                  <option value="stage">stage</option>
+                  <option value="prod">prod</option>
+                </select>
+              </label>
+              <label>Decision Filter
+                <select name="decision_outcome">
+                  <option value="">All</option>
+                  <option value="deny">deny</option>
+                  <option value="warn">warn</option>
+                  <option value="mask">mask</option>
+                </select>
+              </label>
+              <label>Hours
+                <input name="since_hours" type="number" value="24" min="1" max="720" style="width:5rem" />
+              </label>
+              <label>Include Analytics
+                <select name="include_analytics">
+                  <option value="true" selected>yes</option>
+                  <option value="false">no</option>
+                </select>
+              </label>
+              <button type="submit" class="primary">Export Bundle</button>
+            </form>
+            <p id="browserIncidentResult" class="mono"></p>
+            <pre id="browserIncidentBundle" class="mono" style="max-height:400px;overflow:auto;white-space:pre-wrap;display:none"></pre>
+            <button id="downloadBrowserIncidentBundle" class="ghost" type="button" style="display:none">Download JSON</button>
+          </article>
+        </section>

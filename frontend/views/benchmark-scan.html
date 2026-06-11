@@ -1,0 +1,42 @@
+<section id="benchmark-scan" class="view">
+          <article class="card">
+            <div class="card-head">
+              <h3>Benchmark & Scan</h3>
+              <div class="inline-actions">
+                <button id="runBenchmark" class="primary" type="button">Run Benchmark</button>
+                <button id="runScan" class="ghost" type="button">Run Scan</button>
+                <button id="loadBenchmarkHistory" class="ghost" type="button">Load Benchmark History</button>
+                <button id="loadScanHistory" class="ghost" type="button">Load Scan History</button>
+              </div>
+            </div>
+            <p class="mono">Run benchmarks and security scans for an agent from the same operator surface.</p>
+            <form id="agentQualityForm" class="form-grid">
+              <label>Agent ID<input name="agent_id" required placeholder="agent-001" /></label>
+              <label>Environment<input name="environment" value="dev" placeholder="dev" /></label>
+              <label>Benchmark Suite<input name="benchmark_suite" value="reliability-core" placeholder="reliability-core" /></label>
+              <label>Scan Type<input name="scan_type" value="security" placeholder="security" /></label>
+            </form>
+            <p id="benchmarkResult" class="mono"></p>
+            <p id="scanResult" class="mono"></p>
+            <p id="benchmarkTrendSummary" class="mono"></p>
+            <p id="scanTrendSummary" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Benchmark run results</caption>
+                <thead>
+                  <tr><th>Benchmark Run ID</th><th>Agent</th><th>Suite</th><th>Environment</th><th>Score</th><th>Summary</th></tr>
+                </thead>
+                <tbody id="benchmarkTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Scan run results</caption>
+                <thead>
+                  <tr><th>Scan Run ID</th><th>Agent</th><th>Type</th><th>Environment</th><th>Findings</th><th>High Severity</th><th>Summary</th></tr>
+                </thead>
+                <tbody id="scanTable"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>

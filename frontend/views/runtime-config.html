@@ -1,0 +1,68 @@
+<section id="runtime-config" class="view">
+          <article class="card">
+            <div class="card-head">
+              <h3>Runtime Configuration Studio</h3>
+              <button id="resetRuntimeConfigForm" class="ghost" type="button">Reset Form</button>
+            </div>
+            <p class="mono">These settings are stored in the database through the runtime-config API and are used for non-startup defaults like gateway and workload identity tuning.</p>
+            <form id="runtimeConfigForm" class="form-grid">
+              <label>Config Key<input name="config_key" required placeholder="gateway.default_global_timeout_ms" /></label>
+              <label>Config Value<input name="config_value" required placeholder="4500" /></label>
+              <label class="wide-field">Description<input name="description" placeholder="Optional operator note" /></label>
+              <button type="submit" class="primary">Save Config</button>
+            </form>
+            <p id="runtimeConfigValidationHint" class="mono"></p>
+            <p id="runtimeConfigResult" class="mono"></p>
+            <div class="card-head config-actions">
+              <h4>Recommended Presets</h4>
+              <div class="inline-actions" id="runtimeConfigPresets"></div>
+            </div>
+            <div class="card-head config-actions">
+              <h4>Validation Rules</h4>
+              <div class="inline-actions">
+                <label class="rules-filter">Search<input id="runtimeValidationSearch" type="text" placeholder="Filter by key, pattern, or type" /></label>
+                <button id="refreshRuntimeValidationRules" class="ghost" type="button">Reload Rules</button>
+                <button id="clearRuntimeValidationStatus" class="ghost" type="button">Clear Status</button>
+              </div>
+            </div>
+            <p id="runtimeValidationContext" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Runtime config validation rules exposed by the backend</caption>
+                <thead>
+                  <tr>
+                    <th>Key or Pattern</th>
+                    <th>Type</th>
+                    <th>Constraints</th>
+                    <th>Example</th>
+                    <th>Actions</th>
+                    <th>Last Check</th>
+                  </tr>
+                </thead>
+                <tbody id="runtimeValidationRulesTable"></tbody>
+              </table>
+            </div>
+            <div class="card-head config-actions">
+              <h4>Saved Runtime Configs</h4>
+              <div class="inline-actions">
+                <button id="loadRuntimeConfigs" class="ghost" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Database-backed runtime configurations</caption>
+                <thead>
+                  <tr>
+                    <th>Key</th>
+                    <th>Value</th>
+                    <th>Description</th>
+                    <th>Updated By</th>
+                    <th>Updated At</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="runtimeConfigTable"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>

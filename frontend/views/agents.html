@@ -1,0 +1,183 @@
+<section id="agents" class="view">
+          <article class="card">
+            <div class="card-head">
+              <h3>Register Agent</h3>
+            </div>
+            <form id="registerAgentForm" class="form-grid">
+              <label>Name<input name="name" required value="agent-ui" /></label>
+              <label>Owner ID<input name="owner_id" required value="owner-ui" /></label>
+              <label>Owner Name<input name="owner_name" required value="Owner UI" /></label>
+              <label>Owner Team<input name="owner_team" required value="Team UI" /></label>
+              <label>
+                Agent Type
+                <select name="agent_type">
+                  <option value="" selected disabled>Loading enabled agent types...</option>
+                </select>
+              </label>
+              <label>
+                Risk Tier
+                <select name="risk_tier">
+                  <option>low</option>
+                  <option selected>medium</option>
+                  <option>high</option>
+                  <option>critical</option>
+                </select>
+              </label>
+              <label class="wide-field">Description<input name="description" placeholder="What this agent does" /></label>
+              <button type="submit" class="primary">Register</button>
+            </form>
+            <p id="agentRegisterResult" class="mono"></p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Ownership Operations</h3>
+            </div>
+            <form id="ownerAgentsForm" class="form-grid">
+              <label>Owner ID<input name="owner_id" required placeholder="owner-ui" /></label>
+              <button type="submit" class="ghost">Load Owner Agents</button>
+            </form>
+            <p id="ownerAgentsResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Agents by owner</caption>
+                <thead>
+                  <tr><th>Agent ID</th><th>Name</th><th>Type</th><th>Description</th><th>Owner</th><th>Team</th><th>Status</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="ownerAgentsTable"></tbody>
+              </table>
+            </div>
+
+            <div class="card-head config-actions">
+              <h4>Transfer Owner</h4>
+            </div>
+            <form id="transferOwnerForm" class="form-grid">
+              <label>Agent ID<input name="agent_id" required placeholder="agent-id" /></label>
+              <label>New Owner ID<input name="new_owner_id" required placeholder="owner-new" /></label>
+              <label>New Owner Name<input name="new_owner_name" required placeholder="Owner New" /></label>
+              <label>New Owner Team<input name="new_owner_team" required placeholder="Team New" /></label>
+              <label class="wide-field">Reason<input name="reason" required placeholder="Ownership transition reason" /></label>
+              <label>Ticket Ref<input name="ticket_ref" required placeholder="CHG-12345" /></label>
+              <button type="submit" class="primary">Transfer Ownership</button>
+            </form>
+            <p id="transferOwnerResult" class="mono"></p>
+
+            <div class="card-head config-actions">
+              <h4>Ownership History</h4>
+            </div>
+            <form id="ownershipHistoryForm" class="form-grid">
+              <label>Agent ID<input name="agent_id" required placeholder="agent-id" /></label>
+              <button type="submit" class="ghost">Load History</button>
+            </form>
+            <p id="ownershipHistoryResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Ownership transfer history</caption>
+                <thead>
+                  <tr><th>Changed At</th><th>Old Owner</th><th>New Owner</th><th>Changed By</th><th>Reason</th><th>Ticket</th></tr>
+                </thead>
+                <tbody id="ownershipHistoryTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Agent Configuration Studio</h3>
+              <button id="resetConfigForm" class="ghost" type="button">Reset Form</button>
+            </div>
+            <p class="mono">Configuration is stored in the backend database and managed through this UI.</p>
+            <form id="agentConfigForm" class="form-grid">
+              <input type="hidden" name="config_id" />
+              <label>Agent Key<input name="agent_key" required placeholder="agent-001 or UUID" /></label>
+              <label>Display Name<input name="display_name" required placeholder="Support Copilot" /></label>
+              <label>
+                Model Scope Tenant
+                <select name="tenant_scope_id" data-tenant-select data-tenant-optional>
+                  <option value="" selected>All tenants</option>
+                </select>
+              </label>
+              <label>
+                Provider
+                <select name="provider">
+                  <option value="" selected disabled>Loading provider types...</option>
+                </select>
+              </label>
+              <label>
+                Model
+                <select name="model">
+                  <option value="" selected disabled>Loading supported models...</option>
+                </select>
+              </label>
+              <label class="wide-field">Provider Priority (comma-separated)<input name="provider_priority" value="aws,azure,google" placeholder="aws,azure,google" /></label>
+              <label>Temperature<input name="temperature" type="number" min="0" max="2" step="0.1" value="0.3" /></label>
+              <label>Max Tokens<input name="max_tokens" type="number" min="1" max="32768" step="1" value="1024" /></label>
+              <label>Timeout (ms)<input name="timeout_ms" type="number" min="100" max="120000" step="100" value="4500" /></label>
+              <label>Fallback Enabled
+                <select name="fallback_enabled">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+              <label>Max Fallback Hops<input name="max_fallback_hops" type="number" min="0" max="10" step="1" value="2" /></label>
+              <label>Global Timeout (ms)<input name="global_timeout_ms" type="number" min="100" max="120000" step="100" value="4500" /></label>
+              <label>Retry Budget<input name="retry_budget" type="number" min="0" max="10" step="1" value="1" /></label>
+              <label>Circuit Threshold %<input name="failure_threshold_percent" type="number" min="1" max="100" step="1" value="40" /></label>
+              <label>Circuit Cooldown (s)<input name="cooldown_seconds" type="number" min="5" max="3600" step="5" value="60" /></label>
+              <label>
+                Environment
+                <select name="environment">
+                  <option value="dev">dev</option>
+                  <option value="stage">stage</option>
+                  <option value="prod">prod</option>
+                </select>
+              </label>
+              <label>
+                Enabled
+                <select name="enabled">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+              <label class="wide-field">Notes<input name="notes" placeholder="Optional deployment notes" /></label>
+              <button type="submit" class="primary">Save Configuration</button>
+            </form>
+            <p id="agentConfigResult" class="mono"></p>
+            <div class="card-head config-actions">
+              <h4>Security and Audit Review</h4>
+              <div class="inline-actions">
+                <button id="runConfigSecurityReview" class="ghost" type="button">Run Security Review</button>
+                <button id="exportCisoAuditBundle" class="ghost" type="button">Export CISO Audit Bundle</button>
+              </div>
+            </div>
+            <div id="agentConfigSecuritySummary" class="mono"></div>
+            <ul id="agentConfigSecurityFindings" class="security-findings"></ul>
+            <div class="card-head config-actions">
+              <h4>Saved Configurations</h4>
+              <div class="inline-actions">
+                <button id="loadAgentConfigs" class="ghost" type="button">Refresh</button>
+                <button id="exportAgentConfigs" class="ghost" type="button">Export JSON</button>
+                <label class="file-upload">Import JSON<input id="importAgentConfigs" type="file" accept="application/json" /></label>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">UI-managed agent configurations</caption>
+                <thead>
+                  <tr>
+                    <th>Agent Key</th>
+                    <th>Name</th>
+                    <th>Provider/Model</th>
+                    <th>Runtime</th>
+                    <th>Fallback Policy</th>
+                    <th>Env</th>
+                    <th>Status</th>
+                    <th>Updated</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="agentConfigTable"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>

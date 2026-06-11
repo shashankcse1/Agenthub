@@ -1,0 +1,132 @@
+<section id="discovery" class="view">
+          <article class="card">
+            <div class="card-head">
+              <h3>Discovery Posture</h3>
+              <button id="loadDiscoveryTriage" class="ghost" type="button">Refresh Triage</button>
+            </div>
+            <div class="card-grid compact">
+              <div class="chip">Healthy Sources: <span id="discoveryHealthySources">0</span></div>
+              <div class="chip">Stale Sources: <span id="discoveryStaleSources">0</span></div>
+              <div class="chip">Conflicts: <span id="discoveryConflictCount">0</span></div>
+              <div class="chip">High Alerts: <span id="discoveryAlertCount">0</span></div>
+              <div class="chip">Promote Ready: <span id="discoveryPromoteReadyCount">0</span></div>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Discovered Agents</h3>
+              <button id="loadDiscovery" class="ghost" type="button">Load</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Discovered agents and confidence status</caption>
+                <thead>
+                  <tr><th>Agent Key</th><th>Source</th><th>Confidence</th><th>Status</th><th>Promoted Agent</th></tr>
+                </thead>
+                <tbody id="discoveryTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Discovery Sources</h3>
+              <div class="inline-actions">
+                <button id="loadDiscoverySources" class="ghost" type="button">Load Sources</button>
+                <button id="syncRuntimeInventory" class="ghost" type="button">Sync Runtime Inventory</button>
+                <button id="syncCodeMetadata" class="ghost" type="button">Sync Code Metadata</button>
+                <button id="syncGatewayTelemetry" class="ghost" type="button">Sync Gateway Telemetry</button>
+                <button id="syncAwsS3" class="ghost" type="button">Sync AWS S3</button>
+                <button id="syncAwsIam" class="ghost" type="button">Sync AWS IAM</button>
+                <button id="syncAwsEc2" class="ghost" type="button">Sync AWS EC2</button>
+                <button id="syncAzureBlobStorage" class="ghost" type="button">Sync Azure Blob</button>
+                <button id="syncAzureManagedIdentity" class="ghost" type="button">Sync Azure Managed Identity</button>
+                <button id="syncAzureVirtualMachines" class="ghost" type="button">Sync Azure VMs</button>
+                <button id="syncGcpCloudStorage" class="ghost" type="button">Sync GCP Cloud Storage</button>
+                <button id="syncGcpServiceAccounts" class="ghost" type="button">Sync GCP Service Accounts</button>
+                <button id="syncGcpComputeEngine" class="ghost" type="button">Sync GCP Compute Engine</button>
+              </div>
+            </div>
+            <p id="discoverySourceResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Discovery sources and sync health</caption>
+                <thead>
+                  <tr><th>Source</th><th>Status</th><th>Last Sync</th><th>Lag (min)</th><th>Discovered</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="discoverySourcesTable"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Discovery Triage</h3>
+              <div class="inline-actions">
+                <button id="loadDiscoveryConflicts" class="ghost" type="button">Load Conflicts</button>
+                <button id="loadDiscoveryAlerts" class="ghost" type="button">Load Alerts</button>
+                <button id="loadDiscoveryPromoteQueue" class="ghost" type="button">Load Promote Queue</button>
+                <label>
+                  Type
+                  <select id="discoveryTriageTypeFilter">
+                    <option value="all">All</option>
+                    <option value="conflict">Conflict</option>
+                    <option value="alert">Alert</option>
+                    <option value="promote">Promote</option>
+                  </select>
+                </label>
+                <label>
+                  Urgency
+                  <select id="discoveryTriageSeverityFilter">
+                    <option value="all">All</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="normal">Normal</option>
+                  </select>
+                </label>
+                <label>
+                  Search
+                  <input id="discoveryTriageSearch" type="text" placeholder="agent/source/detail" />
+                </label>
+              </div>
+            </div>
+            <p id="discoveryTriageResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Unified discovery triage view</caption>
+                <thead>
+                  <tr><th>Type</th><th>Agent</th><th>Canonical Key</th><th>Source</th><th>Confidence</th><th>Urgency</th><th>Detail</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="discoveryUnifiedTriageTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Discovery conflicts</caption>
+                <thead>
+                  <tr><th>Agent</th><th>Canonical Key</th><th>Source</th><th>Confidence</th><th>Priority</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="discoveryConflictsTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Discovery alerts</caption>
+                <thead>
+                  <tr><th>Alert</th><th>Agent</th><th>Source</th><th>Confidence</th><th>Severity</th><th>Type</th><th>Message</th></tr>
+                </thead>
+                <tbody id="discoveryAlertsTable"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Discovery promote queue</caption>
+                <thead>
+                  <tr><th>Agent</th><th>Canonical Key</th><th>Source</th><th>Confidence</th><th>Priority</th><th>Reason</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="discoveryPromoteQueueTable"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
