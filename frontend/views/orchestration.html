@@ -1,0 +1,319 @@
+<section id="orchestration" class="view flow-orchestration-view">
+  <article class="card runtime-config-hero flow-studio-hero">
+    <div class="card-head">
+      <div class="flow-hero-title">
+        <h3>Flow Studio</h3>
+        <p class="flow-hero-subtitle">Design, test, and run automated workflows — no code required.</p>
+      </div>
+      <div class="inline-actions flow-hero-badges">
+        <span id="orchestrationFlowStatusBadge" class="badge flow-env-badge" data-env="dev" title="Environment">Development</span>
+        <span id="orchestrationApprovalBadge" class="badge flow-approval-badge" title="Approval status">Draft</span>
+        <button id="refreshOrchestrationConsole" class="ghost" type="button">Refresh</button>
+      </div>
+    </div>
+    <p id="orchestrationConsoleSummary" class="flow-console-summary" aria-live="polite">Create a new flow or open one from the sidebar to get started.</p>
+    <ol id="orchestrationWorkflowGuide" class="flow-workflow-guide" aria-label="Recommended workflow"></ol>
+    <div class="runtime-console-tabs flow-studio-tabs" role="tablist" aria-label="Flow orchestration sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="studio">Studio</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="flows">All flows</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="runs">History</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="approvals">Approvals</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="security">Security</button>
+    </div>
+  </article>
+
+  <div data-console-panel="studio" class="runtime-console-panel active">
+    <div class="flow-studio" aria-label="Flow design workspace">
+      <header class="flow-studio-toolbar">
+        <div class="flow-studio-toolbar-left">
+          <label class="flow-studio-name-field">
+            <span class="flow-field-label">Flow name</span>
+            <input id="orchestrationToolbarFlowName" type="text" placeholder="e.g. Daily support triage" autocomplete="off" />
+          </label>
+          <label class="flow-toolbar-select-wrap">
+            <span class="flow-field-label">Environment</span>
+            <select id="orchestrationToolbarEnvironment" aria-label="Environment">
+              <option value="dev">Development</option>
+              <option value="staging">Staging</option>
+              <option value="prod">Production</option>
+            </select>
+          </label>
+          <label class="flow-toolbar-select-wrap">
+            <span class="flow-field-label">Starts with</span>
+            <select id="orchestrationToolbarTrigger" aria-label="Trigger type">
+              <option value="manual">Manual run</option>
+              <option value="schedule">On a schedule</option>
+              <option value="webhook">Webhook event</option>
+            </select>
+          </label>
+        </div>
+        <div class="flow-studio-toolbar-center flow-zoom-cluster" aria-label="Canvas zoom">
+          <button id="orchestrationZoomOut" type="button" class="ghost flow-icon-btn" title="Zoom out" aria-label="Zoom out">−</button>
+          <span id="orchestrationZoomLabel" class="flow-zoom-label">100%</span>
+          <button id="orchestrationZoomIn" type="button" class="ghost flow-icon-btn" title="Zoom in" aria-label="Zoom in">+</button>
+          <button id="orchestrationZoomReset" type="button" class="ghost flow-zoom-reset" title="Reset zoom">Reset</button>
+        </div>
+        <div class="flow-studio-toolbar-right">
+          <div class="flow-toolbar-action-group">
+            <button id="orchestrationDataMappingToolbar" type="button" class="ghost flow-data-map-toolbar-btn" title="Data mapping reference — how to pass data between steps" aria-label="Data mapping reference">
+              <span class="flow-data-map-icon" aria-hidden="true">⇄</span> Data map
+            </button>
+            <button id="validateOrchestrationFlow" type="button" class="ghost" title="Check flow for errors">Check flow</button>
+            <button id="runOrchestrationFlowDry" type="button" class="ghost" title="Simulate without side effects">Test</button>
+            <button id="approveOrchestrationFlow" type="button" class="ghost" title="Approve for production">Approve</button>
+          </div>
+          <div class="flow-toolbar-action-group flow-toolbar-primary-group">
+            <button id="saveOrchestrationFlow" type="button" class="primary">Save</button>
+            <button id="runOrchestrationFlow" type="button" class="primary flow-run-btn">Run now</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="flow-studio-workspace">
+        <aside class="flow-studio-sidebar" aria-label="Flows and toolkit">
+          <div class="flow-sidebar-tabs" role="tablist" aria-label="Sidebar sections">
+            <button type="button" class="flow-sidebar-tab active" role="tab" aria-selected="true" data-sidebar-tab="flows">Flows</button>
+            <button type="button" class="flow-sidebar-tab" role="tab" aria-selected="false" data-sidebar-tab="toolkit">Toolkit</button>
+          </div>
+
+          <div class="flow-sidebar-tabpanel active" data-sidebar-panel="flows" role="tabpanel">
+            <div class="flow-sidebar-panel-toolbar">
+              <button id="newOrchestrationFlow" type="button" class="primary flow-sidebar-action-btn">New flow</button>
+              <button id="loadOrchestrationFlows" type="button" class="ghost flow-sidebar-action-btn">Refresh</button>
+            </div>
+            <div class="flow-sidebar-search-wrap">
+              <label for="orchestrationFlowSidebarJump" class="flow-sidebar-search-label">Jump to flow</label>
+              <select id="orchestrationFlowSidebarJump" class="flow-sidebar-jump-select" aria-label="Jump to a saved flow">
+                <option value="">Select a flow…</option>
+              </select>
+              <label for="orchestrationFlowSidebarSearch" class="flow-sidebar-search-label">Filter list</label>
+              <input id="orchestrationFlowSidebarSearch" type="search" class="flow-palette-search flow-sidebar-search" placeholder="Name, environment, trigger, status…" autocomplete="off" />
+              <div id="orchestrationFlowSidebarPager" class="flow-sidebar-pager" aria-label="Flow list pagination">
+                <span id="orchestrationFlowSidebarCount" class="flow-sidebar-count" aria-live="polite"></span>
+                <div id="orchestrationFlowSidebarPagination" class="flow-sidebar-pagination table-pagination" hidden></div>
+              </div>
+            </div>
+            <div class="flow-sidebar-scroll">
+              <div id="orchestrationFlowSidebarList" class="flow-sidebar-list" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <div class="flow-sidebar-tabpanel" data-sidebar-panel="toolkit" role="tabpanel" hidden>
+            <div class="flow-toolkit-header">
+              <p id="orchestrationToolkitHint" class="flow-toolkit-hint">Select a component, then click <strong>+</strong> on the serial lane — or drag between steps. Use <strong>+</strong> inside a parallel branch to add there.</p>
+              <div class="flow-run-mode-default" role="group" aria-label="Default run mode for new steps">
+                <span class="flow-run-mode-default-label">New steps run</span>
+                <button type="button" class="flow-run-mode-opt active" data-default-run-mode="serial">Serial</button>
+                <button type="button" class="flow-run-mode-opt" data-default-run-mode="parallel">Parallel</button>
+              </div>
+              <div class="flow-sidebar-panel-toolbar">
+                <button id="loadOrchestrationNodeTypes" type="button" class="ghost flow-sidebar-action-btn">Reload</button>
+              </div>
+            </div>
+            <div id="orchestrationPaletteCategoryFilters" class="flow-palette-category-chips" aria-label="Widget categories"></div>
+            <input id="orchestrationPaletteSearch" type="search" class="flow-palette-search" placeholder="Search components…" autocomplete="off" />
+            <div id="orchestrationNodePalette" class="flow-toolkit-list" aria-live="polite"></div>
+          </div>
+        </aside>
+
+        <div class="flow-studio-main-column">
+          <main class="flow-studio-canvas-wrap">
+            <div class="flow-canvas-topbar">
+              <p id="orchestrationCanvasHint" class="flow-canvas-hint">Build your flow — <strong>Serial</strong> is the default (steps run top to bottom). Choose <strong>Parallel</strong> at any + slot to split into branches.</p>
+              <div id="orchestrationFlowSummaryStrip" class="flow-summary-strip" hidden aria-live="polite"></div>
+              <div id="orchestrationValidationPanel" class="flow-validation-panel" hidden aria-live="polite" role="region" aria-label="Flow validation summary"></div>
+            </div>
+            <div id="orchestrationCanvasViewport" class="flow-studio-canvas-viewport">
+              <div id="orchestrationCanvasDropHint" class="flow-canvas-drop-hint" hidden aria-live="polite">Drop component here</div>
+              <div id="orchestrationCanvasStage" class="flow-studio-canvas-stage" data-zoom="100">
+                <div id="orchestrationCanvasLane" class="flow-lane" hidden aria-live="polite"></div>
+                <div id="orchestrationCanvasEmpty" class="flow-studio-empty">
+                  <div class="flow-empty-card">
+                    <div class="flow-empty-icon" aria-hidden="true"></div>
+                    <h4>Create a workflow</h4>
+                    <p>Pick a template or start from scratch — every flow has a clear Start and End.</p>
+                    <div id="orchestrationFlowTemplates" class="flow-template-grid"></div>
+                    <button type="button" class="ghost flow-empty-new" id="orchestrationEmptyNewFlow">Blank flow (Start → End)</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="orchestrationBuilderFeedback" class="flow-status-toast is-empty" role="status" aria-live="polite"></div>
+          </main>
+
+          <footer class="flow-studio-executions-drawer">
+            <button id="orchestrationExecutionsToggle" type="button" class="flow-executions-toggle" aria-expanded="false">
+              <span class="flow-executions-toggle-label">Recent runs</span>
+              <span id="orchestrationExecutionsCount" class="flow-executions-count">0</span>
+            </button>
+            <div id="orchestrationExecutionsDrawer" class="flow-executions-drawer-body" hidden>
+              <p class="flow-drawer-help">See what happened when this flow last ran.</p>
+              <button id="loadOrchestrationRuns" type="button" class="ghost">Refresh runs</button>
+              <div class="table-wrap flow-runs-table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Run</th><th>Status</th><th>Trace</th><th>When</th><th></th></tr>
+                  </thead>
+                  <tbody id="orchestrationRunsTableCompact"></tbody>
+                </table>
+              </div>
+              <div id="orchestrationRunDetail" class="flow-run-detail" aria-live="polite"></div>
+            </div>
+          </footer>
+        </div>
+
+        <aside class="flow-studio-inspector" aria-label="Settings panel">
+          <div class="flow-studio-inspector-head">
+            <h4 id="orchestrationInspectorTitle">Flow settings</h4>
+            <div class="flow-inspector-head-actions">
+              <button id="orchestrationDataMappingInspector" type="button" class="flow-btn-icon ghost flow-data-map-btn-head" title="Data mapping for this step" aria-label="Data mapping reference">⇄</button>
+              <button id="orchestrationInspectorClose" type="button" class="flow-btn-icon ghost" title="Back to flow settings" hidden aria-label="Close node settings">←</button>
+            </div>
+          </div>
+          <p id="orchestrationInspectorHint" class="flow-inspector-hint">Configure how this flow runs and who can approve it.</p>
+          <div id="orchestrationDataMappingPanel" class="flow-data-mapping-panel" hidden role="dialog" aria-label="Data mapping reference"></div>
+          <div id="orchestrationInspectorPanel" class="flow-studio-inspector-body"></div>
+        </aside>
+      </div>
+    </div>
+
+    <form id="orchestrationFlowForm" hidden>
+      <input type="hidden" name="flow_id" id="orchestrationFlowId" />
+      <input type="hidden" name="flow_name" id="orchestrationFlowNameHidden" value="Untitled flow" />
+      <input type="hidden" name="description" id="orchestrationFlowDescriptionHidden" />
+      <input type="hidden" name="environment" id="orchestrationFlowEnvironmentHidden" value="dev" />
+      <input type="hidden" name="trigger_type" id="orchestrationFlowTriggerHidden" value="manual" />
+      <input type="hidden" name="status" id="orchestrationFlowStatusHidden" value="draft" />
+      <input type="hidden" name="trigger_config_json" id="orchestrationFlowTriggerConfigHidden" value="{}" />
+    </form>
+    <div id="orchestrationFlowFeedback" class="sr-only" aria-live="polite"></div>
+  </div>
+
+  <div data-console-panel="flows" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>All workflows</h4>
+        <button id="loadOrchestrationFlowsTable" class="ghost" type="button">Refresh</button>
+      </div>
+      <p class="card-lead">Browse every saved flow. Open one in Studio to edit the visual canvas.</p>
+      <div class="flow-table-panel">
+        <input id="orchestrationFlowsTableSearch" type="search" class="flow-palette-search flow-table-search" placeholder="Search workflows by name, environment, trigger, status…" autocomplete="off" />
+        <p id="orchestrationFlowsTableCount" class="flow-table-count" aria-live="polite"></p>
+        <div class="table-wrap flow-table-scroll">
+          <table class="flow-data-table">
+            <thead>
+              <tr>
+                <th>Name</th><th>Environment</th><th>Trigger</th><th>Status</th><th>Approved</th><th>Version</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="orchestrationFlowsTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="runs" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Run history</h4>
+        <button id="loadOrchestrationRunsFull" class="ghost" type="button">Refresh</button>
+      </div>
+      <p class="card-lead">Execution history across saved workflows.</p>
+      <div class="table-wrap flow-table-scroll">
+        <table class="flow-data-table">
+          <thead>
+            <tr><th>Run ID</th><th>Status</th><th>Trace</th><th>Started</th><th>Finished</th><th></th></tr>
+          </thead>
+          <tbody id="orchestrationRunsTable"></tbody>
+        </table>
+      </div>
+      <div id="orchestrationRunDetailHistory" class="flow-run-detail flow-run-detail-history" aria-live="polite"></div>
+    </article>
+  </div>
+
+  <div data-console-panel="approvals" class="runtime-console-panel" hidden>
+    <article class="card flow-approvals-hero">
+      <div class="card-head">
+        <h4>Approval queue</h4>
+        <button id="loadOrchestrationApprovals" class="ghost" type="button">Refresh</button>
+      </div>
+      <p class="card-lead">Review workflows waiting for sign-off before they can run in Production.</p>
+      <div id="orchestrationApprovalSummary" class="flow-approval-summary" aria-live="polite"></div>
+      <div class="flow-approval-filters">
+        <label>Environment
+          <select id="orchestrationApprovalEnvFilter" aria-label="Filter by environment">
+            <option value="">All environments</option>
+            <option value="prod">Production only</option>
+            <option value="staging">Staging only</option>
+            <option value="dev">Development only</option>
+          </select>
+        </label>
+        <label>Show
+          <select id="orchestrationApprovalStatusFilter" aria-label="Filter by approval status">
+            <option value="pending" selected>Needs approval</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="">All statuses</option>
+          </select>
+        </label>
+        <button id="orchestrationApprovalProdQueue" type="button" class="ghost flow-approval-quick-filter">Production queue</button>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="flow-table-panel">
+        <input id="orchestrationApprovalsTableSearch" type="search" class="flow-palette-search flow-table-search" placeholder="Search approval queue by flow name or id…" autocomplete="off" />
+        <p id="orchestrationApprovalsTableCount" class="flow-table-count" aria-live="polite"></p>
+        <div class="table-wrap flow-table-scroll">
+          <table class="flow-data-table">
+            <caption class="sr-only">Flows awaiting or completed approval review</caption>
+            <thead>
+              <tr>
+                <th>Flow</th>
+                <th>Environment</th>
+                <th>Workflow</th>
+                <th>Approval</th>
+                <th>Last updated</th>
+                <th>By</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="orchestrationApprovalsTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </article>
+
+    <article class="card flow-approval-review-card">
+      <div class="card-head"><h4>Review decision</h4></div>
+      <p id="orchestrationApprovalReviewHint" class="card-lead">Select a flow from the queue to approve or reject it.</p>
+      <form id="orchestrationApprovalForm" class="form-grid flow-approval-form">
+        <input type="hidden" name="flow_id" id="orchestrationApprovalFlowId" />
+        <label>Your decision
+          <select name="decision" aria-label="Approval decision">
+            <option value="approved">Approve — allow production runs</option>
+            <option value="rejected">Reject — send back for changes</option>
+          </select>
+        </label>
+        <label>Ticket reference (optional)<input name="approval_ticket_ref" placeholder="e.g. CHANGE-1234" autocomplete="off" /></label>
+        <div id="orchestrationApprovalDualFields" class="flow-approval-dual-fields wide-field" hidden>
+          <p class="flow-approval-dual-note">Production sign-off requires a Platform Admin co-approver (unless you are Super Admin or Master Admin).</p>
+          <label>Co-approver role<input name="approver_role" value="Platform Admin" autocomplete="off" /></label>
+          <label>Co-approver ID<input name="approver_id" placeholder="platform-admin-1" autocomplete="off" /></label>
+        </div>
+        <button type="submit" class="primary">Submit decision</button>
+      </form>
+      <p class="flow-approval-audit-note">Ticket references are recorded in the audit trail when you submit a decision.</p>
+      <div id="orchestrationApprovalFeedback" class="flow-status-toast is-empty" role="status" aria-live="polite"></div>
+    </article>
+  </div>
+
+  <div data-console-panel="security" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head"><h4>Security overview</h4></div>
+      <p class="card-lead">Policies that protect production runs. Your admin configures allowlists in Runtime Config.</p>
+      <div id="orchestrationSecurityPanel" class="flow-security-grid" aria-live="polite"></div>
+    </article>
+  </div>
+</section>

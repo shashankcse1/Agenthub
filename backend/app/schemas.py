@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.logging_utils import get_logger
 from app.policy_constants import (
@@ -47,6 +47,11 @@ class AgentResponse(ORMBase):
     created_at: datetime
 
 
+class AgentRegisterOptionsResponse(BaseModel):
+    allowed_agent_types: list[str]
+    default_environment: str = "dev"
+
+
 class AgentConfigUpsertRequest(BaseModel):
     config_id: Optional[str] = None
     agent_key: str
@@ -66,6 +71,7 @@ class AgentConfigUpsertRequest(BaseModel):
     environment: str = "dev"
     enabled: bool = True
     notes: Optional[str] = ""
+    credential_binding_id: Optional[str] = None
 
 
 class AgentConfigResponse(ORMBase):
@@ -87,9 +93,24 @@ class AgentConfigResponse(ORMBase):
     environment: str
     enabled: bool
     notes: str
+    credential_binding_id: Optional[str] = None
     updated_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class AgentConfigCredentialStatusResponse(BaseModel):
+    agent_key: str
+    provider: str
+    environment: str
+    credential_binding_id: Optional[str] = None
+    configured: bool
+    credential_plane: Optional[str] = None
+    masked_hint: Optional[str] = None
+    provider_type: str
+    secret_provider_id: Optional[str] = None
+    secret_ref: Optional[str] = None
+    workload_identity_profile_id: Optional[str] = None
 
 
 class OwnershipTransferRequest(BaseModel):
@@ -137,6 +158,36 @@ class RoleBindingValidateRequest(BaseModel):
     action: str
 
 
+class AuthAuthorizationExplainRequest(BaseModel):
+    actor_role: str = Field(min_length=1)
+    actor_id: str = Field(default="explain-actor", min_length=1)
+    action: str = Field(min_length=1)
+    resource_type: str = "auth_action"
+    resource_id: Optional[str] = None
+    target_actor_id: Optional[str] = None
+    target_actor_role: Optional[str] = None
+    approver_role: Optional[str] = None
+    approver_id: Optional[str] = None
+    mfa_verified: bool = False
+
+
+class AuthAuthorizationExplainResponse(BaseModel):
+    actor_role: str
+    actor_id: str
+    action: str
+    resource_type: str
+    resource_id: Optional[str] = None
+    decision: str
+    decision_trace_id: str
+    policy_version: str = "v1"
+    allowed_roles: list[str]
+    requires_mfa: bool
+    requires_dual_approval: bool
+    required_approver_role: Optional[str] = None
+    reasons: list[str]
+    remediation_hint: str
+
+
 class DirectoryUserUpsertRequest(BaseModel):
     user_id: str
     display_name: str
@@ -174,6 +225,11 @@ class DirectoryUserLockResponse(BaseModel):
 class DirectoryUserDisableResponse(BaseModel):
     user_id: str
     disabled: bool
+
+
+class DirectoryUserEnableResponse(BaseModel):
+    user_id: str
+    enabled: bool
 
 
 class DirectoryGroupUpsertRequest(BaseModel):
@@ -337,21 +393,142 @@ class AuditEventResponse(ORMBase):
     timestamp: datetime
     actor_type: str
     actor_id: str
+    actor_login: Optional[str] = None
     action_type: str
     resource_type: str
     resource_id: str
     trace_id: str
     decision_outcome: Literal["allow", "deny", "warn"]
     policy_version: str
+    action_context: dict[str, Any] = Field(default_factory=dict)
+    user_prompt: Optional[str] = None
 
 
 class DiscoverySourceResponse(BaseModel):
     source_id: str
+    platform: str
+    category: str
+    label: str
     status: str
     last_sync_at: Optional[datetime] = None
     sync_lag_minutes: Optional[int] = None
     discovered_count: int = 0
+    connection_count: int = 0
+    active_connection_count: int = 0
+    well_known: bool = False
+    priority: bool = False
 
+
+class DiscoveryConnectionPresetResponse(BaseModel):
+    source_id: str
+    connection_name: str
+    secret_ref: str
+    base_url: str = ""
+    connection_config: dict = Field(default_factory=dict)
+
+
+class DiscoveryConnectionPresetsResponse(BaseModel):
+    priority_source_ids: list[str]
+    well_known_source_ids: list[str]
+    presets: list[DiscoveryConnectionPresetResponse]
+
+
+class DiscoveryDuplicateMemberResponse(BaseModel):
+    discovered_agent_id: str
+    source_system: str
+    discovery_confidence: int
+    canonical_agent_key: str
+
+
+class DiscoveryDuplicateGroupResponse(BaseModel):
+    canonical_agent_key: str
+    duplicate_count: int
+    source_systems: list[str]
+    discovered_agent_ids: list[str]
+    max_confidence: int
+    review_priority: str
+    members: list[DiscoveryDuplicateMemberResponse] = Field(default_factory=list)
+
+
+class DiscoveryDuplicateMergeRequest(BaseModel):
+    canonical_discovered_agent_id: str
+    merge_discovered_agent_ids: list[str] = Field(default_factory=list)
+
+
+class DiscoveryDuplicateMergeResponse(BaseModel):
+    canonical_discovered_agent_id: str
+    canonical_agent_key: str
+    merged_discovered_agent_ids: list[str]
+    merged_count: int
+    discovery_confidence: int
+    status: str
+
+
+class DiscoveryDuplicateDismissRequest(BaseModel):
+    discovered_agent_id: str
+    reason: str = ""
+
+
+class DiscoveryConnectionCreateRequest(BaseModel):
+    tenant_id: str
+    source_id: str
+    connection_name: str
+    enabled: bool = True
+    sync_interval_minutes: int = Field(default=60, ge=5, le=10080)
+    credential_binding_id: Optional[str] = None
+    secret_provider_id: Optional[str] = None
+    secret_ref: Optional[str] = None
+    base_url: str = ""
+    connection_config: dict = Field(default_factory=dict)
+
+
+class DiscoveryConnectionUpdateRequest(BaseModel):
+    connection_name: Optional[str] = None
+    enabled: Optional[bool] = None
+    sync_interval_minutes: Optional[int] = Field(default=None, ge=5, le=10080)
+    status: Optional[str] = None
+    credential_binding_id: Optional[str] = None
+    secret_provider_id: Optional[str] = None
+    secret_ref: Optional[str] = None
+    base_url: Optional[str] = None
+    connection_config: Optional[dict] = None
+
+
+class DiscoveryConnectionResponse(ORMBase):
+    connection_id: str
+    tenant_id: str
+    source_id: str
+    connection_name: str
+    status: str
+    enabled: bool
+    sync_interval_minutes: int
+    next_sync_at: datetime
+    last_sync_at: Optional[datetime] = None
+    last_sync_status: str
+    last_sync_error: str = ""
+    last_discovered_count: int = 0
+    credential_binding_id: Optional[str] = None
+    secret_provider_id: Optional[str] = None
+    secret_ref: Optional[str] = None
+    base_url: str = ""
+    connection_config: dict = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+    updated_by: Optional[str] = None
+
+
+class DiscoveryConnectionTestResponse(BaseModel):
+    connection_id: str
+    test_status: str
+    message: str
+    sample_count: int = 0
+
+
+class DiscoveryConnectionSyncResponse(BaseModel):
+    connection_id: str
+    sync_status: str
+    discovered_count: int = 0
+    error: str = ""
 
 class DiscoveryPromoteQueueResponse(BaseModel):
     discovered_agent_id: str
@@ -363,6 +540,53 @@ class DiscoveryPromoteQueueResponse(BaseModel):
     queue_reason: str
 
 
+class DiscoverySummaryCategoryResponse(BaseModel):
+    category: str
+    source_count: int
+    discovered_count: int
+    healthy_count: int
+    stale_count: int
+
+
+class DiscoverySummaryTopologyNode(BaseModel):
+    node_id: str
+    label: str
+    count: int
+    tone: str
+
+
+class DiscoverySummaryTriageItem(BaseModel):
+    item_type: Literal["conflict", "alert", "promote"]
+    discovered_agent_id: str
+    detail: str
+    urgency: str
+    discovery_confidence: int
+
+
+class DiscoveryConfidenceBucketResponse(BaseModel):
+    label: str
+    count: int
+
+
+class DiscoverySummaryResponse(BaseModel):
+    generated_at: datetime
+    discovered_agent_count: int
+    healthy_sources: int
+    stale_sources: int
+    unknown_sources: int
+    connection_count: int
+    active_connection_count: int
+    conflict_count: int
+    high_alert_count: int
+    promote_ready_count: int
+    duplicate_group_count: int
+    posture_score: int = 100
+    confidence_buckets: list[DiscoveryConfidenceBucketResponse] = Field(default_factory=list)
+    categories: list[DiscoverySummaryCategoryResponse]
+    topology: list[DiscoverySummaryTopologyNode]
+    urgent_triage: list[DiscoverySummaryTriageItem]
+
+
 class DiscoveryRecordResponse(ORMBase):
     discovered_agent_id: str
     canonical_agent_key: str
@@ -371,6 +595,7 @@ class DiscoveryRecordResponse(ORMBase):
     discovery_confidence: int
     discovery_status: str
     promoted_to_agent_id: Optional[str] = None
+    merged_into_discovered_agent_id: Optional[str] = None
     last_discovered_at: datetime
 
 
@@ -412,6 +637,8 @@ class ModuleRegisterRequest(BaseModel):
     artifact_signature: str
     provenance_ref: str
     security_review_ticket: str = ""
+    integration_provider: str = ""
+    integration_reference: str = ""
 
 
 class ModuleResponse(ORMBase):
@@ -426,6 +653,10 @@ class ModuleResponse(ORMBase):
     artifact_signature: str
     provenance_ref: str
     security_review_ticket: str
+    integration_provider: str
+    integration_reference: str
+    integration_sync_status: str
+    integration_last_synced_at: Optional[datetime] = None
     replacement_module_id: Optional[str] = None
     migration_guidance: str
     deprecation_timeline: str
@@ -443,6 +674,18 @@ class ModuleDeprecateRequest(BaseModel):
     migration_guidance: str = Field(min_length=1)
     deprecation_timeline: str = Field(min_length=1)
     replacement_module_id: Optional[str] = None
+
+
+class ModuleIntegrationSyncRequest(BaseModel):
+    integration_reference: Optional[str] = None
+
+
+class ModuleIntegrationSyncResponse(BaseModel):
+    module_id: str
+    integration_provider: str
+    integration_reference: str
+    integration_sync_status: str
+    integration_last_synced_at: datetime
 
 
 class KeyCreateRequest(BaseModel):
@@ -533,6 +776,8 @@ class KeyRotationScheduleExecuteResponse(BaseModel):
 
 class KeyGuardrailEvaluateRequest(BaseModel):
     environment: str = "dev"
+    stage: str = Field(default="input", pattern="^(input|output)$")
+    policy_mode: str = Field(default="block", pattern="^(block|warn|monitor)$")
     requests_last_minute: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
@@ -545,6 +790,183 @@ class KeyGuardrailEvaluateResponse(BaseModel):
     decision: str
     reasons: list[str]
     applied_guardrails: list[str]
+
+
+class PlaygroundRunFeedbackCreateRequest(BaseModel):
+    trace_id: str
+    rating: int = Field(ge=1, le=5)
+    quality_score: float = Field(ge=0, le=1)
+    comment: str = ""
+
+
+class PlaygroundRunAssessRequest(BaseModel):
+    response_text: Optional[str] = None
+    environment: str = "dev"
+    trace_id: Optional[str] = None
+
+
+class PlaygroundRunAssessResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    run_id: str
+    model_name: str
+    trace_id: str
+    quality_score: float
+    quality_tier: str
+    score_reason: str
+    suggested_rating: int
+    suggested_comment: str
+    response_preview: str
+    response_text: str
+    inference_ran: bool
+
+
+class PlaygroundRunFeedbackResponse(ORMBase):
+    feedback_id: str
+    run_id: str
+    trace_id: str
+    rating: int
+    quality_score: float
+    comment: str
+    created_by: str
+    created_at: datetime
+
+
+class PlaygroundQualityTriageItemResponse(BaseModel):
+    feedback_id: str
+    run_id: str
+    trace_id: str
+    rating: int
+    quality_score: float
+    comment: str
+    created_by: str
+    created_at: datetime
+    run_actor_id: str
+    selected_model: str
+    run_status: str
+    priority_tag: str
+    triage_reason: str
+
+
+class PlaygroundQualityTriageQueueResponse(BaseModel):
+    total: int
+    items: list[PlaygroundQualityTriageItemResponse]
+
+
+class PlaygroundQualityEscalationCreateRequest(BaseModel):
+    severity: str = Field(default="high", pattern="^(low|medium|high|critical)$")
+    priority_tag: str = Field(default="p1", pattern="^(p0|p1|p2)$")
+    assigned_team: str = Field(default="ai-trust-ops", min_length=1, max_length=128)
+    escalation_channel: str = Field(default="security-ops", min_length=1, max_length=128)
+    escalation_reason: str = Field(min_length=1, max_length=2000)
+    external_ticket_ref: Optional[str] = Field(default=None, max_length=128)
+    sla_target_minutes: int = Field(default=60, ge=15, le=10080)
+
+
+class PlaygroundQualityEscalationResolveRequest(BaseModel):
+    resolution_note: str = Field(min_length=1, max_length=2000)
+
+
+class PlaygroundQualityEscalationResponse(ORMBase):
+    escalation_id: str
+    feedback_id: str
+    run_id: str
+    trace_id: str
+    run_actor_id: str
+    status: str
+    severity: str
+    priority_tag: str
+    assigned_team: str
+    escalation_channel: str
+    external_ticket_ref: Optional[str]
+    escalation_reason: str
+    sla_target_minutes: int
+    due_at: datetime
+    acknowledged_by: Optional[str]
+    acknowledged_at: Optional[datetime]
+    resolved_by: Optional[str]
+    resolved_at: Optional[datetime]
+    resolution_note: Optional[str]
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlaygroundQualityEscalationQueueResponse(BaseModel):
+    total: int
+    overdue: int
+    items: list[PlaygroundQualityEscalationResponse]
+
+
+class PlaygroundQualityEscalationNotifyRequest(BaseModel):
+    channel: str = Field(default="security-ops", min_length=1, max_length=128)
+    destination: str = Field(min_length=1, max_length=255)
+    message_prefix: str = Field(default="Playground quality escalation", min_length=1, max_length=255)
+
+
+class PlaygroundQualityEscalationNotifyResponse(BaseModel):
+    escalation_id: str
+    notified: bool
+    channel: str
+    destination: str
+    notified_at: datetime
+    attempts: int
+    receipt_id: str
+    delivery_status: str
+    error_message: Optional[str] = None
+    message: str
+
+
+class PlaygroundQualityAnalyticsBucketResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    bucket_start: datetime
+    bucket_end: datetime
+    provider_id: str
+    route_policy_id: str
+    model_name: str
+    sample_count: int
+    average_quality_score: float
+    average_rating: float
+    critical_count: int
+    elevated_count: int
+
+
+class PlaygroundQualityAnalyticsRollupResponse(BaseModel):
+    window_hours: int
+    bucket_hours: int
+    total_samples: int
+    buckets: list[PlaygroundQualityAnalyticsBucketResponse]
+
+
+class CostModelCatalogItemResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    supported_model_id: str
+    provider_type: str
+    model_name: str
+    display_name: str
+    context_window_tokens: int
+    status: str
+    input_cents_per_1k: float
+    output_cents_per_1k: float
+    provider_multiplier: float
+    endpoint_multiplier: float
+    provider_discount_percent: float
+    model_discount_percent: float
+    estimated_average_cost_cents_per_1k: float
+    ranking_score: float
+
+
+class CostModelCatalogResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    catalog: list[CostModelCatalogItemResponse]
+    default_model_rates: dict[str, float]
+    provider_multipliers: dict[str, float]
+    endpoint_multipliers: dict[str, float]
+    provider_discounts: dict[str, float]
+    model_discounts: dict[str, float]
 
 
 class RoutePolicyRequest(BaseModel):
@@ -670,6 +1092,52 @@ class RoutePreCallFiltersResponse(BaseModel):
     enforce: bool = True
 
 
+class RouteOutputGuardrailsRequest(BaseModel):
+    tenant_id: str
+    environment: str = "prod"
+    request_tag: Optional[str] = Field(default=None, max_length=64)
+    policy_mode: str = Field(default="warn", pattern="^(allow|warn|block|transform)$")
+    blocked_phrases: str = "[]"
+    redact_phrases: str = "[]"
+    max_output_tokens: Optional[int] = Field(default=None, ge=0, le=2_000_000)
+    enforce: bool = True
+
+
+class RouteOutputGuardrailsResponse(BaseModel):
+    route_policy_id: str
+    tenant_id: str
+    environment: str
+    request_tag: Optional[str] = None
+    policy_mode: str
+    blocked_phrases: str
+    redact_phrases: str
+    max_output_tokens: Optional[int] = None
+    enforce: bool = True
+
+
+class RouteInputDataPolicyRequest(BaseModel):
+    tenant_id: str
+    environment: str = "prod"
+    request_tag: Optional[str] = Field(default=None, max_length=64)
+    policy_mode: str = Field(default="warn", pattern="^(allow|warn|block|mask)$")
+    data_classes: str = "[]"
+    block_patterns: str = "[]"
+    mask_token: str = Field(default="[REDACTED]", min_length=1, max_length=64)
+    enforce: bool = True
+
+
+class RouteInputDataPolicyResponse(BaseModel):
+    route_policy_id: str
+    tenant_id: str
+    environment: str
+    request_tag: Optional[str] = None
+    policy_mode: str
+    data_classes: str
+    block_patterns: str
+    mask_token: str
+    enforce: bool = True
+
+
 class RouteTrafficMirroringRequest(BaseModel):
     tenant_id: str
     environment: str = "prod"
@@ -685,6 +1153,48 @@ class RouteTrafficMirroringResponse(BaseModel):
     request_tag: Optional[str] = None
     mirror_targets: str
     enabled: bool = True
+
+
+class RouteCanaryRolloutRequest(BaseModel):
+    tenant_id: str
+    environment: str = "prod"
+    request_tag: Optional[str] = Field(default=None, max_length=64)
+    baseline_provider_id: str = Field(min_length=1, max_length=255)
+    canary_targets: str = "[]"
+    cohort_request_tags: str = "[]"
+    cohort_owner_scopes: str = "[]"
+    gate_min_requests: Optional[int] = Field(default=None, ge=1, le=100000)
+    gate_max_failure_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    gate_min_success_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    enabled: bool = True
+    notes: Optional[str] = Field(default=None, max_length=500)
+
+
+class RouteCanaryRolloutResponse(BaseModel):
+    route_policy_id: str
+    tenant_id: str
+    environment: str
+    request_tag: Optional[str] = None
+    baseline_provider_id: str
+    canary_targets: str
+    cohort_request_tags: str
+    cohort_owner_scopes: str
+    gate_min_requests: Optional[int] = None
+    gate_max_failure_rate: Optional[float] = None
+    gate_min_success_rate: Optional[float] = None
+    gate_metrics: str
+    gate_last_decision: Optional[str] = None
+    enabled: bool = True
+    status: str
+    notes: Optional[str] = None
+    created_at: str
+    updated_at: str
+    promoted_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+
+
+class RouteCanaryRolloutActionRequest(BaseModel):
+    notes: Optional[str] = Field(default=None, max_length=500)
 
 
 class GatewayEntitlementUpsertRequest(BaseModel):
@@ -891,6 +1401,8 @@ class RouteExecuteFallbackRequest(BaseModel):
     endpoint_family: str = "responses"
     input_tokens: int = Field(default=100, ge=0)
     output_tokens: int = Field(default=50, ge=0)
+    simulated_input_text: Optional[str] = Field(default=None, max_length=4000)
+    simulated_output_text: Optional[str] = Field(default=None, max_length=4000)
     currency: str = "USD"
     simulate_fail_provider_ids: str = "[]"
 
@@ -917,6 +1429,10 @@ class CachePolicyRequest(BaseModel):
     key_strategy: str = "default"
     invalidation_strategy: str = "ttl"
     privacy_mode: str = "standard"
+    privacy_scope: str = Field(default="tenant", pattern="^(global|tenant|owner|route)$")
+    non_cache_data_classes: str = "[]"
+    cache_mode: str = Field(default="exact", pattern="^(exact|semantic)$")
+    similarity_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
 
 
 class CachePolicyResponse(ORMBase):
@@ -926,6 +1442,10 @@ class CachePolicyResponse(ORMBase):
     key_strategy: str
     invalidation_strategy: str
     privacy_mode: str
+    privacy_scope: str
+    non_cache_data_classes: str
+    cache_mode: str
+    similarity_threshold: float
     status: str
 
 
@@ -933,7 +1453,9 @@ class GatewayCacheHealthResponse(BaseModel):
     status: str
     cache_backend: str
     active_policies: int
+    semantic_policies: int
     avg_ttl_seconds: float
+    avg_similarity_threshold: float
     hit_ratio: float
     eligible_requests: int
     hits: int
@@ -954,7 +1476,49 @@ class GatewayCacheInvalidateResponse(BaseModel):
     invalidated_scope: Optional[str] = None
     requested_keys: int
     matching_policies: int
+    purged_cache_entries: int = 0
     active_only: bool
+
+
+class GatewayCacheDecisionEventResponse(ORMBase):
+    cache_decision_event_id: str
+    timestamp: datetime
+    trace_id: str
+    request_id: str
+    request_fingerprint: str
+    request_text: str
+    actor_id: str
+    tenant_id: str
+    environment: str
+    route_policy_id: Optional[str] = None
+    data_class: str
+    cache_policy_id: Optional[str] = None
+    cache_policy_scope: Optional[str] = None
+    cache_mode: Optional[str] = None
+    match_score: float
+    decision: str
+    explanation: str
+    match_provenance: str
+    source_request_id: Optional[str] = None
+
+
+class GatewayResponseCacheEntryResponse(ORMBase):
+    cache_entry_id: str
+    cache_policy_id: str
+    request_fingerprint: str
+    request_text: str
+    tenant_id: str
+    environment: str
+    route_policy_id: Optional[str] = None
+    owner_scope: str
+    data_class: str
+    cache_mode: str
+    match_score: float
+    endpoint_family: str
+    source_request_id: Optional[str] = None
+    ttl_expires_at: datetime
+    created_at: datetime
+    status: str
 
 
 class GatewayAnalyticsSummaryResponse(BaseModel):
@@ -1072,6 +1636,309 @@ class GatewayOpenAIChatCompletionsResponse(BaseModel):
     risk_reasons: list[str]
     selected_provider_id: Optional[str] = None
     route_policy_id: Optional[str] = None
+    cache_short_circuit: Optional[bool] = None
+
+
+class GatewayOpenAIEmbeddingsRequest(BaseModel):
+    model: str = Field(min_length=1)
+    input: object
+    dimensions: Optional[int] = Field(default=16, ge=1, le=256)
+    tenant_id: Optional[str] = None
+    environment: str = "dev"
+    route_policy_id: Optional[str] = None
+    request_tag: Optional[str] = None
+    session_id: Optional[str] = None
+    owner_scope: Optional[str] = None
+    agent_id: Optional[str] = None
+
+
+class GatewayOpenAIEmbeddingData(BaseModel):
+    object: str
+    embedding: list[float]
+    index: int
+
+
+class GatewayOpenAIEmbeddingsUsage(BaseModel):
+    prompt_tokens: int
+    total_tokens: int
+
+
+class GatewayOpenAIEmbeddingsResponse(BaseModel):
+    object: str
+    data: list[GatewayOpenAIEmbeddingData]
+    model: str
+    usage: GatewayOpenAIEmbeddingsUsage
+    request_id: str
+    trace_id: str
+    risk_tier: str
+    risk_reasons: list[str]
+    selected_provider_id: Optional[str] = None
+    route_policy_id: Optional[str] = None
+
+
+class GatewayOpenAIRerankRequest(BaseModel):
+    model: str = Field(min_length=1)
+    query: str = Field(min_length=1)
+    documents: list[object] = Field(min_length=1)
+    top_n: Optional[int] = Field(default=None, ge=1, le=100)
+    tenant_id: Optional[str] = None
+    environment: str = "dev"
+    request_tag: Optional[str] = None
+    session_id: Optional[str] = None
+    owner_scope: Optional[str] = None
+    agent_id: Optional[str] = None
+
+
+class GatewayOpenAIRerankResult(BaseModel):
+    index: int
+    relevance_score: float
+    document: object
+
+
+class GatewayOpenAIRerankUsage(BaseModel):
+    prompt_tokens: int
+    total_tokens: int
+
+
+class GatewayOpenAIRerankResponse(BaseModel):
+    object: str
+    model: str
+    results: list[GatewayOpenAIRerankResult]
+    usage: GatewayOpenAIRerankUsage
+    request_id: str
+    trace_id: str
+    risk_tier: str
+    risk_reasons: list[str]
+    selected_provider_id: Optional[str] = None
+    route_policy_id: Optional[str] = None
+
+
+class GatewayOpenAIImagesRequest(BaseModel):
+    model: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    n: int = Field(default=1, ge=1, le=10)
+    size: str = Field(default="1024x1024", min_length=1, max_length=32)
+    response_format: str = Field(default="b64_json", min_length=1, max_length=16)
+    user: Optional[str] = None
+    tenant_id: Optional[str] = None
+    environment: str = "dev"
+    request_tag: Optional[str] = None
+    session_id: Optional[str] = None
+    owner_scope: Optional[str] = None
+    agent_id: Optional[str] = None
+
+
+class GatewayOpenAIImagesData(BaseModel):
+    b64_json: str
+    revised_prompt: Optional[str] = None
+    index: int
+
+
+class GatewayOpenAIImagesResponse(BaseModel):
+    created: int
+    data: list[GatewayOpenAIImagesData]
+    model: str
+    request_id: str
+    trace_id: str
+    risk_tier: str
+    risk_reasons: list[str]
+    selected_provider_id: Optional[str] = None
+    route_policy_id: Optional[str] = None
+
+
+class GatewayOpenAIAudioTranscriptionRequest(BaseModel):
+    model: str = Field(min_length=1)
+    input_text: str = Field(min_length=1)
+    language: Optional[str] = Field(default=None, max_length=32)
+    prompt: Optional[str] = Field(default=None, max_length=512)
+    response_format: str = Field(default="json", min_length=1, max_length=16)
+    tenant_id: Optional[str] = None
+    environment: str = "dev"
+    request_tag: Optional[str] = None
+    session_id: Optional[str] = None
+    owner_scope: Optional[str] = None
+    agent_id: Optional[str] = None
+
+
+class GatewayOpenAIAudioTranslationRequest(BaseModel):
+    model: str = Field(min_length=1)
+    input_text: str = Field(min_length=1)
+    target_language: str = Field(min_length=1, max_length=32)
+    language: Optional[str] = Field(default=None, max_length=32)
+    prompt: Optional[str] = Field(default=None, max_length=512)
+    response_format: str = Field(default="json", min_length=1, max_length=16)
+    tenant_id: Optional[str] = None
+    environment: str = "dev"
+    request_tag: Optional[str] = None
+    session_id: Optional[str] = None
+    owner_scope: Optional[str] = None
+    agent_id: Optional[str] = None
+
+
+class GatewayOpenAIAudioResponse(BaseModel):
+    text: str
+    language: Optional[str] = None
+    duration_seconds: float
+    model: str
+    request_id: str
+    trace_id: str
+    risk_tier: str
+    risk_reasons: list[str]
+    selected_provider_id: Optional[str] = None
+    route_policy_id: Optional[str] = None
+
+
+class GatewayOpenAIRealtimeRequest(BaseModel):
+    model: str = Field(min_length=1)
+    session_label: Optional[str] = Field(default=None, max_length=128)
+    stream: bool = False
+    stream_binary_mode: str = Field(default="metadata_only", max_length=32)
+    stream_inline_max_event_bytes: int = Field(default=16384, ge=1024, le=262144)
+    stream_inline_allowed_event_types: list[str] = Field(default_factory=lambda: ["input.audio.append", "input.video.append"])
+    stream_inline_require_correlation_id: bool = False
+    stream_max_event_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    stream_max_session_events: int = Field(default=500, ge=1, le=100000)
+    stream_max_session_event_bytes: int = Field(default=5242880, ge=1024, le=104857600)
+    stream_heartbeat_interval_seconds: int = Field(default=15, ge=5, le=120)
+    tenant_id: Optional[str] = None
+    environment: str = "dev"
+    requested_modalities: list[str] = Field(default_factory=lambda: ["text"])
+    request_tag: Optional[str] = None
+    session_id: Optional[str] = None
+    owner_scope: Optional[str] = None
+    agent_id: Optional[str] = None
+
+
+class GatewayOpenAIRealtimeResponse(BaseModel):
+    id: str
+    object: str
+    status: str
+    model: str
+    session_label: Optional[str] = None
+    requested_modalities: list[str]
+    expires_at: int
+    request_id: str
+    trace_id: str
+    risk_tier: str
+    risk_reasons: list[str]
+    selected_provider_id: Optional[str] = None
+    route_policy_id: Optional[str] = None
+
+
+class GatewayOpenAIRealtimeSessionEventCreateRequest(BaseModel):
+    event_type: str = Field(min_length=1, max_length=64)
+    payload: Optional[dict[str, object]] = None
+    binary_mode: str = Field(default="metadata_only", max_length=32)
+    event_bytes: int = Field(default=0, ge=0, le=1048576)
+
+
+class GatewayOpenAIRealtimeSessionEventResponse(BaseModel):
+    id: str
+    object: str
+    session_id: str
+    event_type: str
+    binary_mode: str
+    event_bytes: int
+    status: str
+    request_id: str
+    trace_id: str
+    created_at: Optional[int] = None
+    payload: Optional[dict[str, object]] = None
+
+
+class GatewayOpenAIRealtimeSessionEventListResponse(BaseModel):
+    object: str
+    data: list[GatewayOpenAIRealtimeSessionEventResponse]
+
+
+class GatewayOpenAIRealtimeSessionResponse(BaseModel):
+    id: str
+    object: str
+    status: str
+    model: str
+    session_label: Optional[str] = None
+    requested_modalities: list[str]
+    stream_policy: dict[str, object]
+    event_count: int
+    total_event_bytes: int = 0
+    last_event_type: Optional[str] = None
+    created_at: int
+    expires_at: int
+    closed_at: Optional[int] = None
+    request_id: str
+    trace_id: str
+
+
+class GatewayOpenAIRealtimeSessionListResponse(BaseModel):
+    object: str
+    data: list[GatewayOpenAIRealtimeSessionResponse]
+
+
+class GatewayOpenAIRealtimeSessionCloseResponse(BaseModel):
+    id: str
+    object: str
+    status: str
+    closed_at: int
+    event_count: int
+    last_event_type: Optional[str] = None
+    request_id: str
+    trace_id: str
+
+
+class GatewayOpenAIMessagesRequest(BaseModel):
+    model: str = Field(min_length=1)
+    input: str = Field(min_length=1)
+    conversation_id: Optional[str] = Field(default=None, max_length=128)
+    tenant_id: Optional[str] = None
+    environment: str = "dev"
+    request_tag: Optional[str] = None
+    session_id: Optional[str] = None
+    owner_scope: Optional[str] = None
+    agent_id: Optional[str] = None
+
+
+class GatewayOpenAIA2AMessageRequest(BaseModel):
+    from_agent_id: str = Field(min_length=1, max_length=128)
+    to_agent_id: str = Field(min_length=1, max_length=128)
+    message: str = Field(min_length=1)
+    model: str = Field(default="a2a-transport-v1", min_length=1)
+    tenant_id: Optional[str] = None
+    environment: str = "dev"
+    request_tag: Optional[str] = None
+    session_id: Optional[str] = None
+    owner_scope: Optional[str] = None
+    agent_id: Optional[str] = None
+
+
+class GatewayOpenAIMessagesResponse(BaseModel):
+    id: str
+    object: str
+    role: str
+    content: str
+    conversation_id: Optional[str] = None
+    model: str
+    request_id: str
+    trace_id: str
+    risk_tier: str
+    risk_reasons: list[str]
+    selected_provider_id: Optional[str] = None
+    route_policy_id: Optional[str] = None
+
+
+class GatewayOpenAIA2AMessageResponse(BaseModel):
+    id: str
+    object: str
+    status: str
+    from_agent_id: str
+    to_agent_id: str
+    content: str
+    model: str
+    request_id: str
+    trace_id: str
+    risk_tier: str
+    risk_reasons: list[str]
+    selected_provider_id: Optional[str] = None
+    route_policy_id: Optional[str] = None
 
 
 class GatewayOpenAIResponsesRequest(BaseModel):
@@ -1132,6 +1999,7 @@ class GatewayOpenAIResponsesResponse(BaseModel):
     risk_reasons: list[str]
     selected_provider_id: Optional[str] = None
     route_policy_id: Optional[str] = None
+    cache_short_circuit: Optional[bool] = None
 
 
 class GatewayOpenAIResponsesListResponse(BaseModel):
@@ -1175,6 +2043,40 @@ class GatewayOpenAIFilesListResponse(BaseModel):
 
 
 class GatewayOpenAIFileDeleteResponse(BaseModel):
+    id: str
+    object: str
+    deleted: bool
+    request_id: str
+    trace_id: str
+
+
+class GatewayOpenAIBatchCreateRequest(BaseModel):
+    endpoint_family: str = Field(default="responses", min_length=1, max_length=128)
+    requests: list[dict[str, object]] = Field(min_length=1)
+    metadata: Optional[dict[str, object]] = None
+    environment: str = "dev"
+
+
+class GatewayOpenAIBatchResponse(BaseModel):
+    id: str
+    object: str
+    status: str
+    endpoint_family: str
+    request_count: int
+    completed_count: int
+    failed_count: int
+    request_id: str
+    trace_id: str
+    created_at: int
+    metadata: dict[str, object]
+
+
+class GatewayOpenAIBatchesListResponse(BaseModel):
+    object: str
+    data: list[GatewayOpenAIBatchResponse]
+
+
+class GatewayOpenAIBatchDeleteResponse(BaseModel):
     id: str
     object: str
     deleted: bool
@@ -1262,10 +2164,75 @@ class McpToolCallResponse(BaseModel):
     trace_id: str
 
 
+class GatewaySystemInstructionsUpdateRequest(BaseModel):
+    instructions: str = Field(default="", max_length=8000)
+
+
+class GatewaySystemInstructionsResponse(BaseModel):
+    config_key: str
+    instructions: str
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class GatewaySystemRulesUpdateRequest(BaseModel):
+    rules: list[dict[str, object]] = Field(default_factory=list)
+
+
+class GatewaySystemRulesResponse(BaseModel):
+    config_key: str
+    rules: list[dict[str, str]] = Field(default_factory=list)
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class GatewayCursorTokenUpdateRequest(BaseModel):
+    storage_mode: str = Field(default="db", pattern="^(db|external)$")
+    token: Optional[str] = Field(default=None, min_length=1, max_length=8192)
+    external_provider_id: Optional[str] = Field(default=None, min_length=3, max_length=128)
+    external_secret_ref: Optional[str] = Field(default=None, min_length=1, max_length=1024)
+
+
+class GatewayCursorTokenResponse(BaseModel):
+    config_key: str
+    configured: bool
+    storage_mode: str = "db"
+    external_provider_id: Optional[str] = None
+    external_secret_ref: Optional[str] = None
+    masked_hint: Optional[str] = None
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    deprecated: bool = True
+    migration_hint: str = (
+        "Use Providers secret providers with provider_type=db or external backends, "
+        "PUT /secrets/providers/{provider_id}/values for db secrets, and "
+        "PUT /gateway/cursor-secret-binding for gateway resolution."
+    )
+
+
+class GatewayCursorSecretBindingUpdateRequest(BaseModel):
+    secret_provider_id: str = Field(min_length=3, max_length=128)
+    secret_ref: str = Field(min_length=1, max_length=1024)
+
+
+class GatewayCursorSecretBindingResponse(BaseModel):
+    config_key: str
+    configured: bool
+    secret_provider_id: Optional[str] = None
+    secret_ref: Optional[str] = None
+    provider_type: Optional[str] = None
+    masked_hint: Optional[str] = None
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
 class GatewayExternalCallbackCreateRequest(BaseModel):
     callback_url: str = Field(min_length=8, max_length=2048)
     event_types: list[str] = Field(default_factory=lambda: ["gateway.route.execute_fallback"]) 
     environment: str = "dev"
+    sink_type: str = Field(default="generic_webhook", min_length=3, max_length=64)
+    sink_route_key: Optional[str] = Field(default=None, max_length=128)
+    correlation_preset: str = Field(default="trace_resource", min_length=3, max_length=64)
     redact_sensitive: bool = True
     enabled: bool = True
     description: Optional[str] = Field(default=None, max_length=500)
@@ -1275,6 +2242,9 @@ class GatewayExternalCallbackUpdateRequest(BaseModel):
     callback_url: Optional[str] = Field(default=None, min_length=8, max_length=2048)
     event_types: Optional[list[str]] = None
     environment: Optional[str] = None
+    sink_type: Optional[str] = Field(default=None, min_length=3, max_length=64)
+    sink_route_key: Optional[str] = Field(default=None, max_length=128)
+    correlation_preset: Optional[str] = Field(default=None, min_length=3, max_length=64)
     redact_sensitive: Optional[bool] = None
     enabled: Optional[bool] = None
     description: Optional[str] = Field(default=None, max_length=500)
@@ -1285,6 +2255,9 @@ class GatewayExternalCallbackResponse(BaseModel):
     callback_url: str
     event_types: list[str]
     environment: str
+    sink_type: str
+    sink_route_key: Optional[str] = None
+    correlation_preset: str
     redact_sensitive: bool
     enabled: bool
     description: Optional[str] = None
@@ -1302,10 +2275,14 @@ class GatewayExternalCallbackTestResponse(BaseModel):
     callback_id: str
     callback_url: str
     environment: str
+    sink_type: str
+    sink_route_key: Optional[str] = None
+    correlation_preset: str
     delivery_status: str
     trace_id: str
     delivered_at: str
     redaction_applied: bool
+    correlation_context: dict[str, object]
     payload_preview: dict[str, object]
 
 
@@ -1320,6 +2297,8 @@ class GatewayExternalCallbackExportResponse(BaseModel):
     export_uri: str
     callback_count: int
     event_count: int
+    sink_distribution: dict[str, int] = Field(default_factory=dict)
+    correlation_preset_distribution: dict[str, int] = Field(default_factory=dict)
 
 
 class GatewayGovernanceEvidenceExportRequest(BaseModel):
@@ -1464,6 +2443,20 @@ class SecretProviderListResponse(BaseModel):
     last_health_check_at: Optional[datetime]
 
 
+class SecretProviderValueUpsertRequest(BaseModel):
+    secret_ref: str = Field(min_length=1, max_length=1024)
+    secret_value: str = Field(min_length=1, max_length=8192)
+
+
+class SecretProviderValueResponse(BaseModel):
+    secret_provider_id: str
+    secret_ref: str
+    configured: bool
+    masked_hint: Optional[str] = None
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
 class TenantCatalogUpsertRequest(BaseModel):
     tenant_id: str
     tenant_name: str
@@ -1492,6 +2485,16 @@ class SupportedModelUpsertRequest(BaseModel):
     context_window_tokens: int = Field(default=128000, ge=1, le=10000000)
     status: str = Field(default="active", pattern="^(active|beta|deprecated|disabled)$")
     description: str = ""
+    recommendation_rationale: str = ""
+    credential_source_class: str = Field(default="", pattern="^(|cp_ref|cp_wif|cp_env)$")
+    default_binding_id: Optional[str] = None
+
+
+class SupportedModelApprovalRequest(BaseModel):
+    decision: str = Field(pattern="^(approve|reject)$")
+    approval_ticket_ref: str = Field(min_length=1, max_length=128)
+    approval_note: str = Field(min_length=3, max_length=2000)
+    environment: str = Field(default="dev", min_length=1, max_length=32)
 
 
 class SupportedModelResponse(ORMBase):
@@ -1502,9 +2505,45 @@ class SupportedModelResponse(ORMBase):
     context_window_tokens: int
     status: str
     description: str
+    recommendation_rationale: str
+    approval_status: str
+    approval_ticket_ref: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    metadata_version: int
+    credential_source_class: str = ""
+    default_binding_id: Optional[str] = None
     updated_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class PlatformModelAvailabilityPolicy(BaseModel):
+    catalog_statuses: list[str]
+    require_approval: bool
+    enforce_tenant_entitlements: bool
+
+
+class PlatformAvailableModelItem(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    supported_model_id: str
+    provider_type: str
+    model_name: str
+    model_ref: str
+    display_name: str
+    status: str
+    approval_status: str
+    context_window_tokens: int
+    ui_available: bool = True
+    ui_priority_rank: int
+
+
+class PlatformAvailableModelsResponse(BaseModel):
+    object: str = "list"
+    data: list[PlatformAvailableModelItem]
+    total: int
+    policy: PlatformModelAvailabilityPolicy
 
 
 class TenantSupportedModelEntitlementUpsertRequest(BaseModel):
@@ -1514,6 +2553,41 @@ class TenantSupportedModelEntitlementUpsertRequest(BaseModel):
     provider_type: str
     model_name: str
     status: str = Field(default="active", pattern="^(active|inactive)$")
+
+
+class ProviderCredentialBindingUpsertRequest(BaseModel):
+    binding_id: Optional[str] = None
+    tenant_id: str = Field(min_length=1, max_length=128)
+    binding_name: str = Field(min_length=1, max_length=255)
+    consumer_type: str = Field(pattern="^(gateway|agent|route|platform)$")
+    consumer_key: str = Field(min_length=1, max_length=255)
+    provider_type: str = Field(min_length=1, max_length=64)
+    credential_plane: str = Field(pattern="^(secret_ref|workload_identity)$")
+    secret_provider_id: Optional[str] = None
+    secret_ref: Optional[str] = None
+    workload_identity_profile_id: Optional[str] = None
+    environment: str = Field(default="dev", min_length=1, max_length=32)
+    status: str = Field(default="active", pattern="^(active|inactive)$")
+
+
+class ProviderCredentialBindingResponse(BaseModel):
+    binding_id: str
+    tenant_id: str
+    binding_name: str
+    consumer_type: str
+    consumer_key: str
+    provider_type: str
+    credential_plane: str
+    secret_provider_id: Optional[str] = None
+    secret_ref: Optional[str] = None
+    workload_identity_profile_id: Optional[str] = None
+    environment: str
+    status: str
+    configured: bool
+    masked_hint: Optional[str] = None
+    updated_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class TenantSupportedModelEntitlementResponse(ORMBase):
@@ -1550,6 +2624,8 @@ class CostLiveResponse(BaseModel):
     spend_last_day_cents: int
     burn_rate_cents_per_hour: int
     event_count_last_day: int
+    recent_sessions: list[str] = Field(default_factory=list)
+    recent_agents: list[str] = Field(default_factory=list)
 
 
 class CostBreakdownItem(BaseModel):
@@ -1581,6 +2657,26 @@ class CostTimeseriesResponse(BaseModel):
     total_spend_cents: int
     total_event_count: int
     points: list[CostTimeseriesPoint]
+
+
+class CostPeriodSpendSnapshot(BaseModel):
+    label: str
+    start: datetime
+    end: datetime
+    spend_cents: int
+    event_count: int
+
+
+class CostComparisonResponse(BaseModel):
+    comparison_period: str
+    comparison_mode: str
+    dimension: str
+    scope_filter: Optional[str] = None
+    current: CostPeriodSpendSnapshot
+    previous: CostPeriodSpendSnapshot
+    delta_cents: int
+    delta_percent: float
+    trend: str
 
 
 class CostTrackSpendRequest(BaseModel):
@@ -1687,6 +2783,7 @@ class BudgetPolicyResponse(ORMBase):
     session_iteration_cap: Optional[int] = None
     session_budget_cents: Optional[int] = None
     status: str
+    effective_budget_cents: int = 0
 
 
 class CostPolicyEvaluateRequest(BaseModel):
@@ -1698,12 +2795,17 @@ class CostPolicyEvaluateRequest(BaseModel):
 class CostPolicyEvaluateResponse(BaseModel):
     scope_type: str
     scope_id: str
+    window_type: str = "daily"
     spend_cents: int
     budget_cents: int
     effective_budget_cents: int
     utilization_percent: float
-    projected_24h_spend_cents: int
+    projected_window_spend_cents: int
     projected_utilization_percent: float
+    historical_window_spend_cents: int = 0
+    projection_basis: str = "blended"
+    prior_periods_considered: int = 0
+    projected_24h_spend_cents: int
     decision: str
     recommended_action: str
     preemptive_throttle: bool
@@ -1732,6 +2834,9 @@ class CostLimitScopeDecision(BaseModel):
     decision: str
     recommended_action: str
     soft_limit_alert: bool = False
+    projected_window_spend_cents: int = 0
+    historical_window_spend_cents: int = 0
+    projection_basis: str = "blended"
 
 
 class CostLimitEvaluateRequest(BaseModel):
@@ -1831,6 +2936,7 @@ class ObservabilityLogResponse(BaseModel):
     timestamp: datetime
     request_id: str
     actor_id: str
+    actor_login: Optional[str] = None
     action_type: str
     resource_type: str
     resource_id: str
@@ -1842,6 +2948,8 @@ class ObservabilityLogResponse(BaseModel):
     environment: str
     policy_version: str
     decision_outcome: Literal["allow", "deny", "warn"]
+    user_prompt: Optional[str] = None
+    action_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class ObservabilityLogSchemaStatusResponse(BaseModel):
@@ -1852,6 +2960,64 @@ class ObservabilityLogSchemaStatusResponse(BaseModel):
     invalid_count: int
     conformance_percent: float
     missing_field_counts: dict[str, int]
+
+
+class ObservabilityBreakdownItem(BaseModel):
+    label: str
+    count: int
+
+
+class ObservabilityHourlyVolume(BaseModel):
+    hour_utc: str
+    count: int
+
+
+class ObservabilitySummaryResponse(BaseModel):
+    generated_at: datetime
+    since_hours: int
+    total_events: int
+    unique_traces: int
+    allow_count: int
+    deny_count: int
+    warn_count: int
+    non_allow_rate_percent: float
+    outcome_breakdown: list[ObservabilityBreakdownItem]
+    action_breakdown: list[ObservabilityBreakdownItem]
+    actor_breakdown: list[ObservabilityBreakdownItem] = Field(default_factory=list)
+    hourly_volume: list[ObservabilityHourlyVolume]
+    schema_conformance_percent: Optional[float] = None
+    recent_traces: list["ObservabilityRecentTraceResponse"] = Field(default_factory=list)
+
+
+class ObservabilityRecentTraceResponse(BaseModel):
+    trace_id: str
+    event_count: int
+    last_seen: datetime
+    primary_action: str
+    primary_outcome: str
+
+
+class ObservabilityTraceEventResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    timestamp: datetime
+    event_type: Literal["audit", "cost"]
+    trace_id: str
+    span_id: str
+    actor_id: Optional[str] = None
+    action_type: Optional[str] = None
+    resource_type: Optional[str] = None
+    resource_id: Optional[str] = None
+    decision_outcome: Optional[str] = None
+    model_name: Optional[str] = None
+    estimated_cost_cents: Optional[int] = None
+    environment: Optional[str] = None
+
+
+class ObservabilityTraceEventsResponse(BaseModel):
+    trace_id: str
+    event_count: int
+    events: list[ObservabilityTraceEventResponse]
 
 
 class ComplianceControlResponse(BaseModel):
@@ -1922,6 +3088,38 @@ class ComplianceEvidenceFreshnessSummaryResponse(BaseModel):
     controls_stale: int
     controls_missing: int
     items: list[ComplianceEvidenceFreshnessItemResponse]
+
+
+class UiCoverageInventoryItemResponse(BaseModel):
+    router_module: Optional[str] = None
+    method: str
+    route: str
+    ui_coverage: str
+    frontend_available: bool
+    notes: str
+
+
+class UiCoverageInventoryResponse(BaseModel):
+    generated_at: datetime
+    inventory_source: str
+    items: list[UiCoverageInventoryItemResponse]
+
+
+class UiCoverageReportResponse(BaseModel):
+    generated_at: datetime
+    inventory_source: str
+    total_inventory_endpoints: int
+    full_coverage_endpoints: int
+    partial_coverage_endpoints: int
+    gap_coverage_endpoints: int
+    frontend_unavailable_endpoints: int
+    undocumented_backend_routes: int
+    stale_inventory_entries: int
+    gap_items: list[UiCoverageInventoryItemResponse]
+    partial_items: list[UiCoverageInventoryItemResponse]
+    undocumented_items: list[UiCoverageInventoryItemResponse]
+    stale_inventory_items: list[UiCoverageInventoryItemResponse]
+    items: list[UiCoverageInventoryItemResponse]
 
 
 class RetentionPolicyCreateRequest(BaseModel):
@@ -1998,6 +3196,9 @@ class ComplianceEvidenceBundleResponse(BaseModel):
     generated_at: datetime
     evidence_items: list[str]
     artifacts: list[ComplianceEvidenceArtifactResponse]
+    artifact_count: int
+    latest_artifact_at: Optional[datetime] = None
+    integrity_status: str
 
 
 class PlaygroundRunCreateRequest(BaseModel):
@@ -2034,6 +3235,11 @@ class PlaygroundCompareResult(BaseModel):
     estimated_latency_ms: int
     estimated_cost_cents: int
     quality_score: float
+    quality_tier: str = "fair"
+    score_reason: str = ""
+    response_preview: str = ""
+    response_text: str = ""
+    rank: int = 1
 
 
 class PlaygroundCompareResponse(BaseModel):
@@ -2044,6 +3250,70 @@ class PlaygroundRouteDraftResponse(BaseModel):
     run_id: str
     draft_id: str
     status: str
+
+
+class PromptRegistryCreateRequest(BaseModel):
+    name: str
+    prompt_text: str
+    description: str = ""
+    labels: str = "[]"
+
+
+class PromptRegistryUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    prompt_text: Optional[str] = None
+    description: Optional[str] = None
+    labels: Optional[str] = None
+    change_reason: str = "updated"
+
+
+class PromptRegistryRollbackRequest(BaseModel):
+    version: int = Field(ge=1)
+    reason: str = "rollback"
+
+
+class PromptRegistryPromoteRequest(BaseModel):
+    target_environment: str = Field(default="dev", min_length=1, max_length=32)
+    reason: str = Field(default="promote", min_length=1, max_length=512)
+    approval_ticket: Optional[str] = Field(default=None, max_length=128)
+    require_render_validation: bool = True
+    render_variables: dict[str, str] = Field(default_factory=dict)
+    preview_only: bool = False
+
+
+class PromptRegistryPromoteResponse(BaseModel):
+    item: PromptRegistryItemResponse
+    target_environment: str
+    promotion_recorded: bool
+    render_preview: str
+    variables_detected: list[str]
+    missing_variables: list[str]
+    approval_required: bool
+    approval_ticket: Optional[str] = None
+
+
+class PromptRegistryItemResponse(ORMBase):
+    prompt_registry_id: str
+    name: str
+    description: str
+    prompt_text: str
+    labels: str
+    latest_version: int
+    status: str
+    created_by: str
+    updated_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PromptRegistryVersionResponse(ORMBase):
+    prompt_registry_version_id: str
+    prompt_registry_id: str
+    version: int
+    prompt_text: str
+    change_reason: str
+    created_by: str
+    created_at: datetime
 
 
 class PlaygroundTestSetResponse(BaseModel):
@@ -2067,6 +3337,23 @@ class BenchmarkRunResponse(ORMBase):
     score: int
     summary: str
     created_at: datetime
+    estimated_cost_cents: Optional[int] = None
+    gateway_call_count: Optional[int] = None
+    progress_step: Optional[int] = None
+    progress_total: Optional[int] = None
+    progress_label: Optional[str] = None
+
+
+class BenchmarkCostEstimateResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    agent_id: str
+    benchmark_suite: str
+    environment: str
+    model_name: str
+    gateway_call_count: int
+    estimated_cost_cents: int
+    currency: str = "USD"
 
 
 class ScanRunRequest(BaseModel):
@@ -2085,6 +3372,29 @@ class ScanRunResponse(ORMBase):
     severity_high_count: int
     summary: str
     created_at: datetime
+    estimated_cost_cents: Optional[int] = None
+    gateway_call_count: Optional[int] = None
+    progress_step: Optional[int] = None
+    progress_total: Optional[int] = None
+    progress_label: Optional[str] = None
+
+
+class ScanCostEstimateResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    agent_id: str
+    scan_type: str
+    environment: str
+    model_name: str
+    gateway_call_count: int
+    estimated_cost_cents: int
+    currency: str = "USD"
+
+
+class BenchmarkScanCancelResponse(BaseModel):
+    run_id: str
+    status: str
+    message: str
 
 
 class AgenticContractValidateRequest(BaseModel):
@@ -2092,6 +3402,7 @@ class AgenticContractValidateRequest(BaseModel):
     module_ids: list[str]
     route_policy_snapshot_id: str
     required_capabilities: list[str] = []
+    runtime_model: Optional[str] = None
 
 
 class AgenticContractValidateResponse(BaseModel):
@@ -2340,3 +3651,383 @@ class PolicyScheduleSummaryResponse(BaseModel):
 class PolicyScheduleDeleteResponse(BaseModel):
     deleted: bool
     job_id: str
+
+
+class PlatformMaintenanceStatusResponse(BaseModel):
+    active: bool
+    message: str = ""
+
+
+class PlatformPerformancePolicyResponse(BaseModel):
+    slow_response_threshold_ms: int
+
+
+class PlatformOperationalStatusResponse(BaseModel):
+    status: Literal["ok", "degraded", "maintenance", "incident"] = Field(
+        description="Overall platform posture for operator banners."
+    )
+    maintenance: PlatformMaintenanceStatusResponse
+    performance: PlatformPerformancePolicyResponse
+    feedback_enabled: bool = Field(description="When false, POST /platform/feedback returns 403.")
+    runtime_config_cache: dict = Field(description="Non-secret runtime config cache posture.")
+    rate_limit: dict = Field(description="Rate limiter backend posture.")
+
+
+class OperatorFeedbackCreateRequest(BaseModel):
+    category: str = Field(
+        default="other",
+        description="Feedback category: performance, ux, bug, feature, incident, or other.",
+        examples=["performance"],
+    )
+    severity: str = Field(default="medium", description="Severity: low, medium, or high.", examples=["high"])
+    comment: str = Field(min_length=1, max_length=4000, description="Operator narrative (required).")
+    context_view: str = Field(default="overview", description="Active console view when feedback was filed.")
+    context_action: str = Field(default="", description="Action context key for custom reports (e.g. load_overview).")
+    client_latency_ms: Optional[int] = Field(default=None, ge=0, le=600000, description="Observed client latency.")
+    trace_id: Optional[str] = Field(default=None, description="Optional trace correlation ID.")
+    incident_ref: Optional[str] = Field(default=None, description="Optional UI incident reference token.")
+    metadata_json: dict = Field(default_factory=dict, description="Additional structured context (JSON object).")
+
+
+class OperatorFeedbackActionRequest(BaseModel):
+    action: str = Field(description="Triage action: acknowledge, resolve, dismiss, or escalate.")
+    action_note: str = Field(default="", max_length=2000, description="Optional operator note for audit evidence.")
+
+
+class OperatorFeedbackResponse(ORMBase):
+    feedback_id: str = Field(description="Primary key; UUID string.")
+    category: str
+    severity: str
+    comment: str
+    context_view: str
+    context_action: str
+    client_latency_ms: Optional[int] = None
+    trace_id: Optional[str] = None
+    incident_ref: Optional[str] = None
+    metadata_json: str = Field(description="JSON string of metadata captured at submit time.")
+    status: str = Field(description="open, acknowledged, resolved, or dismissed.")
+    action_note: Optional[str] = None
+    acted_by: Optional[str] = None
+    acted_at: Optional[datetime] = None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class OperatorFeedbackAnalyticsBucketResponse(BaseModel):
+    label: str
+    count: int
+
+
+class OperatorFeedbackAnalyticsResponse(BaseModel):
+    generated_at: datetime
+    since_hours: int
+    total_count: int
+    open_count: int
+    by_category: list[OperatorFeedbackAnalyticsBucketResponse]
+    by_severity: list[OperatorFeedbackAnalyticsBucketResponse]
+    by_status: list[OperatorFeedbackAnalyticsBucketResponse]
+    by_context_view: list[OperatorFeedbackAnalyticsBucketResponse]
+    by_context_action: list[OperatorFeedbackAnalyticsBucketResponse]
+
+
+class GatewayMemoryRecordCreateRequest(BaseModel):
+    memory_tier: str = Field(pattern="^(short_term|long_term)$")
+    scope_type: str = Field(pattern="^(session|conversation|agent|global)$")
+    scope_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(default="", max_length=256)
+    content: str = Field(min_length=1, max_length=16384)
+    metadata_json: Optional[str] = Field(default="{}")
+    environment: str = Field(default="dev", max_length=64)
+
+
+class GatewayMemoryRecordResponse(BaseModel):
+    memory_id: str
+    memory_tier: str
+    scope_type: str
+    scope_id: str
+    label: str
+    content: str
+    metadata_json: str
+    actor_id: str
+    environment: str
+    status: str
+    expires_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: Optional[datetime] = None
+
+
+class GatewayMemoryRecordListResponse(BaseModel):
+    object: str = "list"
+    data: list[GatewayMemoryRecordResponse]
+    total: int
+
+
+class GatewayMemoryRecordDeleteResponse(BaseModel):
+    memory_id: str
+    object: str = "memory.deleted"
+    deleted: bool
+    trace_id: str
+
+
+class GatewayMemoryTierSummary(BaseModel):
+    active_records: int = 0
+    expiring_soon: int = 0
+    checkpoints: int = 0
+    active_realtime_sessions: int = 0
+    semantic_policies: int = 0
+    hit_ratio: float = 0.0
+    response_records: int = 0
+    file_records: int = 0
+    system_rules: int = 0
+
+
+class GatewayMemoryOverviewResponse(BaseModel):
+    semantic_cache: GatewayMemoryTierSummary
+    short_term: GatewayMemoryTierSummary
+    long_term: GatewayMemoryTierSummary
+    short_term_ttl_seconds: int
+    max_records_per_scope: int
+
+
+class GatewayMemoryConfigMemorySettings(BaseModel):
+    pii_classification_enabled: bool = False
+    short_term_ttl_seconds: int
+    max_records_per_scope: int
+    long_term_enabled: bool
+    content_max_bytes: int
+    session_capture_enabled: bool = False
+
+
+class GatewayMemoryConfigSemanticCacheSettings(BaseModel):
+    default_mode: str
+    default_similarity_threshold: float
+    default_ttl_seconds: int
+    inference_short_circuit_enabled: bool = False
+    note: str
+
+
+class GatewayVectorStoreConfigItem(BaseModel):
+    store_id: str
+    provider_type: str
+    enabled: bool
+    connection_url: str
+    collection_name: str
+    embedding_dimensions: int
+    similarity_metric: str
+    secret_provider_id: Optional[str] = None
+    api_key_secret_ref: Optional[str] = None
+    mcp_server_id: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class GatewayMemoryConfigVectorStoreSettings(BaseModel):
+    default_store_id: str
+    default_secret_provider_id: str = ""
+    search_top_k: int
+    embedding_model: str
+    live_probe_enabled: bool = False
+    stores: list[GatewayVectorStoreConfigItem]
+    supported_provider_types: list[str]
+
+
+class GatewayVectorStorePlatformContext(BaseModel):
+    default_store_id: str
+    default_secret_provider_id: str = ""
+    search_top_k: int
+    embedding_model: str
+
+
+class GatewayMemoryPlatformConfigResponse(BaseModel):
+    memory: GatewayMemoryConfigMemorySettings
+    semantic_cache: GatewayMemoryConfigSemanticCacheSettings
+    vector_stores: GatewayMemoryConfigVectorStoreSettings
+    runtime_config_keys: dict[str, str]
+
+
+class GatewayVectorStoreHealthResponse(BaseModel):
+    store_id: str
+    status: str
+    reachable: bool
+    message: str
+    provider_type: Optional[str] = None
+    connection_host: Optional[str] = None
+    api_key_secret_ref: Optional[str] = None
+    secret_configured: Optional[bool] = None
+    secret_masked_hint: Optional[str] = None
+    secret_backend_type: Optional[str] = None
+    secret_integration_mode: Optional[str] = None
+    cloud_integrated: Optional[bool] = None
+    mcp_server_id: Optional[str] = None
+    mcp_server_configured: Optional[bool] = None
+    live_probed: Optional[bool] = None
+    live_reachable: Optional[bool] = None
+
+
+class GatewayRagDocumentInput(BaseModel):
+    id: Optional[str] = None
+    text: Optional[str] = None
+    content: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class GatewayRagIngestRequest(BaseModel):
+    store_id: str = Field(min_length=1, max_length=128)
+    documents: list[GatewayRagDocumentInput] = Field(min_length=1, max_length=100)
+    metadata: dict = Field(default_factory=dict)
+
+
+class GatewayRagIngestResponse(BaseModel):
+    object: str
+    store_id: str
+    provider_type: str
+    ingested: int
+    document_ids: list[str]
+    upstream: dict = Field(default_factory=dict)
+    trace_id: str
+
+
+class GatewayRagQueryRequest(BaseModel):
+    store_id: str = Field(min_length=1, max_length=128)
+    query: str = Field(min_length=1, max_length=8192)
+    top_k: Optional[int] = Field(default=None, ge=1, le=100)
+
+
+class GatewayRagQueryResponse(BaseModel):
+    object: str
+    store_id: str
+    provider_type: str
+    query: str
+    top_k: int
+    matches: list = Field(default_factory=list)
+    match_count: int
+    upstream: dict = Field(default_factory=dict)
+    trace_id: str
+
+
+class GatewayVectorStoreOpenAIResponse(BaseModel):
+    id: str
+    object: str
+    name: str
+    status: str
+    provider_type: str
+    embedding_dimensions: int
+    similarity_metric: str
+    mcp_server_id: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class GatewayVectorStoreOpenAIListResponse(BaseModel):
+    object: str
+    data: list[GatewayVectorStoreOpenAIResponse]
+
+
+class GatewayVectorStoreRegisterRequest(BaseModel):
+    store_id: str = Field(min_length=1, max_length=128)
+    provider_type: str = Field(default="mcp_bridge")
+    collection_name: str = Field(min_length=1, max_length=256)
+
+
+class GatewayVectorStoreContextResponse(BaseModel):
+    store: GatewayVectorStoreConfigItem
+    platform: GatewayVectorStorePlatformContext
+    health: GatewayVectorStoreHealthResponse
+    secret_integration: dict = Field(default_factory=dict)
+    mcp_bridge: Optional[dict] = None
+    supported_mcp_tools_hint: list[str] = Field(default_factory=list)
+
+
+class OrchestrationFlowCreateRequest(BaseModel):
+    flow_name: str = Field(min_length=1, max_length=255)
+    description: str = ""
+    status: str = "draft"
+    environment: str = "dev"
+    tenant_id: Optional[str] = None
+    trigger_type: str = "manual"
+    trigger_config_json: str = "{}"
+    graph_json: str = '{"nodes":[],"edges":[]}'
+
+
+class OrchestrationFlowUpdateRequest(BaseModel):
+    flow_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    status: Optional[str] = None
+    environment: Optional[str] = None
+    tenant_id: Optional[str] = None
+    trigger_type: Optional[str] = None
+    trigger_config_json: Optional[str] = None
+    graph_json: Optional[str] = None
+
+
+class OrchestrationFlowApproveRequest(BaseModel):
+    decision: str = "approved"
+    approval_ticket_ref: Optional[str] = None
+
+
+class OrchestrationFlowRunRequest(BaseModel):
+    dry_run: bool = False
+
+
+class OrchestrationFlowResponse(BaseModel):
+    flow_id: str
+    flow_name: str
+    description: str
+    status: str
+    environment: str
+    tenant_id: Optional[str] = None
+    trigger_type: str
+    trigger_config_json: str
+    graph_json: str
+    approval_status: str
+    metadata_version: int
+    created_by: str
+    updated_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OrchestrationFlowListResponse(BaseModel):
+    total: int
+    data: list[OrchestrationFlowResponse]
+
+
+class OrchestrationFlowValidateResponse(BaseModel):
+    flow_id: Optional[str] = None
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    node_count: int = 0
+    edge_count: int = 0
+    max_nodes_per_flow: int = 50
+    http_allowlist_configured: bool = False
+    policy: dict = Field(default_factory=dict)
+
+
+class OrchestrationFlowRunResponse(BaseModel):
+    run_id: str
+    flow_id: str
+    status: str
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    trace_id: str
+    step_results_json: str
+    error_summary: Optional[str] = None
+
+
+class OrchestrationFlowRunListResponse(BaseModel):
+    total: int
+    data: list[OrchestrationFlowRunResponse]
+
+
+class OrchestrationNodeTypeItem(BaseModel):
+    type: str
+    label: str
+    description: str
+    required_config_fields: list[str] = Field(default_factory=list)
+    optional_config_fields: list[str] = Field(default_factory=list)
+
+
+class OrchestrationNodeTypesResponse(BaseModel):
+    node_types: list[OrchestrationNodeTypeItem]
+    policy: dict = Field(default_factory=dict)

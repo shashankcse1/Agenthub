@@ -4,6 +4,7 @@
     "agents",
     "playground",
     "benchmark-scan",
+    "orchestration",
     "routing-gateway",
     "runtime-config",
     "providers",
@@ -19,6 +20,7 @@
   ];
 
   const loadedViews = new Set();
+  const loadingViews = new Map();
   let bootstrapPromise = null;
 
   async function fetchView(viewId) {
@@ -51,13 +53,21 @@
     if (loadedViews.has(viewId)) {
       return document.getElementById(viewId);
     }
-    const html = await fetchView(viewId);
-    return mountView(viewId, html);
+    if (loadingViews.has(viewId)) {
+      return loadingViews.get(viewId);
+    }
+    const promise = fetchView(viewId)
+      .then((html) => mountView(viewId, html))
+      .finally(() => {
+        loadingViews.delete(viewId);
+      });
+    loadingViews.set(viewId, promise);
+    return promise;
   }
 
   async function bootstrap(initialView = "overview") {
     if (!bootstrapPromise) {
-      bootstrapPromise = Promise.all(VIEW_IDS.map((viewId) => loadView(viewId))).then(() => {
+      bootstrapPromise = loadView(initialView).then(() => {
         setActiveView(initialView);
       });
     }
@@ -74,11 +84,21 @@
     return loadView(viewId);
   }
 
+  function unloadView(viewId) {
+    if (viewId === "overview") return;
+    const section = document.getElementById(viewId);
+    if (!section) return;
+    section.remove();
+    loadedViews.delete(viewId);
+    delete section.dataset.consoleBound;
+  }
+
   global.ViewLoader = {
     VIEW_IDS,
     bootstrap,
     ensureView,
     loadView,
+    unloadView,
     setActiveView,
     isLoaded(viewId) {
       return loadedViews.has(viewId);

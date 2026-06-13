@@ -60,6 +60,7 @@ class AgentConfig(Base):
     environment: Mapped[str] = mapped_column(String(64), default="dev")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    credential_binding_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -128,18 +129,23 @@ class AuditEvent(Base):
     __table_args__ = (
         Index("ix_audit_events_resource_lookup", "resource_type", "resource_id", "timestamp"),
         Index("ix_audit_events_action_actor_time", "action_type", "actor_id", "timestamp"),
+        Index("ix_audit_events_actor_login_time", "actor_login", "timestamp"),
     )
 
     audit_event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     actor_type: Mapped[str] = mapped_column(String(64), default="user")
     actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_login: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     action_type: Mapped[str] = mapped_column(String(255), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(128), nullable=False)
     resource_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    environment: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
     decision_outcome: Mapped[str] = mapped_column(String(64), default="allow")
     policy_version: Mapped[str] = mapped_column(String(64), default="v1")
+    action_context_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class AuthPolicyConfig(Base):
@@ -191,6 +197,37 @@ class DiscoveryRecord(Base):
     discovery_status: Mapped[str] = mapped_column(String(64), default="discovered")
     last_discovered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     promoted_to_agent_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    merged_into_discovered_agent_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class DiscoveryConnection(Base):
+    __tablename__ = "discovery_connections"
+    __table_args__ = (
+        Index("ix_discovery_connections_source_enabled", "source_id", "enabled"),
+        Index("ix_discovery_connections_next_sync", "enabled", "next_sync_at"),
+        Index("ix_discovery_connections_tenant", "tenant_id", "status"),
+    )
+
+    connection_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    connection_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    next_sync_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_sync_status: Mapped[str] = mapped_column(String(32), default="never")
+    last_sync_error: Mapped[str] = mapped_column(Text, default="")
+    last_discovered_count: Mapped[int] = mapped_column(Integer, default=0)
+    credential_binding_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    secret_provider_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    secret_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    base_url: Mapped[str] = mapped_column(String(1024), default="")
+    connection_config_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
 
 class ModuleDefinition(Base):
@@ -207,6 +244,10 @@ class ModuleDefinition(Base):
     artifact_signature: Mapped[str] = mapped_column(String(255), default="")
     provenance_ref: Mapped[str] = mapped_column(String(1024), default="")
     security_review_ticket: Mapped[str] = mapped_column(String(128), default="")
+    integration_provider: Mapped[str] = mapped_column(String(64), default="")
+    integration_reference: Mapped[str] = mapped_column(String(255), default="")
+    integration_sync_status: Mapped[str] = mapped_column(String(32), default="not_configured")
+    integration_last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     replacement_module_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     migration_guidance: Mapped[str] = mapped_column(Text, default="")
     deprecation_timeline: Mapped[str] = mapped_column(String(255), default="")
@@ -265,6 +306,66 @@ class CachePolicy(Base):
     key_strategy: Mapped[str] = mapped_column(String(128), default="default")
     invalidation_strategy: Mapped[str] = mapped_column(String(128), default="ttl")
     privacy_mode: Mapped[str] = mapped_column(String(64), default="standard")
+    privacy_scope: Mapped[str] = mapped_column(String(64), default="tenant")
+    non_cache_data_classes: Mapped[str] = mapped_column(Text, default="[]")
+    cache_mode: Mapped[str] = mapped_column(String(64), default="exact")
+    similarity_threshold: Mapped[float] = mapped_column(Float, default=0.9)
+    status: Mapped[str] = mapped_column(String(64), default="active")
+
+
+class CacheDecisionEvent(Base):
+    __tablename__ = "cache_decision_events"
+    __table_args__ = (
+        Index("ix_cache_decision_trace_time", "trace_id", "timestamp"),
+        Index("ix_cache_decision_policy_time", "cache_policy_id", "timestamp"),
+        Index("ix_cache_decision_fingerprint_time", "request_fingerprint", "timestamp"),
+    )
+
+    cache_decision_event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_text: Mapped[str] = mapped_column(Text, default="")
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="")
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    route_policy_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    data_class: Mapped[str] = mapped_column(String(64), default="standard")
+    cache_policy_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    cache_policy_scope: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    cache_mode: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    match_score: Mapped[float] = mapped_column(Float, default=0.0)
+    decision: Mapped[str] = mapped_column(String(64), default="miss")
+    explanation: Mapped[str] = mapped_column(Text, default="cache lookup miss")
+    match_provenance: Mapped[str] = mapped_column(Text, default="cache-policy:none")
+    source_request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class GatewayResponseCacheEntry(Base):
+    __tablename__ = "gateway_response_cache_entries"
+    __table_args__ = (
+        Index("ix_gw_cache_entry_fingerprint", "request_fingerprint", "cache_policy_id"),
+        Index("ix_gw_cache_entry_policy_expires", "cache_policy_id", "ttl_expires_at"),
+        Index("ix_gw_cache_entry_tenant_env", "tenant_id", "environment"),
+    )
+
+    cache_entry_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    cache_policy_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_text: Mapped[str] = mapped_column(Text, default="")
+    response_body_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(128), default="")
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    route_policy_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    owner_scope: Mapped[str] = mapped_column(String(128), default="")
+    data_class: Mapped[str] = mapped_column(String(64), default="standard")
+    cache_mode: Mapped[str] = mapped_column(String(64), default="exact")
+    match_score: Mapped[float] = mapped_column(Float, default=1.0)
+    endpoint_family: Mapped[str] = mapped_column(String(64), default="chat.completions")
+    source_request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    ttl_expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     status: Mapped[str] = mapped_column(String(64), default="active")
 
 
@@ -334,9 +435,43 @@ class SupportedModelCatalogEntry(Base):
     context_window_tokens: Mapped[int] = mapped_column(Integer, default=128000)
     status: Mapped[str] = mapped_column(String(64), default="active")
     description: Mapped[str] = mapped_column(Text, default="")
+    recommendation_rationale: Mapped[str] = mapped_column(Text, default="")
+    approval_status: Mapped[str] = mapped_column(String(32), default="pending")
+    approval_ticket_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    metadata_version: Mapped[int] = mapped_column(Integer, default=1)
+    credential_source_class: Mapped[str] = mapped_column(String(32), default="")
+    default_binding_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SupportedModelCatalogRevision(Base):
+    __tablename__ = "supported_model_catalog_revisions"
+    __table_args__ = (
+        Index("ix_supported_model_revisions_model_version", "supported_model_id", "metadata_version"),
+        Index("ix_supported_model_revisions_status_time", "approval_status", "created_at"),
+    )
+
+    revision_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    supported_model_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_type: Mapped[str] = mapped_column(String(32), default="update")
+    provider_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    context_window_tokens: Mapped[int] = mapped_column(Integer, default=128000)
+    status: Mapped[str] = mapped_column(String(64), default="active")
+    description: Mapped[str] = mapped_column(Text, default="")
+    recommendation_rationale: Mapped[str] = mapped_column(Text, default="")
+    approval_status: Mapped[str] = mapped_column(String(32), default="pending")
+    approval_ticket_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    changed_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class DirectoryUser(Base):
@@ -427,6 +562,51 @@ class TenantSupportedModelEntitlement(Base):
     provider_type: Mapped[str] = mapped_column(String(64), nullable=False)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(64), default="active")
+    updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SecretProviderStoredValue(Base):
+    __tablename__ = "secret_provider_stored_values"
+    __table_args__ = (
+        Index("ix_secret_provider_stored_values_provider_ref", "secret_provider_id", "secret_ref", unique=True),
+    )
+
+    secret_provider_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    secret_ref: Mapped[str] = mapped_column(String(255), primary_key=True)
+    value_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProviderCredentialBinding(Base):
+    __tablename__ = "provider_credential_bindings"
+    __table_args__ = (
+        Index(
+            "ix_provider_credential_bindings_scope",
+            "tenant_id",
+            "consumer_type",
+            "consumer_key",
+            "provider_type",
+            "environment",
+            unique=True,
+        ),
+        Index("ix_provider_credential_bindings_tenant_status", "tenant_id", "status"),
+    )
+
+    binding_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    binding_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    consumer_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    consumer_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential_plane: Mapped[str] = mapped_column(String(32), nullable=False)
+    secret_provider_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    secret_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    workload_identity_profile_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    environment: Mapped[str] = mapped_column(String(32), default="dev")
+    status: Mapped[str] = mapped_column(String(32), default="active")
     updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -702,6 +882,107 @@ class PlaygroundRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class PlaygroundRunFeedback(Base):
+    __tablename__ = "playground_run_feedback"
+    __table_args__ = (
+        Index("ix_playground_run_feedback_run_trace", "run_id", "trace_id", unique=True),
+    )
+
+    feedback_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, default=3)
+    quality_score: Mapped[float] = mapped_column(Float, default=0.0)
+    comment: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PlaygroundQualityEscalation(Base):
+    __tablename__ = "playground_quality_escalations"
+    __table_args__ = (
+        Index("ix_playground_quality_escalations_status_due", "status", "due_at"),
+        Index("ix_playground_quality_escalations_feedback", "feedback_id"),
+    )
+
+    escalation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    feedback_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    run_actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="open")
+    severity: Mapped[str] = mapped_column(String(32), default="high")
+    priority_tag: Mapped[str] = mapped_column(String(8), default="p1")
+    assigned_team: Mapped[str] = mapped_column(String(128), default="ai-trust-ops")
+    escalation_channel: Mapped[str] = mapped_column(String(128), default="security-ops")
+    external_ticket_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    escalation_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    sla_target_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    due_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    acknowledged_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    acknowledged_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    resolved_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    resolution_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PlaygroundQualityEscalationNotification(Base):
+    __tablename__ = "playground_quality_escalation_notifications"
+    __table_args__ = (
+        Index("ix_pqen_escalation_created", "escalation_id", "created_at"),
+        Index("ix_pqen_status_created", "delivery_status", "created_at"),
+    )
+
+    notification_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    escalation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    channel: Mapped[str] = mapped_column(String(128), nullable=False)
+    destination: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload_preview: Mapped[str] = mapped_column(Text, default="")
+    receipt_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    delivery_status: Mapped[str] = mapped_column(String(32), default="sent")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PromptRegistryItem(Base):
+    __tablename__ = "prompt_registry_items"
+    __table_args__ = (
+        Index("ix_prompt_registry_items_name", "name", unique=True),
+    )
+
+    prompt_registry_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
+    labels: Mapped[str] = mapped_column(Text, default="[]")
+    latest_version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(64), default="active")
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PromptRegistryVersion(Base):
+    __tablename__ = "prompt_registry_versions"
+    __table_args__ = (
+        Index("ix_prompt_registry_versions_item_version", "prompt_registry_id", "version", unique=True),
+    )
+
+    prompt_registry_version_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    prompt_registry_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
+    change_reason: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class BenchmarkRun(Base):
     __tablename__ = "benchmark_runs"
 
@@ -904,6 +1185,16 @@ class RuntimeConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class RuntimeConfigValidationRule(Base):
+    __tablename__ = "runtime_config_validation_rules"
+
+    rule_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    rule_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="builtin")
+    updated_by: Mapped[str] = mapped_column(String(128), default="system")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class OpenAIResponseRecord(Base):
     __tablename__ = "openai_response_records"
     __table_args__ = (
@@ -929,6 +1220,51 @@ class OpenAIResponseRecord(Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class RealtimeSessionRecord(Base):
+    __tablename__ = "realtime_session_records"
+    __table_args__ = (
+        Index("ix_realtime_session_records_actor_created", "actor_id", "created_at"),
+        Index("ix_realtime_session_records_status_created", "status", "created_at"),
+    )
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    session_label: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    requested_modalities_json: Mapped[str] = mapped_column(Text, default="[]")
+    stream_policy_json: Mapped[str] = mapped_column(Text, default="{}")
+    event_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_event_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    last_event_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class RealtimeSessionEventRecord(Base):
+    __tablename__ = "realtime_session_event_records"
+    __table_args__ = (
+        Index("ix_realtime_session_event_records_session_created", "session_id", "created_at"),
+        Index("ix_realtime_session_event_records_actor_created", "actor_id", "created_at"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    binary_mode: Mapped[str] = mapped_column(String(32), default="metadata_only")
+    event_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(32), default="accepted")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class OpenAIFileRecord(Base):
     __tablename__ = "openai_file_records"
     __table_args__ = (
@@ -948,4 +1284,334 @@ class OpenAIFileRecord(Base):
     metadata_json: Mapped[str] = mapped_column(Text, default="{}")
     status: Mapped[str] = mapped_column(String(32), default="uploaded")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class OpenAIBatchRecord(Base):
+    __tablename__ = "openai_batch_records"
+    __table_args__ = (
+        Index("ix_openai_batch_records_actor_created", "actor_id", "created_at"),
+        Index("ix_openai_batch_records_status_created", "status", "created_at"),
+    )
+
+    batch_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    endpoint_family: Mapped[str] = mapped_column(String(128), default="responses")
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+    completed_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+# ── Browser Security Models ────────────────────────────────────────────────────
+
+class BrowserExtensionSession(Base):
+    """
+    Tracks active browser extension sessions for heartbeat and governance.
+
+    Analytics fields:
+    - browser_name: canonical name from SUPPORTED_BROWSER_TYPES (chrome, firefox,
+      safari, edge, opera, brave, arc, vivaldi, samsung, other, unknown)
+    - browser_version: major.minor string reported by extension
+    - os_name: operating system (windows, macos, linux, ios, android, other)
+    - os_version: OS version string
+    - device_type: desktop / mobile / tablet / unknown
+    - geo_country: ISO 3166-1 alpha-2 country code (always collected when enabled)
+    - geo_region: state/province (collected when geo_detail_level >= region)
+    - geo_city: city name (only when geo_detail_level = city AND operator policy
+      explicitly enables city-level collection; default empty)
+    - ip_hash: HMAC-SHA256 of client IP for correlation without storing raw IP
+      (GDPR/CCPA-safe; default empty if geo collection disabled)
+    - user_agent_digest: SHA-256 of raw UA string for dedup; raw UA never stored
+    """
+    __tablename__ = "browser_extension_sessions"
+    __table_args__ = (
+        Index("ix_browser_ext_sessions_actor_created", "actor_id", "created_at"),
+        Index("ix_browser_ext_sessions_status_created", "status", "created_at"),
+        Index("ix_browser_ext_sessions_browser", "browser_name"),
+        Index("ix_browser_ext_sessions_geo_country", "geo_country"),
+    )
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+
+    # ── Browser / client analytics ───────────────────────────────────────────
+    browser_name: Mapped[str] = mapped_column(String(64), default="unknown")       # chrome|firefox|safari|edge|…
+    browser_version: Mapped[str] = mapped_column(String(64), default="")
+    extension_version: Mapped[str] = mapped_column(String(64), default="")
+    os_name: Mapped[str] = mapped_column(String(64), default="unknown")            # windows|macos|linux|ios|android|other
+    os_version: Mapped[str] = mapped_column(String(64), default="")
+    device_type: Mapped[str] = mapped_column(String(32), default="unknown")        # desktop|mobile|tablet|unknown
+    device_managed: Mapped[bool] = mapped_column(Boolean, default=False)
+    user_agent_digest: Mapped[str] = mapped_column(String(64), default="")         # SHA-256 of UA; raw UA never stored
+
+    # ── Geo / location analytics (coarse; GDPR/CCPA-safe defaults) ───────────
+    geo_country: Mapped[str] = mapped_column(String(8), default="")                # ISO 3166-1 alpha-2, e.g. "US"
+    geo_region: Mapped[str] = mapped_column(String(128), default="")               # state/province; empty unless region+ policy
+    # geo_city intentionally absent — NEVER stored server-side (stripped at ingest)
+    geo_detail_level: Mapped[str] = mapped_column(String(32), default="country")   # country|region|city
+    ip_hash: Mapped[str] = mapped_column(String(64), default="")                   # HMAC-SHA256 of IP; raw IP never stored
+
+    # ── Session state ────────────────────────────────────────────────────────
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class BrowserSecurityEvent(Base):
+    """
+    Inbound telemetry events from browser extensions.
+    Covers: prompt sends, file uploads/downloads, copy/paste, navigation,
+    screenshot, form submit, extension install/update, API calls.
+
+    Analytics fields mirror BrowserExtensionSession for cross-event joins:
+    - browser_name, os_name, device_type for per-browser/OS breakdowns
+    - geo_country for geographic risk analysis
+    - page_url_host: eTLD+1 only (e.g. "chatgpt.com"); full URL never stored
+    """
+    __tablename__ = "browser_security_events"
+    __table_args__ = (
+        Index("ix_browser_sec_events_actor_created", "actor_id", "created_at"),
+        Index("ix_browser_sec_events_decision_created", "decision_outcome", "created_at"),
+        Index("ix_browser_sec_events_domain_created", "destination_domain", "created_at"),
+        Index("ix_browser_sec_events_action_created", "action_type", "created_at"),
+        Index("ix_browser_sec_events_browser_created", "browser_name", "created_at"),
+        Index("ix_browser_sec_events_geo_decision", "geo_country", "decision_outcome"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    ext_session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+
+    # ── Action / policy ──────────────────────────────────────────────────────
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)           # prompt_send|file_upload|…
+    destination_domain: Mapped[str] = mapped_column(String(255), default="")       # eTLD+1 of destination
+    destination_app: Mapped[str] = mapped_column(String(128), default="")          # human-readable app name
+    page_url_host: Mapped[str] = mapped_column(String(255), default="")            # eTLD+1 of the page (not full URL)
+    decision_outcome: Mapped[str] = mapped_column(String(32), nullable=False)      # allow|warn|challenge|deny|mask
+    policy_rule_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    risk_signals: Mapped[str] = mapped_column(Text, default="[]")
+    content_fingerprint: Mapped[str] = mapped_column(String(128), default="")      # hash of content, never raw text
+    data_class: Mapped[str] = mapped_column(String(64), default="standard")        # standard|pii|credentials|regulated
+
+    # ── Browser / client analytics ───────────────────────────────────────────
+    browser_name: Mapped[str] = mapped_column(String(64), default="unknown")       # chrome|firefox|safari|edge|…
+    browser_version: Mapped[str] = mapped_column(String(64), default="")
+    os_name: Mapped[str] = mapped_column(String(64), default="unknown")
+    device_type: Mapped[str] = mapped_column(String(32), default="unknown")
+
+    # ── Geo analytics (coarse; privacy-safe) ─────────────────────────────────
+    geo_country: Mapped[str] = mapped_column(String(8), default="")                # ISO 3166-1 alpha-2
+    geo_region: Mapped[str] = mapped_column(String(128), default="")               # empty unless region+ policy
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class BrowserShadowAiApp(Base):
+    """Inventory of detected shadow AI apps across the organization."""
+    __tablename__ = "browser_shadow_ai_apps"
+    __table_args__ = (
+        Index("ix_browser_shadow_ai_domain", "domain", unique=True),
+        Index("ix_browser_shadow_ai_status", "status"),
+    )
+
+    app_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    domain: Mapped[str] = mapped_column(String(255), nullable=False)
+    app_name: Mapped[str] = mapped_column(String(255), default="")
+    category: Mapped[str] = mapped_column(String(128), default="generative-ai")
+    risk_score: Mapped[int] = mapped_column(Integer, default=50)
+    status: Mapped[str] = mapped_column(String(32), default="unsanctioned")
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    active_user_count: Mapped[int] = mapped_column(Integer, default=0)
+    data_upload_events: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class BrowserRiskPolicy(Base):
+    """
+    Operator-configured browser security policies (allow/warn/challenge/deny/mask rules).
+
+    Analytics / collection controls:
+    - geo_collection_enabled: master switch for collecting geo on sessions/events
+    - geo_detail_level: country (default) | region | city
+      City-level requires explicit operator decision; GDPR/CCPA notice must be
+      confirmed before enabling.
+    - analytics_retention_days: how long raw event rows are kept before purge;
+      0 means indefinite (operator must align with jurisdiction requirements)
+    """
+    __tablename__ = "browser_risk_policies"
+    __table_args__ = (
+        Index("ix_browser_risk_policy_enabled", "enabled"),
+        Index("ix_browser_risk_policy_scope", "scope_type"),
+        Index("ix_browser_risk_policy_env", "environment"),
+    )
+
+    policy_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    scope_type: Mapped[str] = mapped_column(String(64), default="global")          # global|tenant|team|user
+    scope_value: Mapped[str] = mapped_column(String(255), default="")
+    action_type_pattern: Mapped[str] = mapped_column(String(128), default="*")     # * | prompt_send | file_upload | …
+    domain_pattern: Mapped[str] = mapped_column(String(255), default="*")          # * | *.openai.com | chatgpt.com
+    data_class_filter: Mapped[str] = mapped_column(String(128), default="*")       # * | pii | credentials | regulated
+    decision_mode: Mapped[str] = mapped_column(String(32), default="warn")         # allow|warn|challenge|deny|mask
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+
+    # ── Analytics / geo collection controls ─────────────────────────────────
+    # CISO note: geo_collection_enabled defaults False. Enable only after
+    # confirming jurisdiction notice requirements (GDPR Art. 13, CCPA § 1798.100).
+    geo_collection_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    geo_detail_level: Mapped[str] = mapped_column(String(32), default="country")   # country|region|city
+    analytics_retention_days: Mapped[int] = mapped_column(Integer, default=90)     # 0 = indefinite
+
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BrowserAnalyticsSummary(Base):
+    """
+    Pre-aggregated daily analytics snapshots per tenant/environment.
+    Populated by a scheduled job or on-demand via the analytics endpoint.
+    Avoids re-scanning the full events table for dashboard queries.
+
+    All counts are per-day buckets. No raw actor_id or content is stored here.
+    """
+    __tablename__ = "browser_analytics_summaries"
+    __table_args__ = (
+        Index("ix_browser_analytics_date_env", "bucket_date", "environment"),
+        Index("ix_browser_analytics_browser", "browser_name"),
+        Index("ix_browser_analytics_geo", "geo_country"),
+    )
+
+    summary_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    bucket_date: Mapped[str] = mapped_column(String(16), nullable=False)           # YYYY-MM-DD
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    # ── Browser / client breakdowns ──────────────────────────────────────────
+    browser_name: Mapped[str] = mapped_column(String(64), default="all")           # "all" = org-wide rollup
+    os_name: Mapped[str] = mapped_column(String(64), default="all")
+    device_type: Mapped[str] = mapped_column(String(32), default="all")
+
+    # ── Geo breakdowns ───────────────────────────────────────────────────────
+    geo_country: Mapped[str] = mapped_column(String(8), default="")               # empty = all countries
+    geo_region: Mapped[str] = mapped_column(String(128), default="")
+
+    # ── Aggregated metrics ────────────────────────────────────────────────────
+    total_events: Mapped[int] = mapped_column(Integer, default=0)
+    allow_count: Mapped[int] = mapped_column(Integer, default=0)
+    warn_count: Mapped[int] = mapped_column(Integer, default=0)
+    challenge_count: Mapped[int] = mapped_column(Integer, default=0)
+    deny_count: Mapped[int] = mapped_column(Integer, default=0)
+    mask_count: Mapped[int] = mapped_column(Integer, default=0)
+    unique_actors: Mapped[int] = mapped_column(Integer, default=0)
+    unique_domains: Mapped[int] = mapped_column(Integer, default=0)
+    shadow_ai_hits: Mapped[int] = mapped_column(Integer, default=0)
+    pii_events: Mapped[int] = mapped_column(Integer, default=0)
+    credentials_events: Mapped[int] = mapped_column(Integer, default=0)
+
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class OperatorFeedback(Base):
+    __tablename__ = "operator_feedback"
+    __table_args__ = (
+        Index("ix_operator_feedback_status_created", "status", "created_at"),
+        Index("ix_operator_feedback_category_view", "category", "context_view"),
+    )
+
+    feedback_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, default="other")
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    context_view: Mapped[str] = mapped_column(String(64), nullable=False, default="overview")
+    context_action: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    client_latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    incident_ref: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
+    action_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    acted_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    acted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OrchestrationFlowDefinition(Base):
+    __tablename__ = "orchestration_flow_definitions"
+    __table_args__ = (
+        Index("ix_orchestration_flows_env_status", "environment", "status"),
+        Index("ix_orchestration_flows_tenant_env", "tenant_id", "environment"),
+    )
+
+    flow_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    flow_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    environment: Mapped[str] = mapped_column(String(32), default="dev")
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    trigger_type: Mapped[str] = mapped_column(String(32), default="manual")
+    trigger_config_json: Mapped[str] = mapped_column(Text, default="{}")
+    graph_json: Mapped[str] = mapped_column(Text, default='{"nodes":[],"edges":[]}')
+    approval_status: Mapped[str] = mapped_column(String(32), default="pending")
+    metadata_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OrchestrationFlowRun(Base):
+    __tablename__ = "orchestration_flow_runs"
+    __table_args__ = (Index("ix_orchestration_flow_runs_flow_started", "flow_id", "started_at"),)
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    flow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="running")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    step_results_json: Mapped[str] = mapped_column(Text, default="[]")
+    error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class AgentMemoryRecord(Base):
+    __tablename__ = "agent_memory_records"
+    __table_args__ = (
+        Index("ix_agent_memory_records_tier_scope_created", "memory_tier", "scope_type", "scope_id", "created_at"),
+    )
+
+    memory_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    memory_tier: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    label: Mapped[str] = mapped_column(String(256), default="")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

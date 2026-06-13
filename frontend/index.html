@@ -45,6 +45,7 @@
               <button class="nav-item" data-view="playground">Playground</button>
               <button class="nav-item" data-view="benchmark-scan">Benchmark & Scan</button>
               <button class="nav-item" data-view="routing-gateway">Routing & Gateway</button>
+              <button class="nav-item" data-view="orchestration">Flow Orchestration</button>
             </div>
           </div>
 
@@ -66,12 +67,15 @@
           <h2>Quick Find</h2>
           <label>
             Search views and workflows
-            <input id="sidebarGlobalSearchInput" type="search" placeholder="e.g. playground, routing, compliance" autocomplete="off" />
+            <div class="global-search-inline">
+              <input id="sidebarGlobalSearchInput" type="search" placeholder="e.g. playground, routing, compliance" autocomplete="off" />
+              <button id="sidebarGlobalSearchButton" class="ghost global-search-btn" type="button">Search</button>
+            </div>
           </label>
           <div id="sidebarGlobalSearchResults" class="global-search-results sidebar-global-results" hidden></div>
         </section>
 
-        <details class="panel settings-panel" open>
+        <details class="panel settings-panel">
           <summary>Session Context</summary>
           <div class="settings-panel-body session-compact">
             <label>
@@ -187,7 +191,10 @@
           </div>
           <div class="header-right-rail">
             <div class="global-search" role="search">
-              <input id="globalSearchInput" type="search" placeholder="Search views, cards, and forms" aria-label="Global search" autocomplete="off" />
+              <div class="global-search-inline">
+                <input id="globalSearchInput" type="search" placeholder="Search views, cards, and forms" aria-label="Global search" autocomplete="off" />
+                <button id="globalSearchButton" class="ghost global-search-btn" type="button">Search</button>
+              </div>
               <div id="globalSearchResults" class="global-search-results" hidden></div>
             </div>
             <div class="header-actions header-control-box">
@@ -230,12 +237,53 @@
         <div id="prodGuardBanner" class="guard-banner" hidden>
           Production profile is active. Write actions require explicit confirmation.
         </div>
+        <div id="platformMaintenanceBanner" class="guard-banner platform-maintenance-banner" role="alert" aria-live="assertive" hidden></div>
+        <div id="platformDowntimeBanner" class="error-banner platform-downtime-banner" role="alert" aria-live="assertive" hidden></div>
+        <div id="platformSlowPerformanceBanner" class="guard-banner platform-perf-banner" role="status" aria-live="polite" hidden>
+          <span class="platform-perf-banner-text"></span>
+          <button type="button" class="ghost platform-perf-feedback-btn" id="operatorFeedbackCapturePerf">Report slowness</button>
+        </div>
         <div id="globalErrorBanner" class="error-banner" role="alert" aria-live="assertive" hidden>
           <p id="globalErrorMessage">Service incident detected.</p>
           <a id="incidentGuidanceLink" href="./500.html">Open Incident Guidance</a>
         </div>
 
         <div id="viewsRoot" class="views-root" aria-live="polite"></div>
+
+        <aside id="operatorFeedbackPanel" class="operator-feedback-panel card" hidden aria-label="Operator feedback">
+          <div class="card-head">
+            <h3>Send Feedback</h3>
+            <button type="button" class="ghost" id="operatorFeedbackClose">Close</button>
+          </div>
+          <form id="operatorFeedbackForm" class="form-grid">
+            <label>Category
+              <select name="category" required>
+                <option value="performance">Performance</option>
+                <option value="ux">UX</option>
+                <option value="bug">Bug</option>
+                <option value="feature">Feature</option>
+                <option value="incident">Incident</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label>Severity
+              <select name="severity" required>
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label>Console View<input name="context_view" placeholder="overview" /></label>
+            <label>Action Context<input name="context_action" placeholder="load_overview" /></label>
+            <label>Observed Latency (ms)<input name="client_latency_ms" type="number" min="0" step="1" placeholder="optional" /></label>
+            <label class="wide-field">Comment<textarea name="comment" rows="4" required placeholder="Describe the issue or suggestion"></textarea></label>
+            <div class="inline-actions wide-field">
+              <button type="submit" class="primary">Submit Feedback</button>
+            </div>
+          </form>
+          <p id="operatorFeedbackResult" class="mono" aria-live="polite"></p>
+        </aside>
+        <button type="button" class="operator-feedback-fab" id="operatorFeedbackFab" aria-label="Open feedback form">Feedback</button>
 
         <footer class="public-footer">
           <p>AgentHub Public Console</p>
@@ -245,8 +293,17 @@
       </main>
     </div>
 
+    <script src="./js/constants.js"></script>
+    <script src="./js/api-cache.js"></script>
+    <script src="./js/api-client.js"></script>
+    <script src="./js/ui-coverage.js"></script>
+    <script src="./js/platform-status.js"></script>
+    <script src="./js/operator-feedback.js"></script>
     <script src="./js/view-loader.js"></script>
     <script src="./js/ui-kit.js"></script>
-    <script src="./app.js?v=20260610-3"></script>
+    <script src="./js/view-search.js"></script>
+    <script src="./js/table-search.js"></script>
+    <script src="./js/orchestration-registry.js"></script>
+    <script src="./app.js?v=20260612-1"></script>
   </body>
 </html>

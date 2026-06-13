@@ -62,6 +62,8 @@ DEFAULT_WILDCARD_RULES: dict[tuple[str, str], RateLimitRule] = {
     ("POST", "/auth/basic/config/"): RateLimitRule(max_requests=10, window_seconds=300),
     ("POST", "/keys/"): RateLimitRule(max_requests=20, window_seconds=300),
     ("POST", "/route-drafts/"): RateLimitRule(max_requests=30, window_seconds=300),
+    ("POST", "/orchestration/flows/"): RateLimitRule(max_requests=30, window_seconds=300),
+    ("POST", "/orchestration/flows"): RateLimitRule(max_requests=30, window_seconds=300),
 }
 
 
