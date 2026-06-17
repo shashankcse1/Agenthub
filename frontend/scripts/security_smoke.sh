@@ -51,7 +51,9 @@ pass "innerHTML within budget ($INNERHTML_COUNT/$INNERHTML_BUDGET)"
 
 grep -F 'class="skip-link"' "$INDEX_FILE" >/dev/null || fail "Skip link missing in index.html"
 grep -F ':focus-visible' "$ROOT_DIR/styles.css" >/dev/null || fail "Focus-visible style missing in styles.css"
-grep -F 'class="sr-only"' "$INDEX_FILE" >/dev/null || fail "Screen-reader table captions missing"
+grep -F 'class="sr-only"' "$INDEX_FILE" >/dev/null \
+  || grep -r -F 'class="sr-only"' "$ROOT_DIR/views" --include='*.html' >/dev/null \
+  || fail "Screen-reader table captions missing"
 pass "Accessibility baseline elements are present"
 
 grep -F "function parseApiBaseOrThrow" "$APP_FILE" >/dev/null || fail "API base validation helper missing"
