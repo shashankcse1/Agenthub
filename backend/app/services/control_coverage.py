@@ -31,6 +31,9 @@ ROUTE_CONTROL_MAP: list[tuple[str, list[str]]] = [
     ("/runtime-config", ["CTRL-AUTHZ-ROLE", "CTRL-AUDIT-IMMUTABLE"]),
     ("/agent-configs", ["CTRL-AUTHZ-ROLE", "CTRL-AUDIT-IMMUTABLE"]),
     ("/browser", ["CTRL-AUTHZ-ROLE", "CTRL-AUDIT-IMMUTABLE"]),
+    ("/orchestration", ["CTRL-AUTHZ-ROLE", "CTRL-AUDIT-IMMUTABLE"]),
+    ("/platform", ["CTRL-AUTHZ-ROLE", "CTRL-AUDIT-IMMUTABLE"]),
+    ("/rag", ["CTRL-AUTHZ-ROLE", "CTRL-AUDIT-IMMUTABLE"]),
 ]
 
 EXCLUDED_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json", "/health"}

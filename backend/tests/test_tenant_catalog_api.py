@@ -38,7 +38,7 @@ def test_tenant_catalog_crud_and_provider_list_enrichment():
     assert created.status_code == 200
     assert created.json()["tenant_name"] == "Payments Platform"
 
-    listed = client.get(f"/providers/tenants?status=active&tenant_type=enterprise&limit=20", headers=auditor_headers)
+    listed = client.get(f"/providers/tenants?status=active&tenant_type=enterprise&limit=500", headers=auditor_headers)
     assert listed.status_code == 200
     rows = listed.json()
     assert any(row["tenant_id"] == tenant_id for row in rows)

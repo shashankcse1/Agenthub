@@ -602,6 +602,7 @@ def _seed_vector_stores() -> None:
         else:
             row.config_value = stores_json
         db.commit()
+        invalidate_runtime_config_cache("gateway.vector_stores_json")
     finally:
         db.close()
 

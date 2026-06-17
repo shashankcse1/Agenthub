@@ -369,11 +369,13 @@ def evaluate_pre_inference_cache(
         )
 
     now = datetime.utcnow()
+    normalized_environment = str(environment or "dev").strip().lower() or "dev"
     base_query = (
         db.query(GatewayResponseCacheEntry)
         .filter(GatewayResponseCacheEntry.status == "active")
         .filter(GatewayResponseCacheEntry.cache_policy_id == matched_policy.cache_policy_id)
         .filter(GatewayResponseCacheEntry.endpoint_family == endpoint_family)
+        .filter(GatewayResponseCacheEntry.environment == normalized_environment)
         .filter(GatewayResponseCacheEntry.ttl_expires_at > now)
     )
     for scope_filter in _build_scope_filters(db, policy=matched_policy, tenant_id=tenant_id, owner_scope=owner_scope):

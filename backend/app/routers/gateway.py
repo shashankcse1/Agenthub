@@ -2388,6 +2388,61 @@ def _resolve_responses_tool_selection(tools_raw: object, tool_choice_raw: object
     raise HTTPException(status_code=422, detail="tool_choice must be a string or object")
 
 
+def _extract_openai_response_output_fields(body: dict) -> tuple[list, str, int, int, int]:
+    output_items = body.get("output") if isinstance(body.get("output"), list) else []
+    output_text = str(body.get("output_text") or "").strip()
+    if not output_text and output_items:
+        text_parts: list[str] = []
+        for item in output_items:
+            if not isinstance(item, dict):
+                continue
+            for content in item.get("content") if isinstance(item.get("content"), list) else []:
+                if isinstance(content, dict) and str(content.get("type") or "") in {"output_text", "text"}:
+                    text_parts.append(str(content.get("text") or ""))
+        output_text = "".join(text_parts).strip()
+    usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    input_tokens = int(usage.get("input_tokens") or 0)
+    output_tokens = int(usage.get("output_tokens") or 0)
+    total_tokens = int(usage.get("total_tokens") or input_tokens + output_tokens)
+    return output_items, output_text, input_tokens, output_tokens, total_tokens
+
+
+def _persist_openai_response_record(
+    db: Session,
+    *,
+    response_id: str,
+    request_id: str,
+    trace_id: str,
+    actor_id: str,
+    environment: str,
+    model_name: str,
+    response_body: dict,
+    selected_provider_id: str | None = None,
+    route_policy_id: str | None = None,
+) -> None:
+    output_items, output_text, input_tokens, output_tokens, total_tokens = _extract_openai_response_output_fields(
+        response_body
+    )
+    db.add(
+        OpenAIResponseRecord(
+            response_id=response_id,
+            request_id=request_id,
+            trace_id=trace_id,
+            actor_id=actor_id,
+            environment=environment,
+            model_name=model_name,
+            output_payload=json.dumps(output_items, separators=(",", ":")),
+            output_text=output_text,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            selected_provider_id=selected_provider_id,
+            route_policy_id=route_policy_id,
+            status="active",
+        )
+    )
+
+
 def _serialize_openai_response_record(record: OpenAIResponseRecord) -> dict[str, object]:
     try:
         output_payload = json.loads(record.output_payload or "[]")
@@ -9171,6 +9226,7 @@ def gateway_openai_responses_create(
                 selected_provider_id=selected_provider_id,
             )
             refreshed = dict(cache_pre.cached_response)
+            refreshed["id"] = response_id
             refreshed["request_id"] = request_id
             refreshed["trace_id"] = trace_id
             refreshed["cache_short_circuit"] = True
@@ -9178,12 +9234,24 @@ def gateway_openai_responses_create(
             refreshed["risk_reasons"] = risk_reasons
             refreshed["selected_provider_id"] = selected_provider_id
             refreshed["route_policy_id"] = selected_route_policy_id
+            _persist_openai_response_record(
+                db,
+                response_id=response_id,
+                request_id=request_id,
+                trace_id=trace_id,
+                actor_id=ctx.actor_id,
+                environment=environment,
+                model_name=model_name,
+                response_body=refreshed,
+                selected_provider_id=selected_provider_id,
+                route_policy_id=selected_route_policy_id,
+            )
             create_audit_event(
                 db,
                 actor_id=ctx.actor_id,
                 action_type="gateway.responses.create",
                 resource_type="gateway_inference_response",
-                resource_id=str(refreshed.get("id") or response_id),
+                resource_id=response_id,
                 trace_id=trace_id,
             )
             db.commit()

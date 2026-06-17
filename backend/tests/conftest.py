@@ -72,3 +72,31 @@ def _gateway_inference_test_isolation(monkeypatch):
     ):
         monkeypatch.delenv(env_key, raising=False)
     monkeypatch.setenv("GATEWAY_INFERENCE_SIMULATION", "true")
+
+
+@pytest.fixture(autouse=True)
+def _reset_gateway_cache_short_circuit():
+    from app.database import SessionLocal
+    from app.models import RuntimeConfig
+    from app.runtime_constants import RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED
+    from app.services.runtime_config import invalidate_runtime_config_cache
+
+    db = SessionLocal()
+    try:
+        row = db.query(RuntimeConfig).filter_by(
+            config_key=RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED
+        ).first()
+        if row is None:
+            db.add(
+                RuntimeConfig(
+                    config_key=RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED,
+                    config_value="false",
+                )
+            )
+        else:
+            row.config_value = "false"
+        db.commit()
+        invalidate_runtime_config_cache(RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED)
+    finally:
+        db.close()
+    yield

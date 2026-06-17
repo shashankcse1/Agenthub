@@ -15,9 +15,22 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(inspector: sa.Inspector, table_name: str, column_name: str) -> bool:
+    return any(col.get("name") == column_name for col in inspector.get_columns(table_name))
+
+
+def _index_exists(inspector: sa.Inspector, table_name: str, index_name: str) -> bool:
+    return any(idx.get("name") == index_name for idx in inspector.get_indexes(table_name))
+
+
 def upgrade() -> None:
-    op.add_column("cost_events", sa.Column("request_tag", sa.String(length=64), nullable=True))
-    op.create_index("ix_cost_events_request_tag", "cost_events", ["request_tag"], unique=False)
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
+    if not _column_exists(inspector, "cost_events", "request_tag"):
+        op.add_column("cost_events", sa.Column("request_tag", sa.String(length=64), nullable=True))
+    if not _index_exists(inspector, "cost_events", "ix_cost_events_request_tag"):
+        op.create_index("ix_cost_events_request_tag", "cost_events", ["request_tag"], unique=False)
 
 
 def downgrade() -> None:

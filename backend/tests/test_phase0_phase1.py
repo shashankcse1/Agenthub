@@ -4570,13 +4570,15 @@ def test_gateway_cursor_token_external_provider_mode_rejects_inactive_provider()
 
 
 def test_gateway_openai_responses_applies_gateway_system_rules():
+    agent_suffix = uuid4().hex[:8]
+    agent_id = f"agent-ops-{agent_suffix}"
     set_rules = client.put(
         "/gateway/system-rules",
         json={
             "rules": [
                 {"rule_text": "Always provide concise answers", "scope_type": "global"},
                 {"rule_text": "Never output credentials", "scope_type": "user", "scope_id": "ops-user-1"},
-                {"rule_text": "Use agent-specific policy", "scope_type": "agent", "scope_id": "agent-ops-1"},
+                {"rule_text": "Use agent-specific policy", "scope_type": "agent", "scope_id": agent_id},
                 {"rule_text": "Apply team guardrails", "scope_type": "team", "scope_id": "platform-security"},
                 {"rule_text": "Apply group guardrails", "scope_type": "group", "scope_id": "soc-operators"},
             ]
@@ -4591,7 +4593,7 @@ def test_gateway_openai_responses_applies_gateway_system_rules():
             json={
                 "model": "gpt-4o-mini",
                 "input": "Summarize gateway posture.",
-                "agent_id": "agent-ops-1",
+                "agent_id": agent_id,
                 "owner_scope": "team:platform-security",
                 "stream": False,
                 "environment": "dev",
@@ -4611,7 +4613,7 @@ def test_gateway_openai_responses_applies_gateway_system_rules():
             json={
                 "model": "gpt-4o-mini",
                 "input": "Summarize gateway posture for group.",
-                "agent_id": "agent-ops-1",
+                "agent_id": agent_id,
                 "owner_scope": "group:soc-operators",
                 "stream": False,
                 "environment": "dev",
