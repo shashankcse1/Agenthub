@@ -12,6 +12,7 @@ on:
       - "frontend/security-checklist.md"
       - "frontend/accessibility-conformance-wcag22aa.md"
       - "frontend/scripts/security_smoke.sh"
+      - "frontend/scripts/console_surface_smoke.sh"
       - "frontend/scripts/openai_gateway_ops_smoke.sh"
       - "scripts/full_stack_expert_review.sh"
       - "scripts/release_evidence_bundle.sh"
@@ -27,6 +28,7 @@ on:
       - "frontend/security-checklist.md"
       - "frontend/accessibility-conformance-wcag22aa.md"
       - "frontend/scripts/security_smoke.sh"
+      - "frontend/scripts/console_surface_smoke.sh"
       - "frontend/scripts/openai_gateway_ops_smoke.sh"
       - "scripts/full_stack_expert_review.sh"
       - "scripts/release_evidence_bundle.sh"
@@ -98,6 +100,9 @@ jobs:
 
       - name: Run frontend security smoke checks
         run: bash ../frontend/scripts/security_smoke.sh
+
+      - name: Run frontend console surface smoke checks
+        run: bash ../frontend/scripts/console_surface_smoke.sh
 
       - name: Run frontend OpenAI gateway wiring smoke checks
         run: bash ../frontend/scripts/openai_gateway_ops_smoke.sh | tee /tmp/openai-gateway-wiring-smoke.log

@@ -4719,6 +4719,27 @@ function appendTableCellBadge(tr, value, tone = "idle") {
   tr.appendChild(td);
 }
 
+function appendFlowPlatformStat(parent, value, label) {
+  const article = document.createElement("article");
+  article.className = "flow-platform-stat";
+  const strong = document.createElement("strong");
+  strong.textContent = String(value ?? 0);
+  const span = document.createElement("span");
+  span.textContent = label;
+  article.append(strong, span);
+  parent.appendChild(article);
+}
+
+function renderOrchestrationPlatformSummaryGrid(panel, summary) {
+  if (!panel) return;
+  panel.textContent = "";
+  appendFlowPlatformStat(panel, summary?.flow_count, "Flows");
+  appendFlowPlatformStat(panel, summary?.pending_prod_approvals, "Prod approvals pending");
+  appendFlowPlatformStat(panel, summary?.certifications_due, "Certifications due");
+  appendFlowPlatformStat(panel, summary?.active_jit_grants, "Active JIT grants");
+  appendFlowPlatformStat(panel, summary?.runs_awaiting_approval, "Runs awaiting approval");
+}
+
 function outcomeTone(outcome) {
   const normalized = String(outcome || "").trim().toLowerCase();
   if (normalized === "allow") return "success";
@@ -15026,14 +15047,13 @@ async function loadOverviewOrchestrationSummary() {
   if (!panel) return;
   try {
     const summary = await api("/orchestration/summary");
-    panel.innerHTML = `
-      <article class="flow-platform-stat"><strong>${safeText(summary.flow_count ?? 0)}</strong><span>Flows</span></article>
-      <article class="flow-platform-stat"><strong>${safeText(summary.pending_prod_approvals ?? 0)}</strong><span>Prod approvals pending</span></article>
-      <article class="flow-platform-stat"><strong>${safeText(summary.certifications_due ?? 0)}</strong><span>Certifications due</span></article>
-      <article class="flow-platform-stat"><strong>${safeText(summary.active_jit_grants ?? 0)}</strong><span>Active JIT grants</span></article>
-      <article class="flow-platform-stat"><strong>${safeText(summary.runs_awaiting_approval ?? 0)}</strong><span>Runs awaiting approval</span></article>`;
+    renderOrchestrationPlatformSummaryGrid(panel, summary);
   } catch (err) {
-    panel.innerHTML = `<p class="mono">Orchestration summary unavailable: ${safeText(err.message)}</p>`;
+    panel.textContent = "";
+    const message = document.createElement("p");
+    message.className = "mono";
+    message.textContent = `Orchestration summary unavailable: ${err.message}`;
+    panel.appendChild(message);
   }
 }
 
@@ -33691,14 +33711,13 @@ async function loadOrchestrationPlatformSummaryCountsOnly() {
   if (!panel) return;
   try {
     const summary = await api("/orchestration/summary");
-    panel.innerHTML = `
-      <article class="flow-platform-stat"><strong>${safeText(summary.flow_count ?? 0)}</strong><span>Flows</span></article>
-      <article class="flow-platform-stat"><strong>${safeText(summary.pending_prod_approvals ?? 0)}</strong><span>Prod approvals pending</span></article>
-      <article class="flow-platform-stat"><strong>${safeText(summary.certifications_due ?? 0)}</strong><span>Certifications due</span></article>
-      <article class="flow-platform-stat"><strong>${safeText(summary.active_jit_grants ?? 0)}</strong><span>Active JIT grants</span></article>
-      <article class="flow-platform-stat"><strong>${safeText(summary.runs_awaiting_approval ?? 0)}</strong><span>Runs awaiting approval</span></article>`;
+    renderOrchestrationPlatformSummaryGrid(panel, summary);
   } catch (error) {
-    panel.innerHTML = `<p class="flow-iga-empty">Platform summary unavailable: ${safeText(error.message)}</p>`;
+    panel.textContent = "";
+    const message = document.createElement("p");
+    message.className = "flow-iga-empty";
+    message.textContent = `Platform summary unavailable: ${error.message}`;
+    panel.appendChild(message);
   }
 }
 
