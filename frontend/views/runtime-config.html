@@ -1,68 +1,230 @@
-<section id="runtime-config" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Runtime Configuration Studio</h3>
-              <button id="resetRuntimeConfigForm" class="ghost" type="button">Reset Form</button>
-            </div>
-            <p class="mono">These settings are stored in the database through the runtime-config API and are used for non-startup defaults like gateway and workload identity tuning.</p>
-            <form id="runtimeConfigForm" class="form-grid">
-              <label>Config Key<input name="config_key" required placeholder="gateway.default_global_timeout_ms" /></label>
-              <label>Config Value<input name="config_value" required placeholder="4500" /></label>
-              <label class="wide-field">Description<input name="description" placeholder="Optional operator note" /></label>
-              <button type="submit" class="primary">Save Config</button>
-            </form>
-            <p id="runtimeConfigValidationHint" class="mono"></p>
-            <p id="runtimeConfigResult" class="mono"></p>
-            <div class="card-head config-actions">
-              <h4>Recommended Presets</h4>
-              <div class="inline-actions" id="runtimeConfigPresets"></div>
-            </div>
-            <div class="card-head config-actions">
-              <h4>Validation Rules</h4>
-              <div class="inline-actions">
-                <label class="rules-filter">Search<input id="runtimeValidationSearch" type="text" placeholder="Filter by key, pattern, or type" /></label>
-                <button id="refreshRuntimeValidationRules" class="ghost" type="button">Reload Rules</button>
-                <button id="clearRuntimeValidationStatus" class="ghost" type="button">Clear Status</button>
-              </div>
-            </div>
-            <p id="runtimeValidationContext" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Runtime config validation rules exposed by the backend</caption>
-                <thead>
-                  <tr>
-                    <th>Key or Pattern</th>
-                    <th>Type</th>
-                    <th>Constraints</th>
-                    <th>Example</th>
-                    <th>Actions</th>
-                    <th>Last Check</th>
-                  </tr>
-                </thead>
-                <tbody id="runtimeValidationRulesTable"></tbody>
-              </table>
-            </div>
-            <div class="card-head config-actions">
-              <h4>Saved Runtime Configs</h4>
-              <div class="inline-actions">
-                <button id="loadRuntimeConfigs" class="ghost" type="button">Refresh</button>
-              </div>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Database-backed runtime configurations</caption>
-                <thead>
-                  <tr>
-                    <th>Key</th>
-                    <th>Value</th>
-                    <th>Description</th>
-                    <th>Updated By</th>
-                    <th>Updated At</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="runtimeConfigTable"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+<section id="runtime-config" class="view runtime-config-view">
+  <article class="card runtime-config-hero">
+    <div class="card-head">
+      <h3>Runtime Configuration</h3>
+      <button id="resetRuntimeConfigForm" class="ghost" type="button">Reset Form</button>
+    </div>
+    <p class="card-lead">Store operator-tunable defaults in the database (gateway timeouts, cost JSON, rate limits, UI flags). You edit <strong>config values</strong> here. <strong>Validation rules</strong> are enforced by the backend and shown read-only in the Rule Catalog.</p>
+    <p id="runtimeConfigConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Browse presets or saved configs to begin.</p>
+    <div class="view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Runtime Config
+          <input class="view-page-search-input" data-view-search-input type="search" placeholder="Filter config tables and sections" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Runtime configuration sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-runtime-console-tab="editor">Editor</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-runtime-console-tab="presets">Presets</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-runtime-console-tab="validation">Rule Catalog</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-runtime-console-tab="saved">Saved Configs</button>
+    </div>
+  </article>
+
+  <div data-runtime-console-panel="editor" class="runtime-console-panel active">
+    <article class="card">
+      <div class="card-head">
+        <h4>Edit Config</h4>
+      </div>
+      <div class="runtime-workflow-steps" aria-label="Runtime config editor workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Choose key</strong>
+          <span>Type a supported key or load a preset / saved config.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Validate draft</strong>
+          <span>Run Validate to check the value against backend rules before save.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Save</strong>
+          <span>Save writes to the database. Server validates again on PUT.</span>
+        </div>
+      </div>
+      <details class="help-details runtime-help-details">
+        <summary>What is validation?</summary>
+        <p class="profile-note">Validation checks whether a <em>config value</em> matches server rules (integer ranges, JSON shape, booleans). It does not let you change those rules in the UI. Use <strong>Validate</strong> to test your draft. Use <strong>Rule Catalog</strong> to browse allowed keys and examples. To add or change rules, update backend code in <code>backend/app/routers/runtime_config.py</code> and ship a backend release.</p>
+      </details>
+      <div id="runtimeConfigEditorMeta" class="runtime-editor-meta" aria-live="polite"></div>
+      <form id="runtimeConfigForm" class="runtime-config-form">
+        <label class="runtime-field-key">
+          Config Key
+          <input name="config_key" required placeholder="gateway.default_global_timeout_ms" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="runtime-field-description">
+          Description
+          <input name="description" placeholder="Optional operator note" />
+        </label>
+        <label class="runtime-field-value">
+          Config Value
+          <textarea name="config_value" required rows="4" placeholder="4500 or JSON object" spellcheck="false"></textarea>
+        </label>
+        <div class="runtime-validation-panel">
+          <div class="runtime-validation-panel-head">
+            <span id="runtimeConfigValidationBadge" class="runtime-validation-badge pending" role="status" aria-label="Validation pending">
+              <span class="runtime-validation-badge-icon" aria-hidden="true"></span>
+              <span class="runtime-validation-badge-label">Pending</span>
+            </span>
+            <span id="runtimeConfigEditorMode" class="runtime-editor-mode mono"></span>
+          </div>
+          <p id="runtimeConfigValidationHint" class="runtime-validation-rule mono"></p>
+        </div>
+        <div class="runtime-form-actions">
+          <button type="button" id="validateRuntimeConfig" class="ghost" title="Check this key/value against backend rules without saving">Validate Draft</button>
+          <button type="button" id="formatRuntimeConfigValue" class="ghost" title="Pretty-print JSON values before validating">Format JSON</button>
+          <button type="submit" id="saveRuntimeConfig" class="primary" title="Validate (if needed) then write to the database">Save to Database</button>
+        </div>
+      </form>
+      <div id="runtimeConfigResult" class="operator-result-mount runtime-config-result" aria-live="polite"></div>
+    </article>
+  </div>
+
+  <div data-runtime-console-panel="presets" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Recommended Presets</h4>
+      </div>
+      <p class="card-lead">Select a preset to load its key, value, and description into the editor. Long JSON values open in the value textarea for review.</p>
+      <div id="runtimeConfigPresets" class="runtime-preset-grid" role="list"></div>
+    </article>
+  </div>
+
+  <div data-runtime-console-panel="validation" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Rule Catalog <span id="runtimeValidationReadonlyBadge" class="runtime-readonly-badge">Read-only</span></h4>
+        <div class="runtime-config-toolbar inline-actions">
+          <label class="rules-filter view-page-search-label">
+            Search Rules
+            <input id="runtimeValidationSearch" class="view-page-search-input" type="search" placeholder="Filter by key, pattern, or type" />
+          </label>
+          <button id="runtimeValidationSearchButton" class="primary view-page-search-btn" type="button">Search</button>
+          <button id="runtimeValidationSearchClear" class="ghost view-page-search-clear-btn" type="button">Clear</button>
+          <button id="addRuntimeValidationRule" class="primary" type="button" hidden>Add Rule</button>
+          <button id="refreshRuntimeValidationRules" class="ghost" type="button">Reload Catalog</button>
+          <button id="clearRuntimeValidationStatus" class="ghost" type="button">Clear Test Status</button>
+        </div>
+      </div>
+      <p id="runtimeValidationCatalogLead" class="card-lead">Backend-defined constraints for supported runtime keys. Platform Admins can browse and test rules; Super Admins can add or update catalog entries. Expand any Example row to view the full JSON or value, then use actions to load or test it.</p>
+      <details class="help-details runtime-help-details">
+        <summary>How do I add or change a validation rule?</summary>
+        <p id="runtimeValidationCatalogHelp" class="profile-note">Super Admins can use Add Rule or Edit in the catalog table. Built-in rules can be updated but not deleted. Custom rules can be removed when no longer needed. Changes apply immediately to validate and save flows.</p>
+      </details>
+      <article id="runtimeValidationRuleEditor" class="card runtime-rule-editor" hidden>
+        <div class="card-head">
+          <h4 id="runtimeValidationRuleEditorTitle">Edit Rule</h4>
+        </div>
+        <form id="runtimeValidationRuleForm" class="runtime-rule-editor-form">
+          <input id="runtimeValidationRuleId" type="hidden" name="rule_id" />
+          <label>
+            Config Key
+            <input name="key" type="text" placeholder="gateway.default_global_timeout_ms" />
+          </label>
+          <label>
+            Key Pattern (regex)
+            <input name="key_pattern" type="text" placeholder="^ui\.feature\.[a-z0-9-]+\.enabled$" />
+          </label>
+          <label>
+            Type
+            <select name="type" required>
+              <option value="int">int</option>
+              <option value="float">float</option>
+              <option value="boolean_like">boolean_like</option>
+              <option value="json_list">json_list</option>
+              <option value="json_object">json_object</option>
+              <option value="csv_origins">csv_origins</option>
+            </select>
+          </label>
+          <label>
+            Min
+            <input name="min" type="text" inputmode="decimal" placeholder="1" />
+          </label>
+          <label>
+            Max
+            <input name="max" type="text" inputmode="decimal" placeholder="500" />
+          </label>
+          <label class="runtime-rule-editor-wide">
+            Required Fields (comma-separated)
+            <input name="required_fields" type="text" placeholder="method, path, max_requests, window_seconds" />
+          </label>
+          <label class="runtime-rule-editor-wide">
+            Default Required Fields (comma-separated)
+            <input name="default_required_fields" type="text" placeholder="input_cents_per_1k, output_cents_per_1k" />
+          </label>
+          <label>
+            Value Type
+            <input name="value_type" type="text" placeholder="string, object, mapping_object" />
+          </label>
+          <label>
+            Allow Wildcard Origins
+            <select name="allow_wildcard">
+              <option value="">(not set)</option>
+              <option value="false">false</option>
+              <option value="true">true</option>
+            </select>
+          </label>
+          <label class="runtime-rule-editor-wide">
+            Example Value
+            <textarea name="example_value" rows="3" placeholder="Optional example shown in the catalog"></textarea>
+          </label>
+          <label class="runtime-rule-editor-wide">
+            Description
+            <input name="description" type="text" placeholder="Operator-facing note" />
+          </label>
+          <div class="inline-actions">
+            <button id="saveRuntimeValidationRule" class="primary" type="submit">Save Rule</button>
+            <button id="cancelRuntimeValidationRule" class="ghost" type="button">Cancel</button>
+          </div>
+        </form>
+      </article>
+      <p id="runtimeValidationContext" class="runtime-feedback mono" aria-live="polite"></p>
+      <p id="runtimeValidationRuleCount" class="runtime-rule-count mono" aria-live="polite"></p>
+      <div class="table-wrap runtime-rules-table-wrap">
+        <table>
+          <caption class="sr-only">Runtime config validation rules exposed by the backend</caption>
+          <thead>
+            <tr>
+              <th>Key or Pattern</th>
+              <th>Type</th>
+              <th>Constraints</th>
+              <th>Example</th>
+              <th>Last Check</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="runtimeValidationRulesTable" data-table-search-skip="true"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+
+  <div data-runtime-console-panel="saved" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Saved Runtime Configs</h4>
+        <button id="loadRuntimeConfigs" class="ghost" type="button">Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Database-backed runtime configurations</caption>
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Value</th>
+              <th>Description</th>
+              <th>Updated By</th>
+              <th>Updated At</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="runtimeConfigTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

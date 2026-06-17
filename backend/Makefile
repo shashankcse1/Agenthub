@@ -1,4 +1,4 @@
-.PHONY: startall shutdownall startinfra shutinfra statusall migrate downgrade checkall checkall-port smokee2e test-repeat runlocal runlocal-port runlocal-auto runlocal-auto-port restartlocal restartlocal-port restartlocal-auto restartlocal-auto-port startall-port shutdownall-port statusall-port smokee2e-port who-uses-port stop-port port-fix free-8000 doctor-local doctor-local-port dev dev-port dev-clean dev-clean-port up up-clean down go go-port verify verify-port release-evidence release-evidence-strict release-evidence-auto release-evidence-auto-strict release-evidence-ciso release-evidence-ciso-auto rate-limit-cutover-check rate-limit-cutover-probe rate-limit-cutover-failover rate-limit-cutover-rollback security-monitoring-check architecture-posture-check ingress-security-validate help-local showstartup
+.PHONY: startall shutdownall startinfra shutinfra statusall migrate downgrade checkall checkall-port smokee2e test-repeat runlocal runlocal-port runlocal-auto runlocal-auto-port restartlocal restartlocal-port restartlocal-auto restartlocal-auto-port startall-port shutdownall-port statusall-port smokee2e-port who-uses-port stop-port port-fix free-8000 doctor-local doctor-local-port dev dev-port dev-clean dev-clean-port up up-clean down go go-port verify verify-port final-gates-quick final-gates-full final-gates-quick-strict-firefox final-gates-quick-strict-all release-evidence release-evidence-strict release-evidence-auto release-evidence-auto-strict release-evidence-ciso release-evidence-ciso-auto risk-closure-dashboard pending-closure-report release-decision-record release-risk-guardrails rate-limit-cutover-check rate-limit-cutover-probe rate-limit-cutover-failover rate-limit-cutover-rollback security-monitoring-check architecture-posture-check ingress-security-validate browser-compat browser-compat-strict-safari browser-compat-strict-firefox browser-compat-strict-all xcode-safari-doctor help-local showstartup
 
 help-local:
 	@echo "Local development helpers"
@@ -25,10 +25,16 @@ help-local:
 	@echo "  make verify-port PORT=8001"
 	@echo "  make release-evidence RELEASE_ID=<id> [ENV=staging] [OWNER=name]"
 	@echo "  make release-evidence-strict RELEASE_ID=<id> [ENV=production] [OWNER=name]"
+	@echo "  RELEASE_DECISION=GO RELEASE_ACCEPTED_RISK_APPROVED=yes RELEASE_CISO_ACK=yes make release-evidence-strict RELEASE_ID=<id> [ENV=production] [OWNER=name]"
 	@echo "  make release-evidence-auto [ENV=staging] [OWNER=name]"
 	@echo "  make release-evidence-auto-strict [ENV=production] [OWNER=name]"
 	@echo "  make release-evidence-ciso RELEASE_ID=<id> [OWNER=name]"
 	@echo "  make release-evidence-ciso-auto [OWNER=name]"
+	@echo "  make risk-closure-dashboard"
+	@echo "  make pending-closure-report"
+	@echo "  make release-decision-record RELEASE_ID=<id> [ENV=staging] [OWNER=name] [DECISION=TBD] [OUT=../artifacts/release-decision.md]"
+	@echo "  make release-risk-guardrails [ENV=staging] [DECISION=TBD] [DECISION_RECORD=../artifacts/release-decision.md] [RISK_EXCEPTION_REF=<id>]"
+	@echo "  bash ../scripts/render_risk_closure_dashboard.sh --strict-overdue"
 	@echo "  make rate-limit-cutover-check"
 	@echo "  make rate-limit-cutover-probe [PORT=8000]"
 	@echo "  make rate-limit-cutover-failover"
@@ -36,6 +42,15 @@ help-local:
 	@echo "  make security-monitoring-check"
 	@echo "  make architecture-posture-check"
 	@echo "  make ingress-security-validate [BASE_URL=https://api.example.com] [TEST_PATH=/health]"
+	@echo "  make browser-compat"
+	@echo "  make browser-compat-strict-safari"
+	@echo "  make browser-compat-strict-firefox"
+	@echo "  make browser-compat-strict-all"
+	@echo "  make xcode-safari-doctor"
+	@echo "  make final-gates-quick"
+	@echo "  make final-gates-full"
+	@echo "  make final-gates-quick-strict-firefox"
+	@echo "  make final-gates-quick-strict-all"
 
 dev:
 	./scripts/run_local.sh --auto-port
@@ -219,6 +234,37 @@ verify-port:
 	echo "[3/3] test-repeat RUNS=$$RUNS"; \
 	$(MAKE) test-repeat RUNS=$$RUNS
 
+final-gates-quick:
+	@TARGET_API_BASE=$${API_BASE:-http://127.0.0.1:$${API_PORT:-8000}}; \
+	API_BASE="$$TARGET_API_BASE" bash ../scripts/run_final_gates.sh --quick
+
+final-gates-full:
+	@TARGET_API_BASE=$${API_BASE:-http://127.0.0.1:$${API_PORT:-8000}}; \
+	API_BASE="$$TARGET_API_BASE" bash ../scripts/run_final_gates.sh
+
+final-gates-quick-strict-firefox:
+	@TARGET_API_BASE=$${API_BASE:-http://127.0.0.1:$${API_PORT:-8000}}; \
+	FINAL_GATES_STRICT_FIREFOX=1 API_BASE="$$TARGET_API_BASE" bash ../scripts/run_final_gates.sh --quick
+
+final-gates-quick-strict-all:
+	@TARGET_API_BASE=$${API_BASE:-http://127.0.0.1:$${API_PORT:-8000}}; \
+	FINAL_GATES_STRICT_SAFARI=1 FINAL_GATES_STRICT_FIREFOX=1 API_BASE="$$TARGET_API_BASE" bash ../scripts/run_final_gates.sh --quick
+
+browser-compat:
+	bash ../scripts/check_guardbridge_browser_compat.sh
+
+browser-compat-strict-safari:
+	bash ../scripts/check_guardbridge_browser_compat.sh --strict-safari
+
+browser-compat-strict-firefox:
+	bash ../scripts/check_guardbridge_browser_compat.sh --strict-firefox-lint
+
+browser-compat-strict-all:
+	bash ../scripts/check_guardbridge_browser_compat.sh --strict-safari --strict-firefox-lint
+
+xcode-safari-doctor:
+	bash ../scripts/configure_xcode_for_safari_converter.sh
+
 release-evidence:
 	@if [ -z "$(RELEASE_ID)" ]; then echo "Usage: make release-evidence RELEASE_ID=<id> [ENV=staging] [OWNER=name]"; exit 1; fi
 	@TARGET_ENV=$${ENV:-staging}; OWNER_NAME=$${OWNER:-local-operator}; \
@@ -254,6 +300,24 @@ release-evidence-ciso-auto:
 	echo "Using RELEASE_ID=$$RELEASE_AUTO_ID"; \
 	DATABASE_URL=$${DATABASE_URL:-postgresql+psycopg://$$USER@localhost:5432/agenthub} \
 	bash ../scripts/release_evidence_bundle.sh --release-id "$$RELEASE_AUTO_ID" --env "production" --owner "$$OWNER_NAME" --strict
+
+risk-closure-dashboard:
+	bash ../scripts/render_risk_closure_dashboard.sh docs/governance/security-risk-closure-plan.md
+
+pending-closure-report:
+	bash ../scripts/render_pending_closure_report.sh --plan docs/governance/security-risk-closure-plan.md
+
+release-decision-record:
+	@if [ -z "$(RELEASE_ID)" ]; then echo "Usage: make release-decision-record RELEASE_ID=<id> [ENV=staging] [OWNER=name] [DECISION=TBD] [OUT=../artifacts/release-decision.md]"; exit 1; fi
+	@TARGET_ENV=$${ENV:-staging}; OWNER_NAME=$${OWNER:-local-operator}; DECISION_LABEL=$${DECISION:-TBD}; \
+	bash ../scripts/generate_release_decision_record.sh --plan docs/governance/security-risk-closure-plan.md --release-id "$(RELEASE_ID)" --env "$$TARGET_ENV" --owner "$$OWNER_NAME" --decision "$$DECISION_LABEL" $$(if [ -n "$(OUT)" ]; then printf -- "--output %q" "$(OUT)"; fi)
+
+release-risk-guardrails:
+	@TARGET_ENV=$${ENV:-staging}; DECISION_LABEL=$${DECISION:-TBD}; DECISION_RECORD_PATH=$${DECISION_RECORD:-}; \
+	CMD="bash ../scripts/validate_release_risk_guardrails.sh --plan docs/governance/security-risk-closure-plan.md --env $$TARGET_ENV --decision $$DECISION_LABEL"; \
+	if [ -n "$$DECISION_RECORD_PATH" ]; then CMD="$$CMD --decision-record $$DECISION_RECORD_PATH"; fi; \
+	if [ -n "$(RISK_EXCEPTION_REF)" ]; then CMD="$$CMD --allow-overdue-exception $(RISK_EXCEPTION_REF)"; fi; \
+	eval "$$CMD"
 
 rate-limit-cutover-check:
 	bash ./scripts/rate_limit_cutover.sh --mode=check

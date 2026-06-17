@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Scope | Email/SMS notification channel registry + Flow Orchestration `email_send` / `sms_send` nodes (Phase 1 stub) |
+| Scope | Email/SMS notification channel registry + Flow Orchestration `email_send` / `sms_send` nodes with live delivery via `gateway_notification_delivery` |
 | Status | Implemented — pending CISO sign-off |
 | Primary controls | RSK-018 / CC-032 |
 | Related | GOV-FLOW-ORCH-001, GOV-USP (credential bindings), Playground escalation notify |
@@ -12,7 +12,7 @@
 
 ## Purpose
 
-Introduce a governed notification channel registry (`gateway.notification_channels_json`) and dedicated Flow Orchestration node types for operator-authored email and SMS steps — without inline provider secrets and with Phase 1 simulated delivery only.
+Introduce a governed notification channel registry (`gateway.notification_channels_json`) and dedicated Flow Orchestration node types for operator-authored email and SMS steps — without inline provider secrets and with live provider delivery when the orchestration live executor is enabled (dry runs remain simulated).
 
 ## Scope and Affected Modules
 
@@ -94,10 +94,10 @@ flowchart TB
 
 ### Orchestration node types
 
-| Type | Required config | Phase 1 runtime |
+| Type | Required config | Live runtime (executor enabled) |
 |---|---|---|
-| `email_send` | `channel_id`, `to_template`, `subject_template`, `body_template` | `{simulated: true, channel_id, to, subject, body, delivery_status: simulated}` |
-| `sms_send` | `channel_id`, `to_template`, `body_template` | `{simulated: true, channel_id, to, body, delivery_status: simulated}` |
+| `email_send` | `channel_id`, `to_template`, `subject_template`, `body_template` | SendGrid or webhook POST with domain allowlist enforcement |
+| `sms_send` | `channel_id`, `to_template`, `body_template` | Twilio or webhook POST with E.164 validation |
 
 Optional: `from_override` on both types (validated; no secrets).
 

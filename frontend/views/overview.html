@@ -13,6 +13,8 @@
               <button class="chip quick-start-chip" type="button" data-view="playground">Playground</button>
               <button class="chip quick-start-chip" type="button" data-view="benchmark-scan">Benchmark &amp; Scan</button>
               <button class="chip quick-start-chip" type="button" data-view="routing-gateway">Routing &amp; Gateway</button>
+              <button class="chip quick-start-chip" type="button" data-view="orchestration">Flow Orchestration</button>
+              <button class="chip quick-start-chip" type="button" data-view="routing-gateway" data-gateway-console-tab="memory" data-scroll-target="gatewayMemoryPlatformConfigCard">Memory &amp; Context</button>
               <button class="chip quick-start-chip" type="button" data-view="routing-gateway" data-scroll-target="cursorGatewayIntegrationHub">Cursor Gateway</button>
               <button class="chip quick-start-chip" type="button" data-view="compliance">Compliance</button>
               <button class="chip quick-start-chip" type="button" data-view="observability">Observability</button>
@@ -39,6 +41,82 @@
           <article class="card">
             <h3>Platform Status</h3>
             <p id="healthStatus" class="mono" role="status" aria-live="polite">Checking backend...</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Flow Orchestration</h3>
+              <button type="button" class="chip quick-start-chip" data-view="orchestration">Open Console</button>
+            </div>
+            <div id="overviewOrchestrationSummary" class="flow-platform-summary-grid" aria-live="polite">
+              <article class="flow-platform-stat"><strong>--</strong><span>Flows</span></article>
+              <article class="flow-platform-stat"><strong>--</strong><span>Prod approvals pending</span></article>
+              <article class="flow-platform-stat"><strong>--</strong><span>Certifications due</span></article>
+              <article class="flow-platform-stat"><strong>--</strong><span>Active JIT grants</span></article>
+              <article class="flow-platform-stat"><strong>--</strong><span>Runs awaiting approval</span></article>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>API UI Coverage Gaps</h3>
+              <div class="inline-actions">
+                <button id="loadOverviewUiCoverage" class="ghost" type="button">Refresh</button>
+                <button id="openComplianceUiCoverage" class="ghost" type="button">Open Details</button>
+              </div>
+            </div>
+            <p id="overviewUiCoverageSummary" class="mono">Loading UI coverage summary...</p>
+            <div class="card-grid compact">
+              <div class="chip">Inventory: <span id="overviewUiCoverageInventoryCount">--</span></div>
+              <div class="chip">Full: <span id="overviewUiCoverageFullCount">--</span></div>
+              <div class="chip">Partial: <span id="overviewUiCoveragePartialCount">--</span></div>
+              <div class="chip">Gap: <span id="overviewUiCoverageGapCount">--</span></div>
+              <div class="chip">Undocumented: <span id="overviewUiCoverageUndocumentedCount">--</span></div>
+            </div>
+            <ul id="overviewUiCoverageGaps" class="mono compliance-list" aria-label="Backend APIs without full frontend coverage"></ul>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Operator Feedback Reports</h3>
+              <div class="inline-actions">
+                <button id="loadOperatorFeedbackAnalytics" class="ghost" type="button">Load Analytics</button>
+                <button id="loadOperatorFeedbackReports" class="ghost" type="button">Load Reports</button>
+              </div>
+            </div>
+            <p id="operatorFeedbackAnalyticsSummary" class="mono">Load analytics for custom action and category breakdowns.</p>
+            <div id="operatorFeedbackActionBreakdown" class="chip-row" aria-label="Top feedback actions"></div>
+            <div class="form-grid compact-grid">
+              <label>Category Filter
+                <select id="operatorFeedbackCategoryFilter">
+                  <option value="">All</option>
+                  <option value="performance">Performance</option>
+                  <option value="ux">UX</option>
+                  <option value="bug">Bug</option>
+                  <option value="feature">Feature</option>
+                  <option value="incident">Incident</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label>Action Filter<input id="operatorFeedbackActionFilter" placeholder="load_overview" /></label>
+            </div>
+            <p id="operatorFeedbackReportResult" class="mono" aria-live="polite"></p>
+            <div class="table-scroll">
+              <table class="data-table compact-table">
+                <thead>
+                  <tr><th>Category</th><th>Count</th><th>Filter</th></tr>
+                </thead>
+                <tbody id="operatorFeedbackReportTable"></tbody>
+              </table>
+            </div>
+            <div class="table-scroll">
+              <table class="data-table compact-table">
+                <thead>
+                  <tr><th>Created</th><th>Category</th><th>Severity</th><th>View</th><th>Action</th><th>Status</th><th>Comment</th><th>Triage</th></tr>
+                </thead>
+                <tbody id="operatorFeedbackItemsTable"></tbody>
+              </table>
+            </div>
           </article>
 
           <article class="card">

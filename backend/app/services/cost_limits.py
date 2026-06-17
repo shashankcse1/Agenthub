@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import BudgetPolicy, CostEvent
+from app.models import BudgetPolicy
 from app.policy_constants import (
     COST_SCOPE_AGENT,
     COST_POLICY_DECISION_ALLOW,
@@ -16,6 +14,11 @@ from app.policy_constants import (
     COST_SCOPE_GROUP,
     COST_SCOPE_TEAM,
     COST_SCOPE_USER,
+)
+from app.services.cost_windows import (
+    normalize_window_type,
+    project_window_spend,
+    window_start_for_budget,
 )
 
 
@@ -31,6 +34,9 @@ class CostLimitScopeResult:
     decision: str
     recommended_action: str
     soft_limit_alert: bool
+    projected_window_spend_cents: int = 0
+    historical_window_spend_cents: int = 0
+    projection_basis: str = "blended"
 
 
 @dataclass
@@ -49,41 +55,6 @@ class CostLimitEvaluationResult:
         }
 
 
-def _resolve_timezone(name: str | None) -> ZoneInfo:
-    try:
-        return ZoneInfo(str(name or "UTC").strip() or "UTC")
-    except Exception:
-        return ZoneInfo("UTC")
-
-
-def _window_start_for_budget(budget: BudgetPolicy, window_type: str) -> datetime | None:
-    now_utc = datetime.utcnow()
-    resolved_window = str(window_type or budget.window_type or "daily").strip().lower()
-    tz = _resolve_timezone(getattr(budget, "reset_timezone", "UTC"))
-    local_now = now_utc.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
-    reset_hour = int(getattr(budget, "reset_hour_local", 0) or 0)
-
-    if resolved_window == "hourly":
-        return now_utc - timedelta(hours=1)
-
-    if resolved_window == "daily":
-        local_reset = local_now.replace(hour=reset_hour, minute=0, second=0, microsecond=0)
-        if local_now < local_reset:
-            local_reset = local_reset - timedelta(days=1)
-        return local_reset.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
-
-    if resolved_window == "monthly":
-        local_reset = local_now.replace(day=1, hour=reset_hour, minute=0, second=0, microsecond=0)
-        if local_now < local_reset:
-            if local_now.month == 1:
-                local_reset = local_reset.replace(year=local_now.year - 1, month=12)
-            else:
-                local_reset = local_reset.replace(month=local_now.month - 1)
-        return local_reset.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
-
-    return _window_start(resolved_window)
-
-
 def _effective_budget_cents(budget: BudgetPolicy) -> int:
     base = int(budget.budget_amount_cents or 0)
     extra = int(getattr(budget, "temporary_increase_cents", 0) or 0)
@@ -95,18 +66,11 @@ def _effective_budget_cents(budget: BudgetPolicy) -> int:
     return base
 
 
-def _window_start(window_type: str) -> datetime | None:
-    now = datetime.utcnow()
-    if window_type == "daily":
-        return now - timedelta(days=1)
-    if window_type == "monthly":
-        return now - timedelta(days=30)
-    if window_type == "hourly":
-        return now - timedelta(hours=1)
-    return None
-
-
 def _sum_cost_cents(db: Session, after_ts: datetime | None = None, owner_scope: str | None = None) -> int:
+    from sqlalchemy import func
+
+    from app.models import CostEvent
+
     query = db.query(func.coalesce(func.sum(CostEvent.estimated_cost_cents), 0))
     if after_ts:
         query = query.filter(CostEvent.timestamp >= after_ts)
@@ -131,9 +95,24 @@ def _evaluate_scope_budget(
     if not budget:
         return None
 
+    resolved_window = normalize_window_type(window_type or budget.window_type)
     owner_scope = f"{scope_type}:{scope_id}"
-    spend_cents = _sum_cost_cents(db, after_ts=_window_start_for_budget(budget, window_type), owner_scope=owner_scope)
-    projected_spend = spend_cents + max(projected_additional_cost_cents, 0)
+    spend_cents = _sum_cost_cents(
+        db,
+        after_ts=window_start_for_budget(budget, resolved_window),
+        owner_scope=owner_scope,
+    )
+    projection = project_window_spend(
+        db,
+        owner_scope=owner_scope,
+        budget=budget,
+        window_type=resolved_window,
+        current_spend_cents=spend_cents,
+    )
+    projected_spend = max(
+        projection.projected_window_spend_cents,
+        spend_cents + max(projected_additional_cost_cents, 0),
+    )
     effective_budget_cents = _effective_budget_cents(budget)
 
     utilization = 0.0
@@ -163,6 +142,9 @@ def _evaluate_scope_budget(
         decision=decision,
         recommended_action=action,
         soft_limit_alert=soft_limit_alert,
+        projected_window_spend_cents=projection.projected_window_spend_cents,
+        historical_window_spend_cents=projection.historical_window_spend_cents,
+        projection_basis=projection.projection_basis,
     )
 
 

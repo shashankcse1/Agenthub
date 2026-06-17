@@ -18,6 +18,23 @@ Agent execution principles:
 4. Use explicit acceptance checks so agents can self-verify completion.
 5. Keep blast radius small: one backend capability + matching UI workflow per slice.
 
+Agent-friendly delivery rules:
+
+1. Every implementation slice must be named as a single capability, not a theme.
+  - Example: `embeddings endpoint`, not `OpenAI parity`.
+2. Every slice must have one falsifiable hypothesis and one cheap validation command before editing.
+  - Example: prove an endpoint is missing, then add the endpoint and run the narrowest test.
+3. Every slice must stay within one module boundary unless a dependency is unavoidable.
+  - Prefer `MOD-GATEWAY`, `MOD-EXT`, `MOD-OBS`, or `MOD-COST` only.
+4. Every slice must include its own rollback path or be purely additive.
+  - Avoid cross-cutting refactors unless the change is required for correctness.
+5. Every slice must produce machine-checkable evidence.
+  - Code change, tests, docs, and validation command output must all be reproducible.
+6. Every slice must preserve security and governance defaults.
+  - No silent expansion of roles, scopes, logging, or retention behavior.
+7. Every slice must be small enough to review in one pass.
+  - If a feature requires more than 2-4 endpoints or multiple UI cards, split it.
+
 Definition of done for each slice:
 
 1. Backend endpoint(s) implemented with role/scope/audit controls.
@@ -25,6 +42,15 @@ Definition of done for each slice:
 3. Regression tests added and passing.
 4. Governance inventory + coverage map + frontend README updated.
 5. Residual risk register updated when privilege/risk posture changes.
+6. The change summary includes changed files, validation commands, and remaining risk.
+
+Agent-oriented slice checklist:
+
+1. Identify the nearest controlling abstraction.
+2. Write the smallest change that tests the hypothesis.
+3. Validate the changed slice before expanding scope.
+4. Capture audit and security impacts in docs if the slice changes privilege, logging, or data retention.
+5. Stop when the acceptance check passes; do not continue into adjacent features.
 
 ## Quick-Build Sequence (Fastest Path to Value)
 
@@ -48,12 +74,24 @@ Implementation pacing:
 - One capability per PR.
 - Prefer 2-4 endpoints per PR maximum.
 - Keep UI additions as one card per capability.
+- Keep each PR readable by a single reviewer without external context.
+- Keep test coverage adjacent to the touched code instead of broad end-to-end expansion.
+- Keep docs synchronized in the same change so agents never infer stale behavior.
+
+Agent-safety constraints:
+
+- Do not introduce speculative scaffolding for future features unless the current slice requires it.
+- Do not widen role permissions to reduce implementation friction.
+- Do not add hidden feature flags that change behavior without documentation.
+- Do not merge unrelated endpoint families into one PR.
+- Do not leave a partially implemented workflow without a clear operator-facing failure state.
 
 Current implementation status:
 
 - PR-1 through PR-4 are complete with backend/UI/tests/docs synchronization.
 - Gateway governance evidence export workflow is now available in Routing & Gateway via `POST /gateway/governance/evidence/export`, with backend action-level evidence aggregation and export metadata for CISO/security bundles.
 - OpenAI-compatible chat baseline endpoint is now available via `POST /v1/chat/completions` with role-gated access, deny/allow audit evidence, stop/max-tokens semantics, `response_format` contract support, and contract tests.
+- OpenAI-compatible embeddings baseline endpoint is now available via `POST /v1/embeddings` with role-gated access, deny/allow audit evidence, tenant/model entitlement checks, and contract tests.
 - OpenAI-compatible responses baseline endpoint is now available via `POST /v1/responses` with role-gated access, deny/allow audit evidence, stop/max-output-tokens semantics, `response_format` contract support, deterministic `tools`/`tool_choice` semantics, and strict function-only tool contract validation.
 - OpenAI-compatible responses lifecycle baseline now includes `GET /v1/responses`, `GET /v1/responses/{response_id}`, and `DELETE /v1/responses/{response_id}` with role-gated access and soft-delete lifecycle behavior.
 - OpenAI-compatible files metadata baseline now includes `POST /v1/files`, `GET /v1/files`, `GET /v1/files/{file_id}`, and `DELETE /v1/files/{file_id}` with role-gated access and soft-delete behavior.
@@ -344,7 +382,7 @@ The current implementation has been reviewed against required lenses and hardene
 1. Positive: Introduces a first-class OpenAI-compatible inference entrypoint while preserving strict role-based access controls.
 2. Positive: Both allow and deny paths emit `gateway.chat.completions` audit evidence for operational forensics and governance reporting.
 3. Positive: Provider-prefixed model requests enforce tenant entitlement context (`tenant_id`) before execution path proceeds.
-4. Residual: Endpoint currently returns simulated completion behavior while compatibility semantics deepen incrementally; provider-depth behavior remains a staged follow-up.
+4. Provider-depth forwarding is now implemented for `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/messages`, `/v1/images*`, and `/v1/rerank` via `app/services/gateway_inference.py`, with credential resolution from agent bindings, catalog defaults, platform/gateway bindings, environment variables, and gateway cursor token fallback. Simulation mode remains available when `GATEWAY_INFERENCE_SIMULATION=true` (default) and no upstream credential is configured.
 
 ## Impact Analysis (PR-7 OpenAI-Compatible Responses Baseline)
 
@@ -353,7 +391,7 @@ The current implementation has been reviewed against required lenses and hardene
 1. Positive: Adds a second OpenAI-compatible inference entrypoint while preserving fail-closed role checks and immutable audit evidence.
 2. Positive: Both allow and deny paths emit `gateway.responses.create` audit events for governance and forensic traceability.
 3. Positive: Provider-prefixed model requests preserve tenant entitlement enforcement requirements.
-4. Residual: Current endpoint remains a baseline simulated behavior and does not yet implement full provider-specific responses API depth.
+4. Provider-depth forwarding is now implemented for responses alongside chat completions; residual gap is full provider-specific edge-case parity (streaming tool deltas, audio binary ingest, realtime websocket transport).
 
 ### Backend and Data Impact
 

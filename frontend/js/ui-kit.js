@@ -65,20 +65,39 @@
     }, timeoutMs);
   }
 
-  function bindTabGroup(root, { tabSelector, panelSelector, activeClass = "active", onChange } = {}) {
+  function bindTabGroup(root, { tabSelector, panelSelector, activeClass = "active", onChange, suppressInitialChange = false } = {}) {
     if (!root) return;
     const tabs = Array.from(root.querySelectorAll(tabSelector));
     const panels = Array.from(root.querySelectorAll(panelSelector));
     if (!tabs.length || !panels.length) return;
 
+    const tabNameFor = (tab) =>
+      tab.dataset.consoleTab ||
+      tab.dataset.modulesConsoleTab ||
+      tab.dataset.providersConsoleTab ||
+      tab.dataset.runtimeConsoleTab ||
+      tab.dataset.gatewayConsoleTab ||
+      tab.dataset.gatewayOpsTab ||
+      tab.dataset.browserSecurityConsoleTab ||
+      "";
+    const panelNameFor = (panel) =>
+      panel.dataset.consolePanel ||
+      panel.dataset.modulesConsolePanel ||
+      panel.dataset.providersConsolePanel ||
+      panel.dataset.runtimeConsolePanel ||
+      panel.dataset.gatewayConsolePanel ||
+      panel.dataset.gatewayOpsPanel ||
+      panel.dataset.browserSecurityConsolePanel ||
+      "";
+
     const activate = (name) => {
       tabs.forEach((tab) => {
-        const isActive = tab.dataset.gatewayConsoleTab === name || tab.dataset.gatewayOpsTab === name;
+        const isActive = tabNameFor(tab) === name;
         tab.classList.toggle(activeClass, isActive);
         tab.setAttribute("aria-selected", isActive ? "true" : "false");
       });
       panels.forEach((panel) => {
-        const isActive = panel.dataset.gatewayConsolePanel === name || panel.dataset.gatewayOpsPanel === name;
+        const isActive = panelNameFor(panel) === name;
         panel.classList.toggle(activeClass, isActive);
         panel.hidden = !isActive;
       });
@@ -87,18 +106,27 @@
 
     tabs.forEach((tab) => {
       tab.addEventListener("click", () => {
-        const name = tab.dataset.gatewayConsoleTab || tab.dataset.gatewayOpsTab;
+        const name = tabNameFor(tab);
         if (!name) return;
         activate(name);
       });
     });
 
     const initial =
-      tabs.find((tab) => tab.classList.contains(activeClass))?.dataset.gatewayConsoleTab ||
-      tabs.find((tab) => tab.classList.contains(activeClass))?.dataset.gatewayOpsTab ||
-      tabs[0]?.dataset.gatewayConsoleTab ||
-      tabs[0]?.dataset.gatewayOpsTab;
-    if (initial) activate(initial);
+      tabNameFor(tabs.find((tab) => tab.classList.contains(activeClass)) || tabs[0] || {}) || "";
+    if (initial) {
+      tabs.forEach((tab) => {
+        const isActive = tabNameFor(tab) === initial;
+        tab.classList.toggle(activeClass, isActive);
+        tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      panels.forEach((panel) => {
+        const isActive = panelNameFor(panel) === initial;
+        panel.classList.toggle(activeClass, isActive);
+        panel.hidden = !isActive;
+      });
+      if (!suppressInitialChange) onChange?.(initial);
+    }
     return { activate };
   }
 

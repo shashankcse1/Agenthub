@@ -5,15 +5,15 @@ import json
 import re
 from typing import Optional
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.api_errors import authz_scope_forbidden, not_found_error, validation_error as api_validation_error
 from app.database import get_db
 from app.logging_utils import get_logger, sanitize_fields
-from app.models import Agent, BudgetPolicy, CostEvent, SessionRecord
+from app.models import Agent, BudgetPolicy, CostEvent, SessionRecord, SupportedModelCatalogEntry
 from app.policy_constants import ROLE_AGENT_OWNER, SUPPORTED_BUDGET_SCOPE_TYPES, COST_SCOPE_AGENT, COST_SCOPE_GROUP, COST_SCOPE_TEAM
 from app.router_constants import PLATFORM_ADMIN_EQUIVALENT_ROLES, ROLES_ADMIN_OWNER, ROLES_ADMIN_RELEASE_OWNER
 from app.schemas import (
@@ -21,6 +21,7 @@ from app.schemas import (
     BudgetPolicyResponse,
     CostAnomalyResponse,
     CostBreakdownResponse,
+    CostComparisonResponse,
     CostEventResponse,
     CostPricingCalculateRequest,
     CostPricingCalculateResponse,
@@ -28,6 +29,8 @@ from app.schemas import (
     CostLimitEvaluateRequest,
     CostLimitEvaluateResponse,
     CostLiveResponse,
+    CostModelCatalogItemResponse,
+    CostModelCatalogResponse,
     CostPolicyEvaluateRequest,
     CostPolicyEvaluateResponse,
     CostTrackSpendRequest,
@@ -36,6 +39,12 @@ from app.schemas import (
 from app.security import ActorContext, get_actor_context, require_role
 from app.services.audit import create_audit_event
 from app.services.cost_limits import evaluate_actor_cost_limits
+from app.services.cost_windows import (
+    build_period_comparison,
+    normalize_window_type,
+    project_window_spend,
+    window_start_for_budget,
+)
 from app.services.scope_registry import normalize_scope_id_list, normalize_scope_reference
 from app.services.runtime_config import get_runtime_config, get_runtime_config_int
 from app.models import DirectoryTeamMembership
@@ -55,7 +64,11 @@ def _normalize_request_tag(value: str | None) -> str | None:
     if not raw:
         return None
     if not REQUEST_TAG_PATTERN.match(raw):
-        raise HTTPException(status_code=422, detail="request_tag must match ^[a-zA-Z0-9._:-]{1,64}$")
+        raise api_validation_error(
+            "request_tag must match ^[a-zA-Z0-9._:-]{1,64}$",
+            decision_trace_id="cost-request-tag-invalid",
+            status_code=422,
+        )
     return raw
 
 
@@ -226,50 +239,6 @@ def _owned_agent_ids(db: Session, actor_id: str) -> list[str]:
     return [row[0] for row in db.query(Agent.agent_id).filter(Agent.owner_id == actor_id).all()]
 
 
-def _window_start(window_type: str) -> Optional[datetime]:
-    now = datetime.utcnow()
-    if window_type == "daily":
-        return now - timedelta(days=1)
-    if window_type == "monthly":
-        return now - timedelta(days=30)
-    return None
-
-
-def _resolve_timezone(name: str | None) -> ZoneInfo:
-    try:
-        return ZoneInfo(str(name or "UTC").strip() or "UTC")
-    except Exception:
-        return ZoneInfo("UTC")
-
-
-def _window_start_for_budget(budget: BudgetPolicy, window_type: str) -> Optional[datetime]:
-    now_utc = datetime.utcnow()
-    resolved_window = str(window_type or budget.window_type or "daily").strip().lower()
-    tz = _resolve_timezone(getattr(budget, "reset_timezone", "UTC"))
-    local_now = now_utc.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
-    reset_hour = int(getattr(budget, "reset_hour_local", 0) or 0)
-
-    if resolved_window == "hourly":
-        return now_utc - timedelta(hours=1)
-
-    if resolved_window == "daily":
-        local_reset = local_now.replace(hour=reset_hour, minute=0, second=0, microsecond=0)
-        if local_now < local_reset:
-            local_reset = local_reset - timedelta(days=1)
-        return local_reset.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
-
-    if resolved_window == "monthly":
-        local_reset = local_now.replace(day=1, hour=reset_hour, minute=0, second=0, microsecond=0)
-        if local_now < local_reset:
-            if local_now.month == 1:
-                local_reset = local_reset.replace(year=local_now.year - 1, month=12)
-            else:
-                local_reset = local_reset.replace(month=local_now.month - 1)
-        return local_reset.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
-
-    return _window_start(resolved_window)
-
-
 def _effective_budget_cents(budget: BudgetPolicy) -> int:
     base = int(budget.budget_amount_cents or 0)
     extra = int(getattr(budget, "temporary_increase_cents", 0) or 0)
@@ -279,6 +248,65 @@ def _effective_budget_cents(budget: BudgetPolicy) -> int:
     if expires_at is None or expires_at >= datetime.utcnow():
         return base + extra
     return base
+
+
+def _validate_window_type(window_type: str) -> str:
+    try:
+        return normalize_window_type(window_type)
+    except ValueError as exc:
+        raise api_validation_error(str(exc), decision_trace_id="cost-window-type-invalid") from exc
+
+
+def _cost_scope_forbidden(ctx: ActorContext, message: str, decision_trace_id: str) -> None:
+    raise authz_scope_forbidden(
+        message=message,
+        actor_role=ctx.actor_role,
+        required_scope="cost scope manageable by actor",
+        decision_trace_id=decision_trace_id,
+        remediation_hint="Use Platform Admin or scope owner permissions for this cost operation.",
+    )
+
+
+def _serialize_budget_policy(budget: BudgetPolicy) -> dict:
+    payload = BudgetPolicyResponse.model_validate(budget).model_dump()
+    payload["effective_budget_cents"] = _effective_budget_cents(budget)
+    return payload
+
+
+def _recent_cost_identifiers(
+    db: Session,
+    *,
+    agent_ids: Optional[list[str]] = None,
+    limit: int = 20,
+) -> tuple[list[str], list[str]]:
+    since = datetime.utcnow() - timedelta(days=7)
+    query = (
+        db.query(CostEvent.session_id, CostEvent.agent_id)
+        .filter(CostEvent.timestamp >= since)
+        .order_by(CostEvent.timestamp.desc())
+        .limit(500)
+    )
+    if agent_ids is not None:
+        if not agent_ids:
+            return [], []
+        query = query.filter(CostEvent.agent_id.in_(agent_ids))
+
+    sessions: list[str] = []
+    agents: list[str] = []
+    seen_sessions: set[str] = set()
+    seen_agents: set[str] = set()
+    for session_id, agent_id in query.all():
+        session_text = str(session_id or "").strip()
+        agent_text = str(agent_id or "").strip()
+        if session_text and session_text not in seen_sessions:
+            seen_sessions.add(session_text)
+            sessions.append(session_text)
+        if agent_text and agent_text not in seen_agents:
+            seen_agents.add(agent_text)
+            agents.append(agent_text)
+        if len(sessions) >= limit and len(agents) >= limit:
+            break
+    return sessions[:limit], agents[:limit]
 
 
 def _is_jwt_team(team_id: str) -> bool:
@@ -368,6 +396,8 @@ def get_live_cost(db: Session = Depends(get_db), ctx: ActorContext = Depends(get
                 "spend_last_day_cents": 0,
                 "burn_rate_cents_per_hour": 0,
                 "event_count_last_day": 0,
+                "recent_sessions": [],
+                "recent_agents": [],
             }
 
         spend_last_hour = int(
@@ -388,18 +418,22 @@ def get_live_cost(db: Session = Depends(get_db), ctx: ActorContext = Depends(get
             .scalar()
             or 0
         )
+        recent_sessions, recent_agents = _recent_cost_identifiers(db, agent_ids=owned_agent_ids)
     else:
         spend_last_hour = _sum_cost_cents(db, after_ts=hour_ts)
         spend_last_day = _sum_cost_cents(db, after_ts=day_ts)
         event_count_last_day = (
             db.query(func.count(CostEvent.cost_event_id)).filter(CostEvent.timestamp >= day_ts).scalar() or 0
         )
+        recent_sessions, recent_agents = _recent_cost_identifiers(db)
 
     return {
         "spend_last_hour_cents": spend_last_hour,
         "spend_last_day_cents": spend_last_day,
         "burn_rate_cents_per_hour": spend_last_hour,
         "event_count_last_day": int(event_count_last_day),
+        "recent_sessions": recent_sessions,
+        "recent_agents": recent_agents,
     }
 
 
@@ -416,18 +450,16 @@ def get_cost_breakdown(
     normalized_dimension = str(dimension or "all").strip().lower()
     allowed_dimensions = {"all", "user", "team", "group", "request_tag"}
     if normalized_dimension not in allowed_dimensions:
-        raise HTTPException(status_code=400, detail="dimension must be one of: all, user, team, group, request_tag")
+        raise api_validation_error(
+            "dimension must be one of: all, user, team, group, request_tag",
+            decision_trace_id="cost-breakdown-dimension-invalid",
+        )
 
     bounded_hours = max(1, min(int(window_hours or 24), 24 * 30))
     bounded_limit = max(1, min(int(limit or 8), 50))
     since = datetime.utcnow() - timedelta(hours=bounded_hours)
 
-    base_query = db.query(
-        CostEvent.owner_scope,
-        func.coalesce(func.sum(CostEvent.estimated_cost_cents), 0),
-        func.count(CostEvent.cost_event_id),
-    ).filter(CostEvent.timestamp >= since)
-
+    owned_agent_ids: Optional[list[str]] = None
     if ctx.actor_role == ROLE_AGENT_OWNER:
         owned_agent_ids = _owned_agent_ids(db, ctx.actor_id)
         if not owned_agent_ids:
@@ -438,19 +470,25 @@ def get_cost_breakdown(
                 "total_event_count": 0,
                 "items": [],
             }
+
+    base_query = db.query(
+        CostEvent.owner_scope,
+        func.coalesce(func.sum(CostEvent.estimated_cost_cents), 0),
+        func.count(CostEvent.cost_event_id),
+    ).filter(CostEvent.timestamp >= since)
+
+    if owned_agent_ids is not None:
         base_query = base_query.filter(CostEvent.agent_id.in_(owned_agent_ids))
 
     if normalized_dimension == "request_tag":
-        grouped_rows = (
-            db.query(
-                CostEvent.request_tag,
-                func.coalesce(func.sum(CostEvent.estimated_cost_cents), 0),
-                func.count(CostEvent.cost_event_id),
-            )
-            .filter(CostEvent.timestamp >= since)
-            .group_by(CostEvent.request_tag)
-            .all()
-        )
+        tag_query = db.query(
+            CostEvent.request_tag,
+            func.coalesce(func.sum(CostEvent.estimated_cost_cents), 0),
+            func.count(CostEvent.cost_event_id),
+        ).filter(CostEvent.timestamp >= since)
+        if owned_agent_ids is not None:
+            tag_query = tag_query.filter(CostEvent.agent_id.in_(owned_agent_ids))
+        grouped_rows = tag_query.group_by(CostEvent.request_tag).all()
         items = [
             {"label": str(row[0] or "untagged"), "spend_cents": int(row[1] or 0), "event_count": int(row[2] or 0)}
             for row in grouped_rows
@@ -539,34 +577,55 @@ def get_cost_timeseries(
     normalized_dimension = str(dimension or "all").strip().lower()
     allowed_dimensions = {"all", "user", "team", "group", "request_tag"}
     if normalized_dimension not in allowed_dimensions:
-        raise HTTPException(status_code=400, detail="dimension must be one of: all, user, team, group, request_tag")
+        raise api_validation_error(
+            "dimension must be one of: all, user, team, group, request_tag",
+            decision_trace_id="cost-breakdown-dimension-invalid",
+        )
 
     scope_filter_text = str(scope_filter or "").strip().lower()
 
     if (start_datetime and not end_datetime) or (end_datetime and not start_datetime):
-        raise HTTPException(status_code=400, detail="start_datetime and end_datetime must both be provided")
+        raise api_validation_error(
+            "start_datetime and end_datetime must both be provided",
+            decision_trace_id="cost-timeseries-datetime-pair-required",
+        )
 
     if start_datetime and end_datetime:
         if end_datetime <= start_datetime:
-            raise HTTPException(status_code=400, detail="end_datetime must be greater than start_datetime")
+            raise api_validation_error(
+                "end_datetime must be greater than start_datetime",
+                decision_trace_id="cost-timeseries-datetime-order",
+            )
         selected_seconds = (end_datetime - start_datetime).total_seconds()
         if selected_seconds > 24 * 366 * 3600:
-            raise HTTPException(status_code=400, detail="date/time range cannot exceed 1 year")
+            raise api_validation_error(
+                "date/time range cannot exceed 1 year",
+                decision_trace_id="cost-timeseries-range-too-large",
+            )
         start_hour = _floor_hour(start_datetime)
         end_hour = _floor_hour(end_datetime)
         bounded_hours = int(((end_hour - start_hour).total_seconds() // 3600) + 1)
         query_start_ts = start_datetime
         query_end_exclusive = end_datetime + timedelta(seconds=1)
     elif (start_date and not end_date) or (end_date and not start_date):
-        raise HTTPException(status_code=400, detail="start_date and end_date must both be provided")
+        raise api_validation_error(
+            "start_date and end_date must both be provided",
+            decision_trace_id="cost-timeseries-date-pair-required",
+        )
     elif start_date and end_date:
         if end_date < start_date:
-            raise HTTPException(status_code=400, detail="end_date must be greater than or equal to start_date")
+            raise api_validation_error(
+                "end_date must be greater than or equal to start_date",
+                decision_trace_id="cost-timeseries-date-order",
+            )
         start_hour = _floor_hour(datetime.combine(start_date, datetime.min.time()))
         end_hour = _floor_hour(datetime.combine(end_date + timedelta(days=1), datetime.min.time()) - timedelta(hours=1))
         bounded_hours = int(((end_hour - start_hour).total_seconds() // 3600) + 1)
         if bounded_hours > 24 * 366:
-            raise HTTPException(status_code=400, detail="date range cannot exceed 1 year")
+            raise api_validation_error(
+                "date range cannot exceed 1 year",
+                decision_trace_id="cost-timeseries-date-range-too-large",
+            )
         query_start_ts = start_hour
         query_end_exclusive = end_hour + timedelta(hours=1)
     else:
@@ -655,6 +714,66 @@ def get_cost_timeseries(
     }
 
 
+@router.get("/cost/comparison", response_model=CostComparisonResponse)
+def get_cost_comparison(
+    period: str = Query(default="monthly"),
+    comparison_mode: str = Query(default="prior_period"),
+    dimension: str = Query(default="all"),
+    scope_filter: Optional[str] = None,
+    timezone: str = Query(default="UTC"),
+    reset_hour_local: int = Query(default=0, ge=0, le=23),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, ROLES_ADMIN_OWNER)
+
+    normalized_dimension = str(dimension or "all").strip().lower()
+    allowed_dimensions = {"all", "user", "team", "group", "request_tag"}
+    if normalized_dimension not in allowed_dimensions:
+        raise api_validation_error(
+            "dimension must be one of: all, user, team, group, request_tag",
+            decision_trace_id="cost-breakdown-dimension-invalid",
+        )
+
+    try:
+        comparison = build_period_comparison(
+            db,
+            period=period,
+            comparison_mode=comparison_mode,
+            timezone=str(timezone or "UTC").strip() or "UTC",
+            reset_hour_local=reset_hour_local,
+            dimension=normalized_dimension,
+            scope_filter=str(scope_filter or "").strip() or None,
+            agent_ids=_owned_agent_ids(db, ctx.actor_id) if ctx.actor_role == ROLE_AGENT_OWNER else None,
+        )
+    except ValueError as exc:
+        raise api_validation_error(str(exc), decision_trace_id="cost-comparison-invalid") from exc
+
+    return {
+        "comparison_period": comparison.comparison_period,
+        "comparison_mode": comparison.comparison_mode,
+        "dimension": normalized_dimension,
+        "scope_filter": str(scope_filter or "").strip() or None,
+        "current": {
+            "label": comparison.current.label,
+            "start": comparison.current.start,
+            "end": comparison.current.end,
+            "spend_cents": comparison.current.spend_cents,
+            "event_count": comparison.current.event_count,
+        },
+        "previous": {
+            "label": comparison.previous.label,
+            "start": comparison.previous.start,
+            "end": comparison.previous.end,
+            "spend_cents": comparison.previous.spend_cents,
+            "event_count": comparison.previous.event_count,
+        },
+        "delta_cents": comparison.delta_cents,
+        "delta_percent": comparison.delta_percent,
+        "trend": comparison.trend,
+    }
+
+
 @router.post("/cost/events", response_model=CostEventResponse)
 def track_spend_event(
     payload: CostTrackSpendRequest,
@@ -670,12 +789,12 @@ def track_spend_event(
         resource_label="spend scope",
     )
     if not _is_budget_scope_manageable(db, ctx, scope_type, scope_id):
-        raise HTTPException(status_code=403, detail="Spend scope is forbidden for this actor")
+        _cost_scope_forbidden(ctx, "Spend scope is forbidden for this actor", "cost-spend-scope-forbidden")
 
     if ctx.actor_role == ROLE_AGENT_OWNER:
         agent = db.query(Agent).filter_by(agent_id=payload.agent_id).first()
         if not agent or agent.owner_id != ctx.actor_id:
-            raise HTTPException(status_code=403, detail="Agent scope is forbidden for this actor")
+            _cost_scope_forbidden(ctx, "Agent scope is forbidden for this actor", "cost-agent-scope-forbidden")
 
     event = CostEvent(
         cost_event_id=str(uuid4()),
@@ -726,6 +845,60 @@ def get_pricing_catalog(
     }
 
 
+@router.get("/cost/models/catalog", response_model=CostModelCatalogResponse)
+def get_model_catalog(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, ROLES_ADMIN_OWNER)
+    model_rates, default_rates = _load_model_token_rates(db)
+    provider_multipliers, endpoint_multipliers = _load_cloud_component_multipliers(db)
+    provider_discounts, model_discounts = _load_provider_discounts(db)
+
+    catalog_rows = []
+    for row in db.query(SupportedModelCatalogEntry).order_by(SupportedModelCatalogEntry.provider_type.asc(), SupportedModelCatalogEntry.model_name.asc()).all():
+        normalized_model = str(row.model_name or "").strip().lower()
+        normalized_provider = str(row.provider_type or "").strip().lower()
+        rates = model_rates.get(normalized_model, default_rates)
+        input_rate = _parse_non_negative_float(rates.get("input_cents_per_1k"), default_rates["input_cents_per_1k"])
+        output_rate = _parse_non_negative_float(rates.get("output_cents_per_1k"), default_rates["output_cents_per_1k"])
+        provider_multiplier = _parse_positive_float(provider_multipliers.get(normalized_provider, 1.0), 1.0)
+        endpoint_multiplier = _parse_positive_float(endpoint_multipliers.get("responses", 1.0), 1.0)
+        provider_discount = max(0.0, min(95.0, _parse_non_negative_float(provider_discounts.get(normalized_provider, 0.0), 0.0)))
+        model_discount = max(0.0, min(95.0, _parse_non_negative_float(model_discounts.get(normalized_model, 0.0), 0.0)))
+        applied_discount = min(95.0, provider_discount + model_discount)
+        estimated_average = ((input_rate + output_rate) / 2.0) * provider_multiplier * endpoint_multiplier * (1.0 - applied_discount / 100.0)
+        ranking_score = float(row.context_window_tokens or 0) / max(1.0, estimated_average)
+        catalog_rows.append(
+            CostModelCatalogItemResponse(
+                supported_model_id=row.supported_model_id,
+                provider_type=row.provider_type,
+                model_name=row.model_name,
+                display_name=row.display_name,
+                context_window_tokens=row.context_window_tokens,
+                status=row.status,
+                input_cents_per_1k=input_rate,
+                output_cents_per_1k=output_rate,
+                provider_multiplier=provider_multiplier,
+                endpoint_multiplier=endpoint_multiplier,
+                provider_discount_percent=provider_discount,
+                model_discount_percent=model_discount,
+                estimated_average_cost_cents_per_1k=round(estimated_average, 4),
+                ranking_score=round(ranking_score, 4),
+            )
+        )
+
+    catalog_rows.sort(key=lambda item: (-item.ranking_score, item.estimated_average_cost_cents_per_1k, item.model_name))
+    return {
+        "catalog": catalog_rows,
+        "default_model_rates": default_rates,
+        "provider_multipliers": provider_multipliers,
+        "endpoint_multipliers": endpoint_multipliers,
+        "provider_discounts": provider_discounts,
+        "model_discounts": model_discounts,
+    }
+
+
 @router.post("/cost/pricing/calculate", response_model=CostPricingCalculateResponse)
 def calculate_cost_pricing(
     payload: CostPricingCalculateRequest,
@@ -764,7 +937,7 @@ def get_session_cost(
     if ctx.actor_role == ROLE_AGENT_OWNER:
         session = db.query(SessionRecord).filter_by(session_id=session_id).first()
         if not session or session.actor_id != ctx.actor_id:
-            raise HTTPException(status_code=403, detail="Session scope is forbidden for this actor")
+            _cost_scope_forbidden(ctx, "Session scope is forbidden for this actor", "cost-session-scope-forbidden")
     return db.query(CostEvent).filter_by(session_id=session_id).order_by(CostEvent.timestamp.desc()).all()
 
 
@@ -778,7 +951,7 @@ def get_agent_cost(
     if ctx.actor_role == ROLE_AGENT_OWNER:
         agent = db.query(Agent).filter_by(agent_id=agent_id).first()
         if not agent or agent.owner_id != ctx.actor_id:
-            raise HTTPException(status_code=403, detail="Agent scope is forbidden for this actor")
+            _cost_scope_forbidden(ctx, "Agent scope is forbidden for this actor", "cost-agent-scope-forbidden")
     return db.query(CostEvent).filter_by(agent_id=agent_id).order_by(CostEvent.timestamp.desc()).all()
 
 
@@ -801,13 +974,14 @@ def create_budget_policy(
         resource_label="budget scope",
     )
     if not _is_budget_scope_manageable(db, ctx, scope_type, scope_id):
-        raise HTTPException(status_code=403, detail="Budget scope is forbidden for this actor")
+        _cost_scope_forbidden(ctx, "Budget scope is forbidden for this actor", "cost-budget-scope-forbidden")
+    validated_window = _validate_window_type(payload.window_type)
     budget = BudgetPolicy(
         budget_policy_id=str(uuid4()),
         scope_type=scope_type,
         scope_id=scope_id,
         budget_amount_cents=payload.budget_amount_cents,
-        window_type=payload.window_type,
+        window_type=validated_window,
         soft_limit_percent=payload.soft_limit_percent,
         hard_limit_percent=payload.hard_limit_percent,
         action_on_soft_limit=payload.action_on_soft_limit,
@@ -838,7 +1012,7 @@ def create_budget_policy(
         "cost_budget_create_completed %s",
         sanitize_fields({"actor_id": ctx.actor_id, "budget_policy_id": budget.budget_policy_id}),
     )
-    return budget
+    return _serialize_budget_policy(budget)
 
 
 @router.get("/cost/budgets", response_model=list[BudgetPolicyResponse])
@@ -875,7 +1049,7 @@ def list_budget_policies(
             | (BudgetPolicy.scope_type == "agent") & (BudgetPolicy.scope_id.in_(owned_agent_ids if owned_agent_ids else ["__none__"]))
         )
 
-    return query.order_by(BudgetPolicy.created_at.desc()).offset(offset).limit(limit).all()
+    return [_serialize_budget_policy(row) for row in query.order_by(BudgetPolicy.created_at.desc()).offset(offset).limit(limit).all()]
 
 
 @router.put("/cost/budgets/{budget_policy_id}", response_model=BudgetPolicyResponse)
@@ -889,9 +1063,9 @@ def update_budget_policy(
 
     budget = db.query(BudgetPolicy).filter_by(budget_policy_id=budget_policy_id).first()
     if not budget:
-        raise HTTPException(status_code=404, detail="Budget policy not found")
+        raise not_found_error("budget_policy", budget_policy_id, decision_trace_id="cost-budget-not-found")
     if not _is_budget_scope_manageable(db, ctx, budget.scope_type, budget.scope_id):
-        raise HTTPException(status_code=403, detail="Budget policy is forbidden for this actor")
+        _cost_scope_forbidden(ctx, "Budget policy is forbidden for this actor", "cost-budget-policy-forbidden")
 
     scope_type, scope_id = normalize_scope_reference(
         db,
@@ -904,9 +1078,9 @@ def update_budget_policy(
     budget.scope_type = scope_type
     budget.scope_id = scope_id
     if not _is_budget_scope_manageable(db, ctx, budget.scope_type, budget.scope_id):
-        raise HTTPException(status_code=403, detail="Target budget scope is forbidden for this actor")
+        _cost_scope_forbidden(ctx, "Target budget scope is forbidden for this actor", "cost-budget-target-scope-forbidden")
     budget.budget_amount_cents = payload.budget_amount_cents
-    budget.window_type = payload.window_type
+    budget.window_type = _validate_window_type(payload.window_type)
     budget.soft_limit_percent = payload.soft_limit_percent
     budget.hard_limit_percent = payload.hard_limit_percent
     budget.action_on_soft_limit = payload.action_on_soft_limit
@@ -933,7 +1107,7 @@ def update_budget_policy(
     )
     db.commit()
     db.refresh(budget)
-    return budget
+    return _serialize_budget_policy(budget)
 
 
 @router.delete("/cost/budgets/{budget_policy_id}", response_model=BudgetPolicyResponse)
@@ -946,10 +1120,10 @@ def delete_budget_policy(
 
     budget = db.query(BudgetPolicy).filter_by(budget_policy_id=budget_policy_id).first()
     if not budget:
-        raise HTTPException(status_code=404, detail="Budget policy not found")
+        raise not_found_error("budget_policy", budget_policy_id, decision_trace_id="cost-budget-not-found")
 
     if not _is_budget_scope_manageable(db, ctx, budget.scope_type, budget.scope_id):
-        raise HTTPException(status_code=403, detail="Budget policy is forbidden for this actor")
+        _cost_scope_forbidden(ctx, "Budget policy is forbidden for this actor", "cost-budget-policy-forbidden")
 
     budget.status = "deleted"
     create_audit_event(
@@ -962,7 +1136,7 @@ def delete_budget_policy(
     )
     db.commit()
     db.refresh(budget)
-    return budget
+    return _serialize_budget_policy(budget)
 
 
 @router.post("/cost/policies/evaluate", response_model=CostPolicyEvaluateResponse)
@@ -995,18 +1169,25 @@ def evaluate_budget_policy(
             "cost_policy_evaluate_budget_not_found %s",
             sanitize_fields({"scope_type": scope_type, "scope_id": scope_id}),
         )
-        raise HTTPException(status_code=404, detail="Active budget policy not found")
+        raise not_found_error("budget_policy", scope_id, decision_trace_id="cost-active-budget-not-found")
 
     if not _is_budget_scope_manageable(db, ctx, scope_type, scope_id):
-        raise HTTPException(status_code=403, detail="Budget scope is forbidden for this actor")
+        _cost_scope_forbidden(ctx, "Budget scope is forbidden for this actor", "cost-budget-scope-forbidden")
 
+    resolved_window = _validate_window_type(payload.window_type or budget.window_type)
     now = datetime.utcnow()
-    after_ts = _window_start_for_budget(budget, payload.window_type)
+    after_ts = window_start_for_budget(budget, resolved_window, now_utc=now)
 
     owner_scope = f"{scope_type}:{scope_id}"
     spend_cents = _sum_cost_cents(db, after_ts=after_ts, owner_scope=owner_scope)
-    burn_rate_cents_per_hour = _sum_cost_cents(db, after_ts=now - timedelta(hours=1), owner_scope=owner_scope)
-    projected_24h_spend_cents = int(spend_cents + (burn_rate_cents_per_hour * 24))
+    projection = project_window_spend(
+        db,
+        owner_scope=owner_scope,
+        budget=budget,
+        window_type=resolved_window,
+        current_spend_cents=spend_cents,
+        now_utc=now,
+    )
 
     effective_budget_cents = _effective_budget_cents(budget)
     utilization = 0.0
@@ -1014,7 +1195,9 @@ def evaluate_budget_policy(
         utilization = round((spend_cents / effective_budget_cents) * 100.0, 2)
     projected_utilization = 0.0
     if effective_budget_cents > 0:
-        projected_utilization = round((projected_24h_spend_cents / effective_budget_cents) * 100.0, 2)
+        projected_utilization = round(
+            (projection.projected_window_spend_cents / effective_budget_cents) * 100.0, 2
+        )
 
     if utilization >= float(budget.hard_limit_percent):
         decision = "deny"
@@ -1062,12 +1245,17 @@ def evaluate_budget_policy(
     return {
         "scope_type": scope_type,
         "scope_id": scope_id,
+        "window_type": resolved_window,
         "spend_cents": spend_cents,
         "budget_cents": budget.budget_amount_cents,
         "effective_budget_cents": effective_budget_cents,
         "utilization_percent": utilization,
-        "projected_24h_spend_cents": projected_24h_spend_cents,
+        "projected_window_spend_cents": projection.projected_window_spend_cents,
         "projected_utilization_percent": projected_utilization,
+        "historical_window_spend_cents": projection.historical_window_spend_cents,
+        "projection_basis": projection.projection_basis,
+        "prior_periods_considered": projection.prior_periods_considered,
+        "projected_24h_spend_cents": projection.projected_window_spend_cents,
         "decision": decision,
         "recommended_action": action,
         "preemptive_throttle": preemptive_throttle,
@@ -1091,7 +1279,11 @@ def list_cost_anomalies(
         ):
             continue
         owner_scope = f"{budget.scope_type}:{budget.scope_id}"
-        spend_cents = _sum_cost_cents(db, after_ts=_window_start_for_budget(budget, budget.window_type), owner_scope=owner_scope)
+        spend_cents = _sum_cost_cents(
+            db,
+            after_ts=window_start_for_budget(budget, budget.window_type),
+            owner_scope=owner_scope,
+        )
         effective_budget_cents = _effective_budget_cents(budget)
         threshold = int((effective_budget_cents * budget.soft_limit_percent) / 100)
         if spend_cents >= threshold:
@@ -1122,7 +1314,7 @@ def evaluate_cost_limits(
 
     actor_id = (payload.actor_id or ctx.actor_id).strip()
     if not actor_id:
-        raise HTTPException(status_code=400, detail="actor_id cannot be empty")
+        raise api_validation_error("actor_id cannot be empty", decision_trace_id="cost-limit-eval-actor-empty")
 
     team_ids = normalize_scope_id_list(db, scope_type=COST_SCOPE_TEAM, scope_ids=payload.team_ids)
     group_ids = normalize_scope_id_list(db, scope_type=COST_SCOPE_GROUP, scope_ids=payload.group_ids)

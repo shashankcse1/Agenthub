@@ -12,6 +12,7 @@ This document defines the canonical documentation hierarchy for implementation s
 4. `backend/docs/governance/litellm-parity-roadmap.md`: parity planning register for pending proxy/router feature deltas.
 5. `backend/docs/governance/litellm-cache-parity-impact-analysis.md`: Phase 3 inference cache short-circuit implementation and deferred LiteLLM cache tracks.
 6. `backend/docs/governance/litellm-rag-parity-impact-analysis.md`: Phase 4 RAG runtime (MCP-first), live probe, and PII hook partial closure.
+6a. `backend/docs/governance/litellm-assistants-parity-impact-analysis.md` (GOV-LITELLM-ASSISTANTS-001): Assistants / fine-tuning / passthrough parity, auth explain, playground drill-down, compliance export, and Part 5 full impact analysis.
 7. `backend/AGENTS.md`: security and role contract that implementation must preserve.
 8. `backend/docs/governance/agent-delivery-checklist.md`: feature/fix-level implementation evidence template across all architecture lenses.
 9. `backend/docs/security/residual-and-accepted-risk-register.md`: accepted risk and compensating controls.
@@ -24,6 +25,7 @@ This document defines the canonical documentation hierarchy for implementation s
 16. `backend/docs/governance/unified-secret-provider-ciso-gap-analysis.md`: unified secret provider gap analysis, control mapping, test matrix, and CISO review checklist for Cursor credential consolidation.
 17. `backend/docs/governance/generic-provider-configuration-review-and-impact-analysis.md`: **Final v1.1 (GOV-GPC-FINAL-001)** — complete classification register, cross-console UI review, consolidated gap register (GAP-GPC + GAP-USP), **full impact analysis (Part 5 §5.1–§5.17)**, multi-lens review, P1 credential bindings design, and operator reference for all cloud AI provider configuration.
 18. `backend/docs/governance/flow-orchestration-notification-impact-analysis.md`: Phase 1 notification channel registry (`gateway.notification_channels_json`), Flow Orchestration `email_send`/`sms_send` nodes, CISO go/no-go for stub vs live send (GOV-FLOW-NOTIFY-001).
+19. `backend/docs/governance/flow-orchestration-iga-impact-analysis.md`: Advanced IGA for orchestration (SoD, staged approval, JIT, certification, entitlement bridge, approval events, explain/posture) (GOV-FLOW-IGA-001).
 
 If two docs conflict, higher-ranked docs win and lower-ranked docs must be corrected in the same change.
 
@@ -97,12 +99,14 @@ Implemented in current state:
 - Discovery UX: horizontal-scroll topology map, Agent Ops & Trace Sources card, functional agent-ops labels, Observability pivot from Discovery.
 - Backend domain layer: `backend/app/domain_constants.py` for code defaults; `backend/app/services/platform_operational.py` for operational posture and feedback analytics; observability summary SQL aggregates in `backend/app/services/observability_summary.py`.
 - Flow Orchestration: n8n-compatible flow definitions (`/orchestration/flows*`), node-type catalog, schema/security validation, prod dual-approval promotion, stub executor with run history, HTTP allowlist via `orchestration.http_allowed_hosts_json`, **email/SMS notification nodes** (`email_send`, `sms_send`) with channel registry (`gateway.notification_channels_json`, `GET /gateway/notification-channels*`), and operator console with step/chain builder (visual canvas Phase 2). Impact analysis: `flow-orchestration-impact-analysis.md` (GOV-FLOW-ORCH-001), `flow-orchestration-notification-impact-analysis.md` (GOV-FLOW-NOTIFY-001).
+- **Assistants / fine-tuning / passthrough parity** (GOV-LITELLM-ASSISTANTS-001): OpenAI-compatible `/v1/assistants*`, `/v1/threads*`, `/v1/fine_tuning/jobs*`, and `POST /v1/passthrough` with owner scoping, prod dual-approval on delete/cancel/passthrough, path allowlist, CP-REF header sanitization, deny-path audit on authz failures, and `environment` on assistant/fine-tuning responses. Routing & Gateway Workspace cards: create/list/retrieve/delete assistants, thread/message/run workflow, fine-tuning create/list/retrieve/cancel, passthrough test with optional headers JSON. Auth explain: Security `POST /auth/authz/explain` (MFA); Gateway authz explain presets for `gateway.assistants.delete`, `gateway.fine_tuning.cancel`, `gateway.passthrough.execute`. Playground: `GET /playground/runs/{run_id}/detail` drill-down tabs. Compliance: `POST /compliance/evidence/export` with `investigation_context` embed and deny audit on missing control (no silent client fallback). Tests: `test_gateway_assistants.py`, `test_gateway_fine_tuning.py`, `test_gateway_passthrough.py`, `test_playground_run_detail.py`, `test_compliance_evidence_export.py` (29 cases). Impact analysis: `litellm-assistants-parity-impact-analysis.md`.
 
 Remaining documented deltas:
 
 1. Remote secret-provider key rotation execution (`POST /keys/{key_id}/rotate-via-secret-provider`) remains audit-delegated without full backend adapter execution.
 2. Legacy `/gateway/cursor-token` API removal scheduled after operator migration window (see GAP-USP-R03 in unified secret provider CISO gap analysis).
 3. Vector/RAG data plane Phase 4 implemented per `memory-context-vector-impact-analysis.md`, `litellm-rag-parity-impact-analysis.md`, and `litellm-cache-parity-impact-analysis.md` (MCP-first `/rag/*`, live probe flag, PII classification hook default off).
+4. Assistants parity residual: live fine-tuning upstream wired (`gateway.fine_tuning.live_enabled`, default off — simulated completion when false; live OpenAI job create/sync/cancel when true). **Closed:** streaming assistant runs; thread/run retrieve UI; SIEM rules UI + dispatch (RSK-ASSIST-05); deferred console surfaces (cost timeseries Telemetry panel, orchestration test-query UI, console surface smoke) — see `deferred-console-parity-completion-plan.md`.
 
 ## REST API Observability Standards
 
@@ -111,7 +115,21 @@ All REST routers use shared helpers in `backend/app/api_errors.py` for operator-
 - `error_code`, `message`, `policy_version`, and `decision_trace_id` are required on structured errors.
 - `AUTHZ_SCOPE_FORBIDDEN`, `RESOURCE_NOT_FOUND`, `VALIDATION_ERROR`, `RESOURCE_CONFLICT`, `AUTHN_INVALID_CREDENTIALS`, and `UPSTREAM_PROVIDER_ERROR` are the canonical codes.
 - Request middleware in `backend/app/main.py` emits trace/info/error logs for every HTTP request.
-- Mutating privileged flows must emit allow/deny audit evidence via `create_audit_event()` at request time when the decision is made (benchmark/scan cancel, agentic policy auto-tune apply, browser security mutations, platform feedback create/triage, and similar).
+- Mutating privileged flows must emit allow/deny audit evidence via `create_audit_event()` at request time when the decision is made (benchmark/scan cancel, agentic policy auto-tune apply, browser security mutations, platform feedback create/triage, **gateway assistant delete / fine-tuning cancel / passthrough execute dual-approval and scope denials**, **compliance evidence export missing-control deny**, and similar).
+
+**Gateway Assistants / fine-tuning / passthrough — persistence and audit**
+
+| Operation | API | Database | Audit `action_type` | Deny audit |
+|---|---|---|---|---|
+| Create assistant | `POST /v1/assistants` | `gateway_assistant_records` | `gateway.assistants.create` | — |
+| Delete assistant | `DELETE /v1/assistants/{id}` | soft-delete status | `gateway.assistants.delete` | prod dual-approval + owner scope → `deny` |
+| Thread message | `POST /v1/threads/{id}/messages` | `gateway_assistant_thread_message_records` | `gateway.threads.messages.create` | — |
+| Thread run | `POST /v1/threads/{id}/runs` | `gateway_assistant_thread_run_records` | (via inference audit path) | 422 if no user message |
+| Fine-tune cancel | `POST /v1/fine_tuning/jobs/{id}/cancel` | status → cancelled | `gateway.fine_tuning.cancel` | prod dual-approval + owner scope → `deny` |
+| Passthrough | `POST /v1/passthrough` | none (proxy) | `gateway.passthrough.execute` | allowlist/scope/dual-approval → `deny` |
+| Compliance export | `POST /compliance/evidence/export` | bundle read | `compliance.evidence.export` | missing control / bundle error → `deny` |
+
+Models: `GatewayAssistant*`, `GatewayFineTuningJobRecord` in `backend/app/models.py`. Services: `gateway_assistants.py`, `gateway_fine_tuning.py`, `gateway_passthrough.py`. Schema bootstrap: `_upgrade_gateway_assistants_schema()` in `backend/app/main.py`.
 
 **Platform operator feedback — persistence and audit (verified)**
 

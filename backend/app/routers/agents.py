@@ -9,6 +9,7 @@ from app.models import Agent, OwnershipEvent, SecretProviderConfig, WorkloadIden
 from app.policy_constants import ROLE_AGENT_OWNER
 from app.router_constants import OWNER_READ_ROLES, OWNER_WRITE_ROLES
 from app.schemas import (
+    AgentRegisterOptionsResponse,
     AgentRegisterRequest,
     AgentResponse,
     OwnershipEventResponse,
@@ -136,6 +137,19 @@ def _create_agent_record(
         sanitize_fields({"actor_id": ctx.actor_id, "agent_id": agent.agent_id}),
     )
     return agent
+
+
+@router.get("/agents/register-options", response_model=AgentRegisterOptionsResponse)
+def get_agent_register_options(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, OWNER_READ_ROLES)
+    allowed_types = sorted(_allowed_agent_types_from_enabled_config(db))
+    return {
+        "allowed_agent_types": allowed_types,
+        "default_environment": "dev",
+    }
 
 
 @router.post("/agents", response_model=AgentResponse)

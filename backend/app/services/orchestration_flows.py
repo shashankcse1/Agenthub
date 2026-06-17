@@ -5,7 +5,7 @@ import json
 import re
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -16,6 +16,7 @@ from app.runtime_constants import (
     RUNTIME_CONFIG_ORCHESTRATION_HTTP_ALLOWED_HOSTS_JSON,
     RUNTIME_CONFIG_ORCHESTRATION_MAX_NODES_PER_FLOW,
     RUNTIME_CONFIG_ORCHESTRATION_PROD_RUN_REQUIRES_APPROVAL,
+    RUNTIME_CONFIG_ORCHESTRATION_PROD_RUN_REQUIRES_ACCESS_CERTIFICATION,
 )
 from app.services.gateway_vector_stores import list_vector_stores
 from app.services.gateway_notification_channels import (
@@ -192,14 +193,14 @@ NODE_TYPE_CATALOG: list[dict[str, Any]] = [
     {
         "type": "email_send",
         "label": "Send Email",
-        "description": "Send email via a gateway notification channel registry entry (Phase 1 simulated).",
+        "description": "Send email via a gateway notification channel registry entry with live provider delivery.",
         "required_config_fields": ["channel_id", "to_template", "subject_template", "body_template"],
         "optional_config_fields": ["from_override"],
     },
     {
         "type": "sms_send",
         "label": "Send SMS",
-        "description": "Send SMS via a gateway notification channel registry entry (Phase 1 simulated).",
+        "description": "Send SMS via a gateway notification channel registry entry with live provider delivery.",
         "required_config_fields": ["channel_id", "to_template", "body_template"],
         "optional_config_fields": ["from_override"],
     },
@@ -270,6 +271,72 @@ def _parse_graph(raw: str) -> dict[str, Any]:
             decision_trace_id="orchestration-graph-shape",
         )
     return {"nodes": nodes, "edges": edges}
+
+
+def _json_path_value(data: Any, json_path: str) -> Any:
+    path = str(json_path or "").strip()
+    if not path or path == "$":
+        return data
+    if not path.startswith("$"):
+        return None
+    current: Any = data
+    remainder = path[1:]
+    if remainder.startswith("."):
+        remainder = remainder[1:]
+    if not remainder:
+        return current
+    tokens = re.split(r"\.(?![^\[]*\])", remainder)
+    for token in tokens:
+        if not token:
+            continue
+        key = token
+        index: Optional[int] = None
+        bracket = re.match(r"^([^\[]+)\[(\d+)\]$", token)
+        if bracket:
+            key = bracket.group(1)
+            index = int(bracket.group(2))
+        if key and isinstance(current, dict):
+            current = current.get(key)
+        elif key:
+            return None
+        if index is not None:
+            if isinstance(current, list) and 0 <= index < len(current):
+                current = current[index]
+            else:
+                return None
+    return current
+
+
+def evaluate_condition(config: dict[str, Any], step_outputs: dict[str, Any]) -> bool:
+    source_node_id = str(config.get("source_node_id") or "").strip()
+    json_path = str(config.get("json_path") or "").strip()
+    operator = str(config.get("operator") or "==").strip()
+    compare_value = config.get("compare_value")
+
+    if source_node_id and json_path:
+        left = _json_path_value(step_outputs.get(source_node_id), json_path)
+    else:
+        left = config.get("expression")
+
+    if operator == "exists":
+        return left is not None and left != ""
+    if operator == "contains":
+        return str(compare_value or "") in str(left or "")
+    if operator == "==":
+        return str(left) == str(compare_value)
+    if operator == "!=":
+        return str(left) != str(compare_value)
+    if operator == ">":
+        try:
+            return float(left) > float(compare_value)
+        except (TypeError, ValueError):
+            return False
+    if operator == "<":
+        try:
+            return float(left) < float(compare_value)
+        except (TypeError, ValueError):
+            return False
+    return True
 
 
 def _scan_inline_secrets(value: Any, path: str = "") -> list[str]:
@@ -817,6 +884,8 @@ def serialize_flow(row: Any) -> dict[str, Any]:
         "trigger_type": row.trigger_type,
         "trigger_config_json": row.trigger_config_json,
         "graph_json": row.graph_json,
+        "access_policy_json": getattr(row, "access_policy_json", None) or "{}",
+        "approval_stage_state_json": getattr(row, "approval_stage_state_json", None) or "{}",
         "approval_status": row.approval_status,
         "metadata_version": row.metadata_version,
         "created_by": row.created_by,
@@ -826,8 +895,8 @@ def serialize_flow(row: Any) -> dict[str, Any]:
     }
 
 
-def serialize_run(row: Any) -> dict[str, Any]:
-    return {
+def serialize_run(row: Any, *, flow_name: Optional[str] = None) -> dict[str, Any]:
+    payload = {
         "run_id": row.run_id,
         "flow_id": row.flow_id,
         "status": row.status,
@@ -836,7 +905,11 @@ def serialize_run(row: Any) -> dict[str, Any]:
         "trace_id": row.trace_id,
         "step_results_json": row.step_results_json,
         "error_summary": row.error_summary,
+        "execution_state_json": getattr(row, "execution_state_json", None),
     }
+    if flow_name is not None:
+        payload["flow_name"] = flow_name
+    return payload
 
 
 def _stub_node_output(node_type: str, config: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
@@ -862,6 +935,10 @@ def _stub_node_output(node_type: str, config: dict[str, Any], *, dry_run: bool) 
             "simulated": True,
             "url": config.get("url"),
             "method": config.get("method"),
+            "status_code": 200,
+            "status": 200,
+            "data": {"approved": True, "email": "stub@example.com"},
+            "body_preview": '{"approved":true}',
             "dry_run": dry_run,
         }
     if node_type == "condition":
@@ -903,6 +980,7 @@ def _stub_node_output(node_type: str, config: dict[str, Any], *, dry_run: bool) 
             "query_template": config.get("query_template"),
             "top_k": config.get("top_k"),
             "matches": [],
+            "chunks": [],
             "match_count": 0,
         }
     if node_type == "wait_delay":
@@ -965,16 +1043,20 @@ def _execute_single_stub_node(
     *,
     dry_run: bool,
     trace_id: str,
+    step_outputs: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     node_id = str(node.get("id") or "")
     node_type = str(node.get("type") or "")
     config = node.get("config") if isinstance(node.get("config"), dict) else {}
+    output = _stub_node_output(node_type, config, dry_run=dry_run)
+    if node_type == "condition" and step_outputs is not None:
+        output["matched"] = evaluate_condition(config, step_outputs)
     return {
         "node_id": node_id,
         "node_type": node_type,
         "status": "simulated" if dry_run else "completed",
         "trace_id": trace_id,
-        "output": _stub_node_output(node_type, config, dry_run=dry_run),
+        "output": output,
     }
 
 
@@ -998,67 +1080,95 @@ def _collect_branch_node_ids(
     return ordered
 
 
-async def _execute_branch_stub_async(
-    branch_node_ids: list[str],
-    nodes_by_id: dict[str, dict[str, Any]],
-    *,
-    dry_run: bool,
-    trace_id: str,
-) -> list[dict[str, Any]]:
-    results: list[dict[str, Any]] = []
-    for node_id in branch_node_ids:
-        node = nodes_by_id.get(node_id)
-        if not node:
+def _mark_branch_skipped(
+    branch_head: str,
+    condition_node_id: str,
+    outgoing: dict[str, list[str]],
+    incoming: dict[str, list[str]],
+    completed: set[str],
+) -> None:
+    head = str(branch_head or "").strip()
+    if not head:
+        return
+    to_skip: set[str] = set()
+    queue = [head]
+    while queue:
+        node_id = queue.pop(0)
+        if node_id in to_skip:
             continue
-        results.append(_execute_single_stub_node(node, dry_run=dry_run, trace_id=trace_id))
-    return results
+        preds = incoming.get(node_id, [])
+        external = [pred for pred in preds if pred != condition_node_id and pred not in to_skip]
+        if external:
+            continue
+        to_skip.add(node_id)
+        for successor in outgoing.get(node_id, []):
+            queue.append(successor)
+    completed.update(to_skip)
 
 
-def _execute_parallel_branches_stub(
+def _execute_parallel_branches(
     fork_id: str,
     join_id: str,
     nodes_by_id: dict[str, dict[str, Any]],
     outgoing: dict[str, list[str]],
     *,
-    dry_run: bool,
     trace_id: str,
+    node_executor: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
+    step_outputs: dict[str, Any],
 ) -> list[list[dict[str, Any]]]:
     branch_heads = [target for target in outgoing.get(fork_id, []) if target != join_id]
+    results: list[list[dict[str, Any]]] = []
+    for branch_head in branch_heads:
+        branch_ids = _collect_branch_node_ids(branch_head, join_id, outgoing)
+        branch_outputs = dict(step_outputs)
+        branch_steps: list[dict[str, Any]] = []
+        for node_id in branch_ids:
+            node = nodes_by_id.get(node_id)
+            if not node:
+                continue
+            step = node_executor(node, branch_outputs)
+            branch_steps.append(step)
+        for step in branch_steps:
+            node_id = str(step.get("node_id") or "")
+            if node_id:
+                step_outputs[node_id] = step.get("output")
+        results.append(branch_steps)
+    return results
 
-    async def _run_all() -> list[list[dict[str, Any]]]:
-        tasks = []
-        for branch_head in branch_heads:
-            branch_ids = _collect_branch_node_ids(branch_head, join_id, outgoing)
-            tasks.append(
-                _execute_branch_stub_async(branch_ids, nodes_by_id, dry_run=dry_run, trace_id=trace_id)
-            )
-        return list(await asyncio.gather(*tasks))
 
-    return asyncio.run(_run_all())
-
-
-def execute_flow_stub(
+def _execute_flow_graph(
     *,
-    flow_id: str,
     graph_json: str,
     dry_run: bool,
     trace_id: str,
+    node_executor: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
+    step_outputs: Optional[dict[str, Any]] = None,
+    fail_on_node_error: bool = False,
+    initial_completed: Optional[set[str]] = None,
+    initial_step_results: Optional[list[dict[str, Any]]] = None,
+    resume_from_node_id: Optional[str] = None,
 ) -> tuple[str, list[dict[str, Any]], Optional[str]]:
     graph = _parse_graph(graph_json)
     nodes = [node for node in graph["nodes"] if isinstance(node, dict)]
     edges = [edge for edge in graph["edges"] if isinstance(edge, dict)]
     nodes_by_id, outgoing, incoming = _build_graph_indexes(nodes, edges)
 
-    step_results: list[dict[str, Any]] = []
+    outputs = step_outputs if step_outputs is not None else {}
+    step_results: list[dict[str, Any]] = list(initial_step_results or [])
     error_summary: Optional[str] = None
-    completed: set[str] = set()
+    completed: set[str] = set(initial_completed or set())
     skipped_joins: set[str] = set()
+    awaiting_approval = False
 
     entry_nodes = [node_id for node_id in nodes_by_id if not incoming.get(node_id)]
     if not entry_nodes and nodes_by_id:
         entry_nodes = [next(iter(nodes_by_id))]
 
-    ready = list(entry_nodes)
+    if resume_from_node_id:
+        resume_id = str(resume_from_node_id).strip()
+        ready = [successor for successor in outgoing.get(resume_id, []) if successor not in completed]
+    else:
+        ready = [node_id for node_id in entry_nodes if node_id not in completed]
     while ready:
         node_id = ready.pop(0)
         if node_id in completed or node_id in skipped_joins:
@@ -1081,20 +1191,21 @@ def execute_flow_stub(
             ]
             join_id = join_candidates[0] if join_candidates else ""
             branch_results = (
-                _execute_parallel_branches_stub(
+                _execute_parallel_branches(
                     node_id,
                     join_id,
                     nodes_by_id,
                     outgoing,
-                    dry_run=dry_run,
                     trace_id=trace_id,
+                    node_executor=node_executor,
+                    step_outputs=outputs,
                 )
                 if join_id
                 else []
             )
-            fork_result = _execute_single_stub_node(node, dry_run=dry_run, trace_id=trace_id)
+            fork_result = node_executor(node, outputs)
             fork_result["output"] = {
-                **fork_result["output"],
+                **fork_result.get("output", {}),
                 "branch_count": len(branch_results),
                 "branches": branch_results,
             }
@@ -1105,12 +1216,21 @@ def execute_flow_stub(
                 for branch_step in branch:
                     completed.add(branch_step["node_id"])
                     step_results.append(branch_step)
+                    if fail_on_node_error and branch_step.get("status") == "failed":
+                        error_summary = f"Node {branch_step.get('node_id')} failed during parallel execution"
+                        ready.clear()
+                        break
+                if error_summary:
+                    break
+
+            if error_summary:
+                break
 
             if join_id and join_id in nodes_by_id:
                 join_node = nodes_by_id[join_id]
-                join_result = _execute_single_stub_node(join_node, dry_run=dry_run, trace_id=trace_id)
+                join_result = node_executor(join_node, outputs)
                 join_result["output"] = {
-                    **join_result["output"],
+                    **join_result.get("output", {}),
                     "branch_count": len(branch_results),
                 }
                 step_results.append(join_result)
@@ -1125,8 +1245,35 @@ def execute_flow_stub(
             completed.add(node_id)
             continue
 
-        step_results.append(_execute_single_stub_node(node, dry_run=dry_run, trace_id=trace_id))
+        step_result = node_executor(node, outputs)
+        step_results.append(step_result)
+        if step_result.get("status") == "awaiting_approval":
+            awaiting_approval = True
+            break
         completed.add(node_id)
+        if fail_on_node_error and step_result.get("status") == "failed":
+            error_summary = f"Node {step_result.get('node_id')} failed"
+            break
+
+        if node_type == "condition":
+            matched = bool((step_result.get("output") or {}).get("matched"))
+            true_branch = str(config.get("true_branch") or "").strip()
+            false_branch = str(config.get("false_branch") or "").strip()
+            if true_branch or false_branch:
+                chosen = true_branch if matched else false_branch
+                skipped = false_branch if matched else true_branch
+                if skipped:
+                    _mark_branch_skipped(skipped, node_id, outgoing, incoming, completed)
+                if chosen and chosen in nodes_by_id:
+                    ready.append(chosen)
+                else:
+                    for successor in outgoing.get(node_id, []):
+                        if successor in completed or successor in skipped_joins:
+                            continue
+                        preds = incoming.get(successor, [])
+                        if all(pred in completed or pred in skipped_joins for pred in preds):
+                            ready.append(successor)
+                continue
 
         for successor in outgoing.get(node_id, []):
             if successor in completed or successor in skipped_joins:
@@ -1135,10 +1282,45 @@ def execute_flow_stub(
             if all(pred in completed or pred in skipped_joins for pred in preds):
                 ready.append(successor)
 
-    status = "completed"
-    if dry_run:
+    if awaiting_approval:
+        return "awaiting_approval", step_results, error_summary
+    status = "failed" if error_summary else "completed"
+    if dry_run and not error_summary:
         status = "dry_run_completed"
     return status, step_results, error_summary
+
+
+def execute_flow_stub(
+    *,
+    flow_id: str,
+    graph_json: str,
+    dry_run: bool,
+    trace_id: str,
+) -> tuple[str, list[dict[str, Any]], Optional[str]]:
+    def stub_executor(node: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]:
+        return _execute_single_stub_node(
+            node,
+            dry_run=dry_run,
+            trace_id=trace_id,
+            step_outputs=outputs,
+        )
+
+    status, step_results, error_summary = _execute_flow_graph(
+        graph_json=graph_json,
+        dry_run=dry_run,
+        trace_id=trace_id,
+        node_executor=stub_executor,
+    )
+    return status, step_results, error_summary
+
+
+def prod_run_requires_access_certification(db: Session) -> bool:
+    raw = get_runtime_config(
+        db,
+        RUNTIME_CONFIG_ORCHESTRATION_PROD_RUN_REQUIRES_ACCESS_CERTIFICATION,
+        "true",
+    ).strip().lower()
+    return raw not in {"0", "false", "no"}
 
 
 def security_policy_snapshot(db: Session) -> dict[str, Any]:
@@ -1146,5 +1328,6 @@ def security_policy_snapshot(db: Session) -> dict[str, Any]:
         "http_allowed_hosts": _load_http_allowlist(db),
         "max_nodes_per_flow": get_runtime_config_int(db, RUNTIME_CONFIG_ORCHESTRATION_MAX_NODES_PER_FLOW, 50),
         "prod_run_requires_approval": prod_run_requires_approval(db),
+        "prod_run_requires_access_certification": prod_run_requires_access_certification(db),
         "max_parallel_branches": MAX_PARALLEL_BRANCHES,
     }

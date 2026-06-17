@@ -1,443 +1,961 @@
-<section id="providers" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Tenant Directory</h3>
-              <button id="resetTenantCatalogForm" class="ghost" type="button">Reset Form</button>
-            </div>
-            <form id="tenantCatalogForm" class="form-grid">
-              <input type="hidden" name="existing_tenant_id" />
-              <label>Tenant ID<input name="tenant_id" required placeholder="tenant-platform" /></label>
-              <label>Tenant Name<input name="tenant_name" required placeholder="Platform Operations" /></label>
-              <label>
-                Tenant Type
-                <select name="tenant_type">
-                  <option value="enterprise" selected>enterprise</option>
-                  <option value="regulated">regulated</option>
-                  <option value="sandbox">sandbox</option>
-                  <option value="shared-services">shared-services</option>
-                  <option value="internal">internal</option>
-                </select>
-              </label>
-              <label>
-                Status
-                <select name="status">
-                  <option value="active" selected>active</option>
-                  <option value="inactive">inactive</option>
-                </select>
-              </label>
-              <label class="wide-field">Description<input name="description" placeholder="Tenant description visible during provider onboarding" /></label>
-              <button type="submit" class="primary">Save Tenant</button>
-            </form>
-            <p id="tenantCatalogResult" class="mono"></p>
-            <div class="card-head">
-              <h4>Tenant Records</h4>
-              <button id="loadTenantCatalog" class="ghost" type="button">Load</button>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Tenant directory records</caption>
-                <thead>
-                  <tr><th>Tenant ID</th><th>Name</th><th>Type</th><th>Status</th><th>Description</th><th>Updated</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="tenantCatalogTable"></tbody>
-              </table>
-            </div>
-          </article>
+<section id="providers" class="view providers-view runtime-config-view">
+  <article class="card runtime-config-hero">
+    <div class="card-head">
+      <h3>Providers Console</h3>
+      <button id="refreshProvidersConsole" class="ghost" type="button">Refresh All</button>
+    </div>
+    <p class="card-lead">
+      Govern <strong>tenant scope</strong>, <strong>workload identity federation</strong>, <strong>secret backends</strong>, and the <strong>supported model catalog</strong> that routing and agents consume.
+      Every provider record is tenant-bound; start with tenants, then onboard identity or secret providers, validate trust, and publish models with approvals.
+    </p>
+    <p id="providersConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading provider inventory…</p>
+    <div class="providers-tenant-search-bar view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Tenant
+          <input id="tenantCatalogSearch" class="view-page-search-input" data-view-search-input type="search" placeholder="Filter tenant directory and provider tables" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Providers console sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-providers-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-providers-console-tab="tenants">Tenants</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-providers-console-tab="workload">Workload Identity</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-providers-console-tab="secrets">Secret Providers</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-providers-console-tab="models">Models &amp; Entitlements</button>
+    </div>
+  </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Onboard Workload Identity Provider</h3>
-            </div>
-            <form id="createWorkloadIdentityProviderForm" class="form-grid">
-              <label>
-                Tenant
-                <select name="tenant_id" data-tenant-select required>
-                  <option value="" selected disabled>Loading tenants...</option>
-                </select>
-              </label>
-              <label>Tenant Name<input name="tenant_name_display" readonly placeholder="Selected tenant name" /></label>
-              <label>
-                Tenant Type
-                <select name="tenant_type_display" disabled>
-                  <option value="" selected>Choose tenant first</option>
-                </select>
-              </label>
-              <label class="wide-field">Tenant Description<input name="tenant_description_display" readonly placeholder="Selected tenant description" /></label>
-              <label>
-                Provider Type
-                <select name="provider_type" data-provider-type-select required>
-                  <option value="" selected disabled>Loading provider types...</option>
-                </select>
-              </label>
-              <label>Audience<input name="audience" required placeholder="sts.amazonaws.com or api://client-id" /></label>
-              <label>Role ARN / Equivalent<input name="role_arn_or_equivalent" required placeholder="arn:aws:iam::123456789012:role/app-role" /></label>
-              <label>Bootstrap Token<input name="bootstrap_token" type="password" placeholder="Optional setup token or federated bootstrap secret" /></label>
-              <label>Session TTL (s)<input name="session_duration_seconds" type="number" min="60" max="86400" step="60" value="3600" /></label>
-              <label class="wide-field">Allowed Subject Patterns JSON<input name="allowed_subject_patterns" value='[]' placeholder='["agent-*", "team/platform/*"]' /></label>
-              <p class="field-help mono">Examples: ["agent-*", "team/platform/*"] | ["service-account:build-*", "org/dev/*"]</p>
-              <button type="submit" class="primary">Create Workload Provider</button>
-            </form>
-            <p id="createWorkloadIdentityProviderResult" class="mono"></p>
-          </article>
+  <div data-providers-console-panel="overview" class="runtime-console-panel active">
+    <article class="card">
+      <div class="card-head">
+        <h4>How Providers Fit Together</h4>
+      </div>
+      <div class="runtime-workflow-steps providers-onboarding-steps" aria-label="Recommended provider onboarding workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Register tenants</strong>
+          <span>Create tenant records that scope workload profiles, secret backends, and model entitlements.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Store credentials</strong>
+          <span>Pick an <em>AI provider</em> (OpenAI, Anthropic, Cursor…), register a <em>secret backend</em> (<code>db</code>/Vault/AWS), then store the API key.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Bind consumers</strong>
+          <span>Link stored credentials to agents, gateway, or routes via <strong>Credential Bindings</strong> (or the Cursor gateway shortcut).</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>4. Publish models</strong>
+          <span>Register <em>model IDs</em> (e.g. <code>gpt-4o-mini</code>) under each AI provider; grant tenant entitlements.</span>
+        </div>
+      </div>
+      <div class="chip-row providers-quick-nav" aria-label="Jump to provider workspaces">
+        <button type="button" class="chip" data-providers-console-tab-jump="tenants">Tenant Directory</button>
+        <button type="button" class="chip" data-providers-console-tab-jump="workload">Workload Identity</button>
+        <button type="button" class="chip" data-providers-console-tab-jump="secrets">Secret Providers</button>
+        <button type="button" class="chip" data-providers-console-tab-jump="secrets" data-providers-scroll-target="providersCredentialBindings">Credential Bindings</button>
+        <button type="button" class="chip" data-providers-console-tab-jump="secrets" data-providers-scroll-target="providersSecretValueStore">Store Secret Value</button>
+        <button type="button" class="chip" data-providers-console-tab-jump="models">Models Catalog</button>
+      </div>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Workload Identity Providers</h3>
-              <button id="loadWorkloadIdentityProviders" class="ghost" type="button">Load</button>
-            </div>
-            <form id="workloadIdentityProviderFilters" class="form-grid">
-              <label>
-                Tenant
-                <select name="tenant_id" data-tenant-select data-tenant-optional>
-                  <option value="">All tenants</option>
-                </select>
-              </label>
-              <label>
-                Provider Type
-                <select name="provider_type" data-provider-type-select>
-                  <option value="" selected>All provider types</option>
-                </select>
-              </label>
-              <label>Status<input name="status" placeholder="active" value="active" /></label>
-              <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="50" /></label>
-              <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
-              <button type="submit" class="ghost">Apply Filters</button>
-            </form>
-            <p id="workloadIdentityProvidersResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Workload identity providers</caption>
-                <thead>
-                  <tr><th>Provider ID</th><th>Tenant ID</th><th>Tenant Name</th><th>Tenant Type</th><th>Tenant Description</th><th>Type</th><th>Status</th><th>Audience</th><th>Session TTL</th><th>Last Exchange</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="workloadIdentityProvidersTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <article class="card providers-taxonomy-card">
+      <div class="card-head">
+        <h4>Three Layers — Do Not Mix These Up</h4>
+      </div>
+      <div class="providers-taxonomy-grid" role="list">
+        <div class="providers-taxonomy-item" role="listitem">
+          <strong>Secret backend</strong>
+          <span>Where keys are stored: <code>db</code>, Vault, AWS SM, Azure KV. Used in <strong>Onboard Secret Provider</strong> only.</span>
+        </div>
+        <div class="providers-taxonomy-item" role="listitem">
+          <strong>AI provider</strong>
+          <span>Which vendor API you call: OpenAI, Anthropic, Cursor, AWS Bedrock. Used when storing keys, bindings, and model catalog.</span>
+        </div>
+        <div class="providers-taxonomy-item" role="listitem">
+          <strong>Model ID</strong>
+          <span>Which LLM to run: <code>gpt-4o-mini</code>, <code>claude-3-5-sonnet</code>. Registered under an AI provider in <strong>Models &amp; Entitlements</strong>.</span>
+        </div>
+      </div>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Workload Trust and Health</h3>
-            </div>
-            <form id="workloadIdentityTrustForm" class="form-grid">
-              <label>Provider ID<input name="provider_id" required placeholder="workload-identity-profile-id" /></label>
-              <label>
-                Tenant
-                <select name="tenant_id" data-tenant-select required>
-                  <option value="" selected disabled>Loading tenants...</option>
-                </select>
-              </label>
-              <label>Check Type<input name="check_type" value="trust_policy" /></label>
-              <label>Expected Audience<input name="expected_audience" placeholder="Optional expected audience" /></label>
-              <label>
-                Simulate Pass
-                <select name="simulate_pass">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <button type="submit" class="primary">Validate Trust</button>
-            </form>
-            <form id="workloadIdentityHealthForm" class="form-grid">
-              <label>Provider ID<input name="provider_id" required placeholder="workload-identity-profile-id" /></label>
-              <label>
-                Tenant
-                <select name="tenant_id" data-tenant-select required>
-                  <option value="" selected disabled>Loading tenants...</option>
-                </select>
-              </label>
-              <div class="inline-row">
-                <button type="submit" class="ghost">Load Health</button>
-                <button id="loadWorkloadTrustEvidence" type="button" class="ghost">Load Trust Evidence</button>
-              </div>
-            </form>
-            <p id="workloadIdentityTrustResult" class="mono"></p>
-            <pre id="workloadIdentityTrustDetails" class="mono"></pre>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Workload identity trust validation evidence</caption>
-                <thead>
-                  <tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Outcome</th><th>Trace</th></tr>
-                </thead>
-                <tbody id="workloadTrustEvidenceTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <article class="card">
+      <div class="card-head">
+        <h4>Operator Guide by Area</h4>
+      </div>
+      <div class="runtime-workflow-steps providers-guide-grid" aria-label="Operator guide by area">
+        <div class="runtime-workflow-step">
+          <strong>Tenant Directory</strong>
+          <span>Tenants partition provider configuration. Use regulated or sandbox types to signal approval expectations. Every onboard form requires a tenant selection. API: POST/GET/PUT /providers/tenants</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>Workload Identity</strong>
+          <span>Federate agent and service identities to cloud IAM. Configure audience, role ARN, subject patterns, and session TTL. Use Test, Trust, and Exchange Token to validate runtime federation. API: /auth/workload-identity/*</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>Secret Providers</strong>
+          <span>Register a <em>secret backend</em>, store API keys by <em>AI provider</em>, bind agents/gateway via Credential Bindings. API: /secrets/providers/* and /providers/credential-bindings/*</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>Models &amp; Entitlements</strong>
+          <span>Publish routable models with rationale and approval tickets; grant per-tenant entitlements for agent and gateway access. API: /providers/models/* and /providers/tenant-model-entitlements/*</span>
+        </div>
+      </div>
+      <details class="help-details runtime-help-details">
+        <summary>When should I use workload identity vs secret providers?</summary>
+        <p class="profile-note">
+          <strong>Workload identity</strong> is for short-lived access tokens exchanged at runtime (agents calling cloud APIs without embedding long-lived secrets).
+          <strong>Secret providers</strong> are for reading and renewing secret material (API keys, Cursor tokens in <code>db</code> or external vaults, database credentials).
+          Many deployments use both: workload identity for compute federation and secret providers for key vault access.
+        </p>
+      </details>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Workload Token Exchange</h3>
-            </div>
-            <form id="workloadTokenExchangeForm" class="form-grid">
-              <label>
-                Tenant
-                <select name="tenant_id" data-tenant-select required>
-                  <option value="" selected disabled>Loading tenants...</option>
-                </select>
-              </label>
-              <label>Profile ID<input name="workload_identity_profile_id" required placeholder="workload-identity-profile-id" /></label>
-              <label>Subject<input name="subject" value="svc:connectivity-test" /></label>
-              <button type="submit" class="primary">Exchange Token</button>
-            </form>
-            <p id="workloadTokenExchangeResult" class="mono"></p>
-          </article>
+  <div data-providers-console-panel="tenants" class="runtime-console-panel" hidden>
+    <article class="card providers-form-card">
+      <div class="card-head">
+        <h4>Tenant Directory</h4>
+        <button id="loadTenantCatalog" class="ghost" type="button">Refresh Tenants</button>
+      </div>
+      <p class="card-lead">Tenants are the top-level scope for all provider resources. Create or edit a tenant before onboarding workload or secret providers. To retire a tenant, use <strong>Deactivate</strong> in the table — there is no hard delete; inactive tenants are hidden from new onboarding pickers.</p>
+      <div class="runtime-workflow-steps" aria-label="Tenant workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Define tenant</strong>
+          <span>Choose ID, display name, and type (enterprise, regulated, sandbox).</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Save</strong>
+          <span>Creates or updates the tenant record used by provider pickers.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Deactivate when done</strong>
+          <span>Use Deactivate in Tenant Records, or set Status to inactive when editing. Reactivate restores onboarding access.</span>
+        </div>
+      </div>
+      <details class="help-details runtime-help-details">
+        <summary>Deactivate vs delete</summary>
+        <p class="profile-note">Tenants cannot be deleted because workload profiles, secret providers, and entitlements may still reference them. Deactivating blocks new provider onboarding for that tenant while preserving audit history. Existing provider records tied to the tenant remain visible in their lists.</p>
+      </details>
+      <form id="tenantCatalogForm" class="form-grid providers-tenant-form">
+        <input type="hidden" name="existing_tenant_id" />
+        <p id="tenantCatalogFormMode" class="runtime-editor-mode" aria-live="polite">Create mode — enter a new tenant ID.</p>
+        <label>Tenant ID<input name="tenant_id" required placeholder="tenant-platform" autocomplete="off" /></label>
+        <label>Tenant Name<input name="tenant_name" required placeholder="Platform Operations" /></label>
+        <label>
+          Tenant Type
+          <select name="tenant_type">
+            <option value="enterprise" selected>enterprise</option>
+            <option value="regulated">regulated</option>
+            <option value="sandbox">sandbox</option>
+            <option value="shared-services">shared-services</option>
+            <option value="internal">internal</option>
+          </select>
+        </label>
+        <label>
+          Status
+          <select name="status">
+            <option value="active" selected>active</option>
+            <option value="inactive">inactive</option>
+          </select>
+        </label>
+        <label class="wide-field">Description<input name="description" placeholder="Purpose, data classification, and operator notes for this tenant" /></label>
+        <div class="inline-actions">
+          <button id="saveTenantCatalogButton" type="submit" class="primary">Save Tenant</button>
+          <button id="resetTenantCatalogForm" class="ghost" type="button">Reset Form</button>
+        </div>
+      </form>
+      <p id="tenantCatalogResult" class="runtime-feedback mono"></p>
+      <div class="providers-tenant-table-search view-page-search-row">
+        <label class="view-page-search-label">
+          Search Tenants
+          <input id="tenantCatalogTableSearch" class="view-page-search-input" type="search" placeholder="Filter by tenant ID, name, type, or status" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button id="searchTenantCatalogTable" type="button" class="primary view-page-search-btn">Search</button>
+          <button id="clearTenantCatalogTable" type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p id="tenantCatalogTableSearchStatus" class="view-page-search-status mono" aria-live="polite"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Tenant directory records</caption>
+          <thead>
+            <tr><th>Tenant ID</th><th>Name</th><th>Type</th><th>Status</th><th>Description</th><th>Updated</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="tenantCatalogTable" data-table-search-skip="true"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Onboard Secret Provider</h3>
-            </div>
-            <form id="createSecretProviderForm" class="form-grid">
-              <label>
-                Tenant
-                <select name="tenant_id" data-tenant-select required>
-                  <option value="" selected disabled>Loading tenants...</option>
-                </select>
-              </label>
-              <label>Tenant Name<input name="tenant_name_display" readonly placeholder="Selected tenant name" /></label>
-              <label>
-                Tenant Type
-                <select name="tenant_type_display" disabled>
-                  <option value="" selected>Choose tenant first</option>
-                </select>
-              </label>
-              <label class="wide-field">Tenant Description<input name="tenant_description_display" readonly placeholder="Selected tenant description" /></label>
-              <label>
-                Provider Type
-                <select name="provider_type" data-provider-type-select required>
-                  <option value="" selected disabled>Loading provider types...</option>
-                </select>
-              </label>
-              <label>Provider Address<input name="provider_address" required placeholder="https://vault.internal:8200" /></label>
-              <label>Auth Method<input name="auth_method" required placeholder="iam | approle | managed-identity" /></label>
-              <label>Role / Mount<input name="role_or_mount" required placeholder="role-name or auth mount" /></label>
-              <label>Bootstrap Token<input name="bootstrap_token" type="password" placeholder="Optional provider bootstrap token" /></label>
-              <label>Lease TTL (s)<input name="lease_ttl_seconds" type="number" min="60" max="86400" step="60" value="3600" /></label>
-              <label>
-                Auto Renew
-                <select name="auto_renew_enabled">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="wide-field">Secret Path Prefixes JSON<input name="secret_path_prefixes" value='[]' placeholder='["kv/data/platform/","secret/apps/"]' /></label>
-              <button type="submit" class="primary">Create Secret Provider</button>
-            </form>
-            <p id="createSecretProviderResult" class="mono"></p>
-          </article>
+  <div data-providers-console-panel="workload" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Onboard Workload Identity Provider</h4>
+      </div>
+      <p class="card-lead">Register a federated identity profile so agents and services can exchange short-lived tokens without storing long-lived cloud credentials in the platform.</p>
+      <details class="help-details runtime-help-details">
+        <summary>AI vendor credentials (OpenAI, Anthropic, Cohere, …)</summary>
+        <p class="profile-note">
+          Workload profiles for AI vendors do <strong>not</strong> store API keys in this form. Production deployments inject short-lived tokens at runtime via environment variables such as
+          <code>OPENAI_WORKLOAD_IDENTITY_ACCESS_TOKEN</code>, <code>ANTHROPIC_WORKLOAD_IDENTITY_ACCESS_TOKEN</code>, and similar prefixes per vendor.
+          Use <strong>Test</strong> and <strong>Exchange Token</strong> after ops configures the sidecar or host env.
+          For platform-encrypted storage instead, create a <code>db</code> secret provider and use <strong>Store Secret Value</strong> with refs like <code>providers/openai/api-key</code>.
+        </p>
+      </details>
+      <details class="help-details runtime-help-details">
+        <summary>Field reference — workload identity onboarding</summary>
+        <ul class="profile-note">
+          <li><strong>Audience</strong> — Token audience expected by the cloud STS or identity endpoint (e.g. <code>sts.amazonaws.com</code>).</li>
+          <li><strong>Role ARN / Equivalent</strong> — IAM role or cloud role binding the workload may assume.</li>
+          <li><strong>Subject patterns</strong> — JSON list of allowed subject prefixes (e.g. <code>["agent-*"]</code>).</li>
+          <li><strong>Session TTL</strong> — Maximum token lifetime in seconds (60–86400).</li>
+        </ul>
+      </details>
+      <form id="createWorkloadIdentityProviderForm" class="form-grid">
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select required>
+            <option value="" selected disabled>Loading tenants...</option>
+          </select>
+        </label>
+        <label>Tenant Name<input name="tenant_name_display" readonly placeholder="Selected tenant name" /></label>
+        <label>
+          Tenant Type
+          <select name="tenant_type_display" disabled>
+            <option value="" selected>Choose tenant first</option>
+          </select>
+        </label>
+        <label class="wide-field">Tenant Description<input name="tenant_description_display" readonly placeholder="Selected tenant description" /></label>
+        <label>
+          Cloud / Vendor Identity
+          <select name="provider_type" data-workload-provider-type-select required>
+            <option value="" selected disabled>Loading identity providers...</option>
+          </select>
+        </label>
+        <label>Audience<input name="audience" required placeholder="sts.amazonaws.com or api://client-id" /></label>
+        <label>Role ARN / Equivalent<input name="role_arn_or_equivalent" required placeholder="arn:aws:iam::123456789012:role/app-role" /></label>
+        <label>Bootstrap Token<input name="bootstrap_token" type="password" placeholder="Optional setup token or federated bootstrap secret" /></label>
+        <label>Session TTL (s)<input name="session_duration_seconds" type="number" min="60" max="86400" step="60" value="3600" /></label>
+        <label class="wide-field">Allowed Subject Patterns JSON<input name="allowed_subject_patterns" value='[]' placeholder='["agent-*", "team/platform/*"]' /></label>
+        <p class="field-help mono">Examples: ["agent-*", "team/platform/*"] | ["service-account:build-*", "org/dev/*"]</p>
+        <button type="submit" class="primary">Create Workload Provider</button>
+      </form>
+      <p id="createWorkloadIdentityProviderResult" class="runtime-feedback mono"></p>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Secret Providers</h3>
-              <button id="loadSecretProviders" class="ghost" type="button">Load</button>
-            </div>
-            <form id="secretProviderFilters" class="form-grid">
-              <label>
-                Tenant
-                <select name="tenant_id" data-tenant-select data-tenant-optional>
-                  <option value="">All tenants</option>
-                </select>
-              </label>
-              <label>
-                Provider Type
-                <select name="provider_type" data-provider-type-select>
-                  <option value="" selected>All provider types</option>
-                </select>
-              </label>
-              <label>Status<input name="status" placeholder="active" value="active" /></label>
-              <label>
-                Auto Renew
-                <select name="auto_renew_enabled">
-                  <option value="">any</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="50" /></label>
-              <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
-              <button type="submit" class="ghost">Apply Filters</button>
-            </form>
-            <p id="secretProvidersResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Secret providers</caption>
-                <thead>
-                  <tr><th>Provider ID</th><th>Tenant ID</th><th>Tenant Name</th><th>Tenant Type</th><th>Tenant Description</th><th>Type</th><th>Status</th><th>Auth</th><th>Role/Mount</th><th>Lease TTL</th><th>Auto Renew</th><th>Last Health Check</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="secretProvidersTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <article class="card">
+      <div class="card-head">
+        <h4>Workload Identity Providers</h4>
+        <button id="loadWorkloadIdentityProviders" class="ghost" type="button">Refresh List</button>
+      </div>
+      <p class="card-lead">Browse active workload profiles. Row actions run connectivity <strong>Test</strong>, pre-fill <strong>Trust</strong> validation, or load <strong>Health</strong> metrics.</p>
+      <form id="workloadIdentityProviderFilters" class="form-grid">
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select data-tenant-optional>
+            <option value="">All tenants</option>
+          </select>
+        </label>
+        <label>
+          Cloud / Vendor Identity
+          <select name="provider_type" data-workload-provider-type-select>
+            <option value="" selected>All identity providers</option>
+          </select>
+        </label>
+        <label>Status<input name="status" placeholder="active" value="active" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="50" /></label>
+        <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+        <button type="submit" class="ghost">Apply Filters</button>
+      </form>
+      <p id="workloadIdentityProvidersResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Workload identity providers</caption>
+          <thead>
+            <tr><th>Provider ID</th><th>Tenant ID</th><th>Tenant Name</th><th>Tenant Type</th><th>Tenant Description</th><th>Type</th><th>Status</th><th>Audience</th><th>Session TTL</th><th>Last Exchange</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="workloadIdentityProvidersTable"></tbody>
+        </table>
+      </div>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Secret Lease and Health</h3>
-            </div>
-            <form id="secretProviderLeaseRenewForm" class="form-grid">
-              <label>Provider ID<input name="provider_id" required placeholder="secret-provider-id" /></label>
-              <label>Secret Ref<input name="secret_ref" required placeholder="kv/data/platform/key" /></label>
-              <label>Requested TTL (s)<input name="requested_ttl_seconds" type="number" min="60" max="86400" step="60" value="3600" /></label>
-              <button type="submit" class="primary">Renew Lease</button>
-            </form>
-            <form id="secretProviderHealthForm" class="form-grid">
-              <label>Provider ID<input name="provider_id" required placeholder="secret-provider-id" /></label>
-              <div class="inline-row">
-                <button type="submit" class="ghost">Load Secret Health</button>
-                <button id="loadSecretProviderLeases" type="button" class="ghost">Load Leases</button>
-              </div>
-            </form>
-            <p id="secretProviderLeaseResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Secret provider active leases</caption>
-                <thead>
-                  <tr><th>Lease ID</th><th>Secret Ref</th><th>TTL</th><th>Issued</th><th>Renewed</th><th>Expires</th><th>Status</th></tr>
-                </thead>
-                <tbody id="secretProviderLeasesTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <article class="card">
+      <div class="card-head">
+        <h4>Trust, Health &amp; Token Exchange</h4>
+      </div>
+      <p class="card-lead">Validate trust policies, inspect health and stale exchange metrics, review audit evidence, and run a live token exchange to confirm end-to-end federation.</p>
+      <h4 class="runtime-subsection-title">Validate Trust</h4>
+      <p class="field-help">Confirms audience, subject patterns, and role binding against the configured profile. Evidence is written to audit events.</p>
+      <form id="workloadIdentityTrustForm" class="form-grid">
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select required>
+            <option value="" selected disabled>Loading tenants...</option>
+          </select>
+        </label>
+        <label>
+          Workload Profile
+          <select name="provider_id" id="workloadTrustProfileSelect" data-workload-profile-select data-workload-profile-tenant-aware required>
+            <option value="" selected disabled>Choose tenant first…</option>
+          </select>
+        </label>
+        <label>Check Type<input name="check_type" value="trust_policy" /></label>
+        <label>Expected Audience<input name="expected_audience" placeholder="Optional expected audience" /></label>
+        <label>
+          Simulate Pass
+          <select name="simulate_pass">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <button type="submit" class="primary">Validate Trust</button>
+      </form>
+      <h4 class="runtime-subsection-title">Health &amp; Evidence</h4>
+      <p class="field-help">Health reports token exchange freshness. Trust evidence loads filtered audit events for compliance review.</p>
+      <form id="workloadIdentityHealthForm" class="form-grid">
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select required>
+            <option value="" selected disabled>Loading tenants...</option>
+          </select>
+        </label>
+        <label>
+          Workload Profile
+          <select name="provider_id" id="workloadHealthProfileSelect" data-workload-profile-select data-workload-profile-tenant-aware required>
+            <option value="" selected disabled>Choose tenant first…</option>
+          </select>
+        </label>
+        <div class="inline-row">
+          <button type="submit" class="ghost">Load Health</button>
+          <button id="loadWorkloadTrustEvidence" type="button" class="ghost">Load Trust Evidence</button>
+        </div>
+      </form>
+      <p id="workloadIdentityTrustResult" class="runtime-feedback mono"></p>
+      <pre id="workloadIdentityTrustDetails" class="runtime-rule-example-pre mono"></pre>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Workload identity trust validation evidence</caption>
+          <thead>
+            <tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Outcome</th><th>Trace</th></tr>
+          </thead>
+          <tbody id="workloadTrustEvidenceTable"></tbody>
+        </table>
+      </div>
+      <h4 class="runtime-subsection-title">Token Exchange</h4>
+      <p class="field-help">Issues a runtime token for the given subject using the selected workload profile. Use after trust validation passes.</p>
+      <form id="workloadTokenExchangeForm" class="form-grid">
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select required>
+            <option value="" selected disabled>Loading tenants...</option>
+          </select>
+        </label>
+        <label>
+          Workload Profile
+          <select name="workload_identity_profile_id" id="workloadExchangeProfileSelect" data-workload-profile-select data-workload-profile-tenant-aware required>
+            <option value="" selected disabled>Choose tenant first…</option>
+          </select>
+        </label>
+        <label>Subject<input name="subject" value="svc:connectivity-test" /></label>
+        <button type="submit" class="primary">Exchange Token</button>
+      </form>
+      <p id="workloadTokenExchangeResult" class="runtime-feedback mono"></p>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Rotate Key via Secret Provider</h3>
-            </div>
-            <form id="rotateViaSecretProviderForm" class="form-grid">
-              <label>Key ID<input name="key_id" required placeholder="virtual-key-id" /></label>
-              <label>Environment<input name="environment" value="dev" placeholder="dev or prod" /></label>
-              <button type="submit" class="primary">Rotate via Secret Provider</button>
-            </form>
-            <p id="rotateViaSecretProviderResult" class="mono"></p>
-          </article>
+  <div data-providers-console-panel="secrets" class="runtime-console-panel" hidden>
+    <article id="providersCredentialGuide" class="card providers-credential-guide-card">
+      <div class="card-head">
+        <h4>Credential Setup Guide</h4>
+      </div>
+      <p class="card-lead">Follow these steps in order. Pick the <strong>AI provider</strong> first (who you call), then where to store the key (secret backend), then bind it to an agent or gateway.</p>
+      <div class="credential-setup-wizard form-grid">
+        <label>
+          1. AI Provider (vendor)
+          <select id="credentialWizardAiProvider" data-ai-provider-select>
+            <option value="" selected disabled>Choose AI provider…</option>
+          </select>
+        </label>
+        <label>
+          2. Secret backend (storage)
+          <select id="credentialWizardStorage">
+            <option value="db" selected>Platform DB — encrypted at rest (recommended)</option>
+            <option value="existing">I already registered Vault / AWS / Azure backend</option>
+          </select>
+        </label>
+        <label class="wide-field">
+          Recommended secret path
+          <input id="credentialWizardSecretRef" readonly class="mono" placeholder="Select AI provider first" />
+        </label>
+        <p id="credentialWizardSummary" class="field-help wide-field">Select an AI provider to see the recommended path and next steps.</p>
+        <div class="inline-actions wide-field">
+          <button type="button" id="credentialWizardOnboardBackend" class="ghost">Register Secret Backend</button>
+          <button type="button" id="credentialWizardStoreSecret" class="primary">Store API Key</button>
+          <button type="button" id="credentialWizardCreateBinding" class="ghost">Create Credential Binding</button>
+        </div>
+      </div>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Supported Models Catalog</h3>
-              <button id="resetSupportedModelForm" class="ghost" type="button">Reset Form</button>
-            </div>
-            <form id="supportedModelForm" class="form-grid">
-              <input type="hidden" name="supported_model_id" />
-              <label>
-                Provider Type
-                <select name="provider_type" data-provider-type-select required>
-                  <option value="" selected disabled>Loading provider types...</option>
-                </select>
-              </label>
-              <label>Model Name<input name="model_name" required placeholder="gpt-4o-mini" /></label>
-              <label>Display Name<input name="display_name" required placeholder="GPT-4o Mini" /></label>
-              <label>Context Window Tokens<input name="context_window_tokens" type="number" min="1" max="10000000" step="1" value="128000" /></label>
-              <label>
-                Status
-                <select name="status">
-                  <option value="active" selected>active</option>
-                  <option value="beta">beta</option>
-                  <option value="deprecated">deprecated</option>
-                  <option value="disabled">disabled</option>
-                </select>
-              </label>
-              <label class="wide-field">Description<input name="description" placeholder="Provider-backed LLM available for agent routing" /></label>
-              <label class="wide-field">Recommendation Rationale<textarea name="recommendation_rationale" rows="2" placeholder="Explain why this model is recommended for operator workloads."></textarea></label>
-              <button type="submit" class="primary">Save Supported Model</button>
-            </form>
-            <p id="supportedModelsResult" class="mono"></p>
-            <form id="supportedModelApprovalForm" class="form-grid">
-              <label>Supported Model ID<input name="supported_model_id" required placeholder="Paste from table action" /></label>
-              <label>
-                Decision
-                <select name="decision">
-                  <option value="approve" selected>approve</option>
-                  <option value="reject">reject</option>
-                </select>
-              </label>
-              <label>Environment<input name="environment" value="dev" placeholder="dev or prod" /></label>
-              <label>Approval Ticket<input name="approval_ticket_ref" required placeholder="CHG-12345" /></label>
-              <label class="wide-field">Approval Note<input name="approval_note" required placeholder="Risk review summary and constraints" /></label>
-              <button type="submit" class="ghost">Apply Approval Decision</button>
-            </form>
-            <form id="supportedModelFilters" class="form-grid">
-              <label>
-                Tenant
-                <select name="tenant_id" data-tenant-select data-tenant-optional>
-                  <option value="" selected>All tenants</option>
-                </select>
-              </label>
-              <label>
-                Provider Type
-                <select name="provider_type" data-provider-type-select>
-                  <option value="" selected>All provider types</option>
-                </select>
-              </label>
-              <label>Status<input name="status" placeholder="active" value="active" /></label>
-              <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="100" /></label>
-              <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
-              <button id="loadSupportedModels" type="submit" class="ghost">Load Models</button>
-            </form>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Supported models catalog</caption>
-                <thead>
-                  <tr><th>Provider</th><th>Model</th><th>Display Name</th><th>Context Window</th><th>Status</th><th>Approval</th><th>Version</th><th>Rationale</th><th>Description</th><th>Updated</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="supportedModelsTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <article class="card">
+      <div class="card-head">
+        <h4>Onboard Secret Provider</h4>
+      </div>
+      <p class="card-lead">Register <strong>where</strong> secrets are stored — a secret <em>backend</em> (<code>db</code>, Vault, AWS SM, Azure KV). This is <strong>not</strong> the AI vendor. Store actual API keys in <strong>Store Secret Value</strong> below.</p>
+      <details class="help-details runtime-help-details">
+        <summary>Field reference — secret provider onboarding</summary>
+        <ul class="profile-note">
+          <li><strong>db</strong> — Platform-encrypted storage. Use address <code>platform://database</code>, auth <code>encrypted-at-rest</code>. Set prefixes to match your refs (e.g. <code>["gateway/","providers/"]</code>). Store values in <strong>Store Secret Value</strong> after create.</li>
+          <li><strong>Provider address</strong> — Base URL of the secret backend (e.g. <code>https://vault.internal:8200</code>).</li>
+          <li><strong>Auth method</strong> — How the platform authenticates (e.g. <code>iam</code>, <code>approle</code>, <code>managed-identity</code>).</li>
+          <li><strong>Secret path prefixes</strong> — JSON list of allowed secret paths for lease operations.</li>
+          <li><strong>Auto renew</strong> — When enabled, leases are renewed before expiry where supported.</li>
+        </ul>
+      </details>
+      <form id="createSecretProviderForm" class="form-grid">
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select required>
+            <option value="" selected disabled>Loading tenants...</option>
+          </select>
+        </label>
+        <label>Tenant Name<input name="tenant_name_display" readonly placeholder="Selected tenant name" /></label>
+        <label>
+          Tenant Type
+          <select name="tenant_type_display" disabled>
+            <option value="" selected>Choose tenant first</option>
+          </select>
+        </label>
+        <label class="wide-field">Tenant Description<input name="tenant_description_display" readonly placeholder="Selected tenant description" /></label>
+        <label>
+          Secret Backend Type
+          <select name="provider_type" data-secret-backend-type-select required>
+            <option value="" selected disabled>Loading secret backends...</option>
+          </select>
+        </label>
+        <label>Provider Address<input name="provider_address" required placeholder="https://vault.internal:8200" /></label>
+        <label>Auth Method<input name="auth_method" required placeholder="iam | approle | managed-identity" /></label>
+        <label>Role / Mount<input name="role_or_mount" required placeholder="role-name or auth mount" /></label>
+        <label>Bootstrap Token<input name="bootstrap_token" type="password" placeholder="Optional provider bootstrap token" /></label>
+        <label>Lease TTL (s)<input name="lease_ttl_seconds" type="number" min="60" max="86400" step="60" value="3600" /></label>
+        <label>
+          Auto Renew
+          <select name="auto_renew_enabled">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label class="wide-field">Secret Path Prefixes JSON<input name="secret_path_prefixes" value='[]' placeholder='["kv/data/platform/","secret/apps/"]' /></label>
+        <button type="submit" class="primary">Create Secret Provider</button>
+      </form>
+      <p id="createSecretProviderResult" class="runtime-feedback mono"></p>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Tenant Model Entitlements</h3>
-              <button id="resetTenantModelEntitlementForm" class="ghost" type="button">Reset Form</button>
-            </div>
-            <form id="tenantModelEntitlementForm" class="form-grid">
-              <input type="hidden" name="tenant_model_entitlement_id" />
-              <label>
-                Tenant
-                <select name="tenant_id" data-tenant-select required>
-                  <option value="" selected disabled>Loading tenants...</option>
-                </select>
-              </label>
-              <label>
-                Provider Type
-                <select name="provider_type" data-provider-type-select required>
-                  <option value="" selected disabled>Loading provider types...</option>
-                </select>
-              </label>
-              <label>Model Name<input name="model_name" required placeholder="gpt-4o-mini" /></label>
-              <label>
-                Status
-                <select name="status">
-                  <option value="active" selected>active</option>
-                  <option value="inactive">inactive</option>
-                </select>
-              </label>
-              <button type="submit" class="primary">Save Entitlement</button>
-            </form>
-            <p id="tenantModelEntitlementsResult" class="mono"></p>
-            <form id="tenantModelEntitlementFilters" class="form-grid">
-              <label>
-                Tenant
-                <select name="tenant_id" data-tenant-select data-tenant-optional>
-                  <option value="" selected>All tenants</option>
-                </select>
-              </label>
-              <label>
-                Provider Type
-                <select name="provider_type" data-provider-type-select>
-                  <option value="" selected>All provider types</option>
-                </select>
-              </label>
-              <label>Status<input name="status" placeholder="active" value="active" /></label>
-              <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="100" /></label>
-              <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
-              <button id="loadTenantModelEntitlements" type="submit" class="ghost">Load Entitlements</button>
-            </form>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Tenant model entitlements</caption>
-                <thead>
-                  <tr><th>Tenant</th><th>Provider</th><th>Model</th><th>Status</th><th>Updated</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="tenantModelEntitlementsTable"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+    <article id="providersSecretValueStore" class="card providers-form-card providers-secret-value-card">
+      <div class="card-head">
+        <h4>Store Secret Value</h4>
+      </div>
+      <p class="card-lead">Store an API key or token for an <strong>AI provider</strong> in a <code>db</code> secret backend. Pick the vendor first — the secret path is filled automatically. Plaintext is never returned on readback.</p>
+      <details class="help-details runtime-help-details">
+        <summary>Secret path vs AI provider vs model</summary>
+        <ul class="profile-note">
+          <li><strong>AI provider</strong> — OpenAI, Anthropic, Cursor (who issues the API key).</li>
+          <li><strong>Secret path</strong> — Logical name for the stored key, e.g. <code>providers/openai/api-key</code>.</li>
+          <li><strong>Model ID</strong> — Registered separately under Models &amp; Entitlements (e.g. <code>gpt-4o-mini</code> under provider <code>openai</code>).</li>
+        </ul>
+      </details>
+      <form id="secretProviderValueForm" class="form-grid">
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select required>
+            <option value="" selected disabled>Loading tenants...</option>
+          </select>
+        </label>
+        <label>
+          AI Provider
+          <select id="secretStoreAiProviderSelect" name="ai_provider" data-ai-provider-select>
+            <option value="" selected disabled>Choose AI provider…</option>
+          </select>
+        </label>
+        <label>
+          Secret path (auto)
+          <select id="secretRefTemplateSelect" data-secret-ref-template>
+            <option value="gateway/cursor-token" selected>Gateway — Cursor API token</option>
+            <option value="providers/openai/api-key">OpenAI — API key</option>
+            <option value="providers/anthropic/api-key">Anthropic — API key</option>
+            <option value="providers/cohere/api-key">Cohere — API key</option>
+            <option value="providers/mistral/api-key">Mistral — API key</option>
+            <option value="providers/groq/api-key">Groq — API key</option>
+            <option value="providers/azure/openai-key">Azure OpenAI — key</option>
+            <option value="providers/aws/bedrock-credentials">AWS Bedrock — credentials</option>
+            <option value="providers/sendgrid/api-key">SendGrid — API key (email)</option>
+            <option value="providers/twilio/credentials">Twilio — Account SID + Auth Token (JSON)</option>
+            <option value="__custom__">Custom path…</option>
+          </select>
+        </label>
+        <label>
+          Secret Backend
+          <select name="provider_id" id="secretBackendSelectStore" data-secret-backend-select data-secret-backend-db-only data-secret-backend-tenant-aware required>
+            <option value="" selected disabled>Choose tenant first…</option>
+          </select>
+        </label>
+        <label>Secret Path<input name="secret_ref" required placeholder="providers/openai/api-key" value="gateway/cursor-token" /></label>
+        <label>Secret Value<input name="secret_value" type="password" required placeholder="API key or token (never shown again after store)" autocomplete="new-password" /></label>
+        <p class="field-help wide-field" id="notificationSecretStoreHint" hidden>
+          <strong>Twilio:</strong> paste JSON
+          <code>{"username":"ACxxxxxxxx","password":"your_auth_token"}</code>
+          — Account SID as username, Auth Token as password. For SendGrid use a plain API key at
+          <code>providers/sendgrid/api-key</code>.
+        </p>
+        <div class="inline-actions">
+          <button type="submit" class="primary">Store Secret Value</button>
+          <button id="loadSecretProviderValueStatus" type="button" class="ghost">Load Status</button>
+          <button id="clearSecretProviderValue" type="button" class="ghost">Delete Value</button>
+        </div>
+      </form>
+      <p id="secretProviderValueResult" class="runtime-feedback mono"></p>
+    </article>
+
+    <article class="card providers-form-card">
+      <div class="card-head">
+        <h4>Gateway Cursor Secret Binding</h4>
+        <button id="loadGatewayCursorSecretBinding" class="ghost" type="button">Load Binding</button>
+      </div>
+      <p class="card-lead">After storing the token, bind the gateway to the same secret backend and secret ref <code>gateway/cursor-token</code>.</p>
+      <form id="gatewayCursorSecretBindingForm" class="form-grid">
+        <label>
+          Secret Backend
+          <select name="secret_provider_id" id="gatewaySecretBackendSelect" data-secret-backend-select data-secret-backend-db-only required>
+            <option value="" selected disabled>Loading secret backends…</option>
+          </select>
+        </label>
+        <label>
+          Secret Ref
+          <input name="secret_ref" required placeholder="gateway/cursor-token" value="gateway/cursor-token" />
+        </label>
+        <label>
+          Approver Role
+          <select name="approver_role">
+            <option value="" selected disabled>select approver role (prod only)</option>
+            <option value="Security Approver">Security Approver</option>
+            <option value="Platform Admin">Platform Admin</option>
+            <option value="Super Admin">Super Admin</option>
+          </select>
+        </label>
+        <label>Approver ID<input name="approver_id" placeholder="security-approver-1" /></label>
+        <p class="field-help wide-field">Production dual approval: Platform Admin needs Security Approver co-sign; Security Approver needs Platform Admin or Super Admin co-sign. <strong>Super Admin</strong> and <strong>Master Admin</strong> can bind without a co-signer.</p>
+        <div class="inline-actions">
+          <button id="saveGatewayCursorSecretBinding" type="button" class="primary">Save Binding</button>
+          <button id="clearGatewayCursorSecretBinding" type="button" class="ghost">Clear Binding</button>
+          <button id="loadGatewayCursorSecretProviders" type="button" class="ghost">Refresh Backends</button>
+        </div>
+      </form>
+      <p id="gatewayCursorSecretBindingStatus" class="runtime-feedback mono">Configured: -- | Provider: -- | Ref: -- | Type: -- | Masked: --</p>
+      <p id="gatewayCursorSecretBindingResult" class="runtime-feedback mono"></p>
+    </article>
+
+    <article id="providersCredentialBindings" class="card providers-form-card">
+      <div class="card-head">
+        <h4>Credential Bindings</h4>
+        <button id="loadCredentialBindings" class="ghost" type="button">Refresh Bindings</button>
+      </div>
+      <p class="card-lead">Bind a stored credential to a consumer. Pick tenant, consumer, AI provider, and secret path from the dropdowns — no manual IDs.</p>
+      <form id="credentialBindingForm" class="form-grid">
+        <input type="hidden" name="binding_id" />
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select required>
+            <option value="" selected disabled>Loading tenants...</option>
+          </select>
+        </label>
+        <label>Binding Name<input name="binding_name" required placeholder="OpenAI Production Key" /></label>
+        <label>
+          Consumer Type
+          <select name="consumer_type" required>
+            <option value="platform">platform</option>
+            <option value="agent" selected>agent</option>
+            <option value="route">route</option>
+            <option value="gateway">gateway</option>
+          </select>
+        </label>
+        <label>
+          Consumer Key
+          <select name="consumer_key" id="credentialBindingConsumerKeySelect" data-credential-consumer-key-select required>
+            <option value="" selected disabled>Choose consumer type first…</option>
+          </select>
+        </label>
+        <label>
+          AI Provider
+          <select name="provider_type" data-ai-provider-type-select required>
+            <option value="" selected disabled>Loading AI providers...</option>
+          </select>
+        </label>
+        <label>
+          Credential method
+          <select name="credential_plane" required>
+            <option value="secret_ref" selected>Stored secret (API key in vault/DB)</option>
+            <option value="workload_identity">Workload identity (short-lived token)</option>
+          </select>
+        </label>
+        <label data-credential-plane-field="secret_ref">
+          Secret Backend
+          <select name="secret_provider_id" id="credentialBindingSecretBackendSelect" data-secret-backend-select data-secret-backend-tenant-aware required>
+            <option value="" selected disabled>Choose tenant first…</option>
+          </select>
+        </label>
+        <label data-credential-plane-field="secret_ref">
+          Secret Path
+          <select id="credentialBindingSecretRefSelect" data-credential-secret-ref-select aria-label="Secret path template">
+            <option value="gateway/cursor-token" selected>Gateway — Cursor API token</option>
+            <option value="providers/openai/api-key">OpenAI — API key</option>
+            <option value="providers/anthropic/api-key">Anthropic — API key</option>
+            <option value="providers/cohere/api-key">Cohere — API key</option>
+            <option value="providers/mistral/api-key">Mistral — API key</option>
+            <option value="providers/groq/api-key">Groq — API key</option>
+            <option value="providers/azure/openai-key">Azure OpenAI — key</option>
+            <option value="providers/aws/bedrock-credentials">AWS Bedrock — credentials</option>
+            <option value="providers/sendgrid/api-key">SendGrid — API key (email)</option>
+            <option value="providers/twilio/credentials">Twilio — Account SID + Auth Token (JSON)</option>
+            <option value="__custom__">Custom path…</option>
+          </select>
+          <input name="secret_ref" id="credentialBindingSecretRefInput" required placeholder="providers/openai/api-key" value="gateway/cursor-token" />
+        </label>
+        <p class="field-help wide-field" data-notification-secret-hint hidden>
+          <strong>Twilio:</strong> store JSON at <code>providers/twilio/credentials</code> with
+          <code>username</code> = Account SID (AC…) and <code>password</code> = Auth Token.
+          Create a credential binding with <code>provider_type</code> <code>twilio</code>, consumer <code>platform</code>,
+          then reference the binding in <code>gateway.notification_channels_json</code> — never paste tokens in Runtime Config or flows.
+        </p>
+        <label data-credential-plane-field="workload_identity">
+          Workload Profile
+          <select name="workload_identity_profile_id" id="credentialBindingWorkloadProfileSelect" data-workload-profile-select data-workload-profile-tenant-aware required>
+            <option value="" selected disabled>Choose tenant first…</option>
+          </select>
+        </label>
+        <label>
+          Environment
+          <select name="environment" required>
+            <option value="dev" selected>dev</option>
+            <option value="staging">staging</option>
+            <option value="prod">prod</option>
+          </select>
+        </label>
+        <label>
+          Status
+          <select name="status">
+            <option value="active" selected>active</option>
+            <option value="inactive">inactive</option>
+          </select>
+        </label>
+        <label>
+          Approver Role
+          <select name="approver_role">
+            <option value="" selected disabled>select for prod dual approval</option>
+            <option value="Security Approver">Security Approver</option>
+            <option value="Platform Admin">Platform Admin</option>
+            <option value="Super Admin">Super Admin</option>
+          </select>
+        </label>
+        <label>Approver ID<input name="approver_id" placeholder="security-approver-1" /></label>
+        <p class="field-help wide-field">Super Admin and Master Admin can save bindings without co-sign in production. Other roles need the complementary approver above.</p>
+        <div class="inline-actions">
+          <button type="submit" class="primary">Save Binding</button>
+          <button id="resetCredentialBindingForm" type="button" class="ghost">Reset Form</button>
+        </div>
+      </form>
+      <p id="credentialBindingResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Provider credential bindings</caption>
+          <thead>
+            <tr><th>Name</th><th>Tenant</th><th>Consumer</th><th>Provider</th><th>Plane</th><th>Env</th><th>Status</th><th>Configured</th><th>Masked</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="credentialBindingsTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h4>Secret Providers</h4>
+        <button id="loadSecretProviders" class="ghost" type="button">Refresh List</button>
+      </div>
+      <p class="card-lead">Monitor secret backends. Use <strong>Test</strong> for connectivity, <strong>Leases</strong> to inspect active secrets, and <strong>Health</strong> for lease expiry risk.</p>
+      <form id="secretProviderFilters" class="form-grid">
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select data-tenant-optional>
+            <option value="">All tenants</option>
+          </select>
+        </label>
+        <label>
+          Secret Backend Type
+          <select name="provider_type" data-secret-backend-type-select>
+            <option value="" selected>All secret backends</option>
+          </select>
+        </label>
+        <label>Status<input name="status" placeholder="active" value="active" /></label>
+        <label>
+          Auto Renew
+          <select name="auto_renew_enabled">
+            <option value="">any</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="50" /></label>
+        <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+        <button type="submit" class="ghost">Apply Filters</button>
+      </form>
+      <p id="secretProvidersResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Secret providers</caption>
+          <thead>
+            <tr><th>Provider ID</th><th>Tenant ID</th><th>Tenant Name</th><th>Tenant Type</th><th>Tenant Description</th><th>Type</th><th>Status</th><th>Auth</th><th>Role/Mount</th><th>Lease TTL</th><th>Auto Renew</th><th>Last Health Check</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="secretProvidersTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h4>Lease Operations &amp; Key Rotation</h4>
+      </div>
+      <p class="card-lead">Renew active secret leases before expiry and delegate virtual key rotation to the configured secret provider (used by Routing &amp; Gateway key lifecycle).</p>
+      <h4 class="runtime-subsection-title">Renew Lease</h4>
+      <form id="secretProviderLeaseRenewForm" class="form-grid">
+        <label>
+          Secret Backend
+          <select name="provider_id" id="secretProviderLeaseBackendSelect" data-secret-backend-select required>
+            <option value="" selected disabled>Loading secret backends…</option>
+          </select>
+        </label>
+        <label>Secret Ref<input name="secret_ref" required placeholder="kv/data/platform/key" /></label>
+        <label>Requested TTL (s)<input name="requested_ttl_seconds" type="number" min="60" max="86400" step="60" value="3600" /></label>
+        <button type="submit" class="primary">Renew Lease</button>
+      </form>
+      <h4 class="runtime-subsection-title">Health &amp; Lease Inventory</h4>
+      <form id="secretProviderHealthForm" class="form-grid">
+        <label>
+          Secret Backend
+          <select name="provider_id" id="secretProviderHealthBackendSelect" data-secret-backend-select required>
+            <option value="" selected disabled>Loading secret backends…</option>
+          </select>
+        </label>
+        <div class="inline-row">
+          <button type="submit" class="ghost">Load Secret Health</button>
+          <button id="loadSecretProviderLeases" type="button" class="ghost">Load Leases</button>
+        </div>
+      </form>
+      <p id="secretProviderLeaseResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Secret provider active leases</caption>
+          <thead>
+            <tr><th>Lease ID</th><th>Secret Ref</th><th>TTL</th><th>Issued</th><th>Renewed</th><th>Expires</th><th>Status</th></tr>
+          </thead>
+          <tbody id="secretProviderLeasesTable"></tbody>
+        </table>
+      </div>
+      <h4 class="runtime-subsection-title">Rotate Key via Secret Provider</h4>
+      <p class="field-help">Triggers rotation for a virtual key ID through its linked secret provider. Production rotations may require dual approval on the backend.</p>
+      <form id="rotateViaSecretProviderForm" class="form-grid">
+        <label>Key ID<input name="key_id" required placeholder="virtual-key-id" /></label>
+        <label>Environment<input name="environment" value="dev" placeholder="dev or prod" /></label>
+        <button type="submit" class="primary">Rotate via Secret Provider</button>
+      </form>
+      <p id="rotateViaSecretProviderResult" class="runtime-feedback mono"></p>
+    </article>
+  </div>
+
+  <div data-providers-console-panel="models" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Supported Models Catalog</h4>
+        <button id="resetSupportedModelForm" class="ghost" type="button">Reset Form</button>
+      </div>
+      <p class="card-lead">Register <strong>model IDs</strong> under an <strong>AI provider</strong>. Example: provider <code>openai</code> + model <code>gpt-4o-mini</code>. This is separate from storing API keys.</p>
+      <details class="help-details runtime-help-details">
+        <summary>Approval workflow</summary>
+        <p class="profile-note">Save a model first, then submit an approval decision with ticket reference and note. Production environments enforce dual approval when configured. Approved models appear in agent provider pickers and gateway model lists.</p>
+      </details>
+      <form id="supportedModelForm" class="form-grid">
+        <input type="hidden" name="supported_model_id" />
+        <label>
+          AI Provider
+          <select name="provider_type" data-ai-provider-type-select required>
+            <option value="" selected disabled>Loading AI providers...</option>
+          </select>
+        </label>
+        <label>Model ID<input name="model_name" required placeholder="gpt-4o-mini" /></label>
+        <label>Display Name<input name="display_name" required placeholder="GPT-4o Mini" /></label>
+        <label>Context Window Tokens<input name="context_window_tokens" type="number" min="1" max="10000000" step="1" value="128000" /></label>
+        <label>
+          Status
+          <select name="status">
+            <option value="active" selected>active</option>
+            <option value="beta">beta</option>
+            <option value="deprecated">deprecated</option>
+            <option value="disabled">disabled</option>
+          </select>
+        </label>
+        <label class="wide-field">Description<input name="description" placeholder="Operator-facing summary of model capabilities and intended use" /></label>
+        <label class="wide-field">Recommendation Rationale<textarea name="recommendation_rationale" rows="2" placeholder="Why this model is recommended; latency, cost, and risk considerations"></textarea></label>
+        <label>
+          Credential source
+          <select name="credential_source_class">
+            <option value="" selected>unspecified</option>
+            <option value="cp_ref">Stored secret (API key in vault/DB)</option>
+            <option value="cp_wif">Workload identity federation</option>
+            <option value="cp_env">Runtime env injection (ops-managed)</option>
+          </select>
+        </label>
+        <label>Default Binding ID<input name="default_binding_id" placeholder="optional provider_credential_bindings.binding_id" list="credentialBindingIds" /></label>
+        <datalist id="credentialBindingIds"></datalist>
+        <button type="submit" class="primary">Save Supported Model</button>
+      </form>
+      <p id="supportedModelsResult" class="runtime-feedback mono"></p>
+      <form id="supportedModelApprovalForm" class="form-grid">
+        <label>Supported Model ID<input name="supported_model_id" required placeholder="Paste from table action" /></label>
+        <label>
+          Decision
+          <select name="decision">
+            <option value="approve" selected>approve</option>
+            <option value="reject">reject</option>
+          </select>
+        </label>
+        <label>Environment<input name="environment" value="dev" placeholder="dev or prod" /></label>
+        <label>Approval Ticket<input name="approval_ticket_ref" required placeholder="CHG-12345" /></label>
+        <label class="wide-field">Approval Note<input name="approval_note" required placeholder="Risk review summary and constraints" /></label>
+        <button type="submit" class="ghost">Apply Approval Decision</button>
+      </form>
+      <form id="supportedModelFilters" class="form-grid">
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select data-tenant-optional>
+            <option value="" selected>All tenants</option>
+          </select>
+        </label>
+        <label>
+          AI Provider
+          <select name="provider_type" data-ai-provider-type-select>
+            <option value="" selected>All AI providers</option>
+          </select>
+        </label>
+        <label>Status<input name="status" placeholder="active" value="active" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="100" /></label>
+        <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+        <button id="loadSupportedModels" type="submit" class="ghost">Load Models</button>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Supported models catalog</caption>
+          <thead>
+            <tr><th>Provider</th><th>Model</th><th>Display Name</th><th>Context Window</th><th>Status</th><th>Approval</th><th>Version</th><th>Rationale</th><th>Description</th><th>Updated</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="supportedModelsTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h4>UI Model Availability Register</h4>
+        <button id="loadPlatformModelAvailability" class="ghost" type="button">Load Availability</button>
+      </div>
+      <p class="card-lead">Canonical list consumed by <strong>all</strong> operator UI model dropdowns (Playground, Agents, Routing &amp; Gateway, keys, fallback chains). Define models in Supported Models Catalog; tune policy via runtime keys <code>platform.ui_models.*</code>.</p>
+      <p id="platformModelAvailabilityPolicy" class="mono">Policy loads with the register.</p>
+      <form id="platformModelAvailabilityFilters" class="form-grid">
+        <label>
+          Tenant filter (optional)
+          <select name="tenant_id" data-tenant-select data-tenant-optional>
+            <option value="" selected>All tenants (global UI list)</option>
+          </select>
+        </label>
+        <label>
+          AI Provider
+          <select name="provider_type" data-ai-provider-type-select>
+            <option value="" selected>All AI providers</option>
+          </select>
+        </label>
+        <button type="submit" class="ghost">Apply Filters</button>
+      </form>
+      <p id="platformModelAvailabilityResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">UI-available models register</caption>
+          <thead>
+            <tr><th>Rank</th><th>Provider</th><th>Model Ref</th><th>Display</th><th>Status</th><th>Approval</th></tr>
+          </thead>
+          <tbody id="platformModelAvailabilityTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+        <button id="resetTenantModelEntitlementForm" class="ghost" type="button">Reset Form</button>
+      </div>
+      <p class="card-lead">Grant or revoke which models a tenant may use. Entitlements are enforced when agents and routes resolve model access for that tenant.</p>
+      <form id="tenantModelEntitlementForm" class="form-grid">
+        <input type="hidden" name="tenant_model_entitlement_id" />
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select required>
+            <option value="" selected disabled>Loading tenants...</option>
+          </select>
+        </label>
+        <label>
+          AI Provider
+          <select name="provider_type" data-ai-provider-type-select required>
+            <option value="" selected disabled>Loading AI providers...</option>
+          </select>
+        </label>
+        <label>Model ID<input name="model_name" required placeholder="gpt-4o-mini" /></label>
+        <label>
+          Status
+          <select name="status">
+            <option value="active" selected>active</option>
+            <option value="inactive">inactive</option>
+          </select>
+        </label>
+        <button type="submit" class="primary">Save Entitlement</button>
+      </form>
+      <p id="tenantModelEntitlementsResult" class="runtime-feedback mono"></p>
+      <form id="tenantModelEntitlementFilters" class="form-grid">
+        <label>
+          Search Tenant
+          <select name="tenant_id" data-tenant-select data-tenant-optional>
+            <option value="" selected>All tenants</option>
+          </select>
+        </label>
+        <label>
+          AI Provider
+          <select name="provider_type" data-ai-provider-type-select>
+            <option value="" selected>All AI providers</option>
+          </select>
+        </label>
+        <label>Status<input name="status" placeholder="active" value="active" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="100" /></label>
+        <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+        <button id="loadTenantModelEntitlements" type="submit" class="ghost">Load Entitlements</button>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Tenant model entitlements</caption>
+          <thead>
+            <tr><th>Tenant</th><th>Provider</th><th>Model</th><th>Status</th><th>Updated</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="tenantModelEntitlementsTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

@@ -41,6 +41,7 @@ from app.runtime_constants import RUNTIME_CONFIG_SECURITY_CORS_ALLOW_ORIGINS_CSV
 from app.services.config_cache import runtime_config_cache
 from app.services.rate_limit import SlidingWindowRateLimiter
 from app.services.discovery_scheduler import start_discovery_scheduler, stop_discovery_scheduler
+from app.services.orchestration_scheduler import start_orchestration_scheduler, stop_orchestration_scheduler
 from app.services.provider_crypto import provider_encryption_warnings, validate_provider_encryption_configuration
 from app.security import (
     insecure_configuration_warnings,
@@ -545,6 +546,8 @@ def _upgrade_audit_event_schema() -> None:
         "ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
         "ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS environment VARCHAR(64)",
         "ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS actor_login VARCHAR(255)",
+        "ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS actor_role VARCHAR(128)",
+        "ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS action_description VARCHAR(512)",
         "ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS action_context_json TEXT",
         "CREATE INDEX IF NOT EXISTS ix_audit_events_tenant_env_time ON audit_events (tenant_id, environment, timestamp)",
         "CREATE INDEX IF NOT EXISTS ix_audit_events_actor_login_time ON audit_events (actor_login, timestamp)",
@@ -552,6 +555,102 @@ def _upgrade_audit_event_schema() -> None:
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))
+
+
+def _upgrade_gateway_assistants_schema() -> None:
+    statements = [
+        "CREATE TABLE IF NOT EXISTS gateway_assistant_records ("
+        "assistant_id VARCHAR(64) PRIMARY KEY,"
+        "actor_id VARCHAR(128) NOT NULL,"
+        "environment VARCHAR(64) NOT NULL DEFAULT 'dev',"
+        "name VARCHAR(255) NOT NULL,"
+        "model VARCHAR(255) NOT NULL,"
+        "instructions TEXT NOT NULL DEFAULT '',"
+        "metadata_json TEXT NOT NULL DEFAULT '{}',"
+        "status VARCHAR(32) NOT NULL DEFAULT 'active',"
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "deleted_at TIMESTAMP"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_gateway_assistant_records_actor_created ON gateway_assistant_records (actor_id, created_at)",
+        "CREATE TABLE IF NOT EXISTS gateway_assistant_thread_records ("
+        "thread_id VARCHAR(64) PRIMARY KEY,"
+        "actor_id VARCHAR(128) NOT NULL,"
+        "environment VARCHAR(64) NOT NULL DEFAULT 'dev',"
+        "metadata_json TEXT NOT NULL DEFAULT '{}',"
+        "status VARCHAR(32) NOT NULL DEFAULT 'active',"
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_gateway_assistant_threads_actor_created ON gateway_assistant_thread_records (actor_id, created_at)",
+        "CREATE TABLE IF NOT EXISTS gateway_assistant_thread_message_records ("
+        "message_id VARCHAR(64) PRIMARY KEY,"
+        "thread_id VARCHAR(64) NOT NULL,"
+        "actor_id VARCHAR(128) NOT NULL,"
+        "role VARCHAR(32) NOT NULL,"
+        "content TEXT NOT NULL,"
+        "metadata_json TEXT NOT NULL DEFAULT '{}',"
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_gateway_assistant_thread_messages_thread_created ON gateway_assistant_thread_message_records (thread_id, created_at)",
+        "CREATE TABLE IF NOT EXISTS gateway_assistant_thread_run_records ("
+        "run_id VARCHAR(64) PRIMARY KEY,"
+        "thread_id VARCHAR(64) NOT NULL,"
+        "assistant_id VARCHAR(64) NOT NULL,"
+        "actor_id VARCHAR(128) NOT NULL,"
+        "environment VARCHAR(64) NOT NULL DEFAULT 'dev',"
+        "model VARCHAR(255) NOT NULL,"
+        "status VARCHAR(32) NOT NULL DEFAULT 'queued',"
+        "response_text TEXT NOT NULL DEFAULT '',"
+        "trace_id VARCHAR(128) NOT NULL,"
+        "metadata_json TEXT NOT NULL DEFAULT '{}',"
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "completed_at TIMESTAMP"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_gateway_assistant_thread_runs_thread_created ON gateway_assistant_thread_run_records (thread_id, created_at)",
+        "CREATE TABLE IF NOT EXISTS gateway_fine_tuning_job_records ("
+        "job_id VARCHAR(64) PRIMARY KEY,"
+        "actor_id VARCHAR(128) NOT NULL,"
+        "environment VARCHAR(64) NOT NULL DEFAULT 'dev',"
+        "model VARCHAR(255) NOT NULL,"
+        "training_file_id VARCHAR(128) NOT NULL,"
+        "fine_tuned_model VARCHAR(255),"
+        "status VARCHAR(32) NOT NULL DEFAULT 'queued',"
+        "metadata_json TEXT NOT NULL DEFAULT '{}',"
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "finished_at TIMESTAMP"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_gateway_fine_tuning_jobs_actor_created ON gateway_fine_tuning_job_records (actor_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_gateway_fine_tuning_jobs_status_created ON gateway_fine_tuning_job_records (status, created_at)",
+        "ALTER TABLE gateway_assistant_records ADD COLUMN IF NOT EXISTS model VARCHAR(255) NOT NULL DEFAULT 'gpt-4o-mini'",
+        "ALTER TABLE gateway_assistant_records ADD COLUMN IF NOT EXISTS instructions TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE gateway_assistant_records ADD COLUMN IF NOT EXISTS metadata_json TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE gateway_assistant_records ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'active'",
+        "ALTER TABLE gateway_assistant_records ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
+        "ALTER TABLE gateway_fine_tuning_job_records ADD COLUMN IF NOT EXISTS model VARCHAR(255) NOT NULL DEFAULT 'gpt-4o-mini'",
+        "ALTER TABLE gateway_fine_tuning_job_records ADD COLUMN IF NOT EXISTS training_file_id VARCHAR(128) NOT NULL DEFAULT ''",
+        "ALTER TABLE gateway_fine_tuning_job_records ADD COLUMN IF NOT EXISTS fine_tuned_model VARCHAR(255)",
+        "ALTER TABLE gateway_fine_tuning_job_records ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'queued'",
+        "ALTER TABLE gateway_fine_tuning_job_records ADD COLUMN IF NOT EXISTS metadata_json TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE gateway_fine_tuning_job_records ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP",
+    ]
+    legacy_statements = [
+        "UPDATE gateway_assistant_records SET model = model_name WHERE model_name IS NOT NULL AND (model IS NULL OR model = 'gpt-4o-mini')",
+        "ALTER TABLE gateway_assistant_records ALTER COLUMN model_name DROP NOT NULL",
+        "ALTER TABLE gateway_assistant_records DROP COLUMN IF EXISTS model_name",
+        "ALTER TABLE gateway_assistant_records DROP COLUMN IF EXISTS tools_json",
+        "UPDATE gateway_fine_tuning_job_records SET model = model_name WHERE model_name IS NOT NULL AND (model IS NULL OR model = 'gpt-4o-mini')",
+        "ALTER TABLE gateway_fine_tuning_job_records ALTER COLUMN model_name DROP NOT NULL",
+        "ALTER TABLE gateway_fine_tuning_job_records ALTER COLUMN trace_id DROP NOT NULL",
+        "ALTER TABLE gateway_fine_tuning_job_records DROP COLUMN IF EXISTS model_name",
+        "ALTER TABLE gateway_fine_tuning_job_records DROP COLUMN IF EXISTS trace_id",
+    ]
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+        for statement in legacy_statements:
+            try:
+                connection.execute(text(statement))
+            except Exception as exc:
+                logger.debug("gateway_assistants_legacy_migration_skipped %s", exc)
 
 
 def _upgrade_orchestration_schema() -> None:
@@ -573,6 +672,8 @@ def _upgrade_orchestration_schema() -> None:
         "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
         "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
         ")",
+        "ALTER TABLE orchestration_flow_definitions ADD COLUMN IF NOT EXISTS access_policy_json TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE orchestration_flow_definitions ADD COLUMN IF NOT EXISTS approval_stage_state_json TEXT NOT NULL DEFAULT '{}'",
         "CREATE INDEX IF NOT EXISTS ix_orchestration_flows_env_status ON orchestration_flow_definitions (environment, status)",
         "CREATE INDEX IF NOT EXISTS ix_orchestration_flows_tenant_env ON orchestration_flow_definitions (tenant_id, environment)",
         "CREATE TABLE IF NOT EXISTS orchestration_flow_runs ("
@@ -583,9 +684,75 @@ def _upgrade_orchestration_schema() -> None:
         "finished_at TIMESTAMP,"
         "trace_id VARCHAR(128) NOT NULL,"
         "step_results_json TEXT NOT NULL DEFAULT '[]',"
-        "error_summary TEXT"
+        "error_summary TEXT,"
+        "execution_state_json TEXT"
         ")",
         "CREATE INDEX IF NOT EXISTS ix_orchestration_flow_runs_flow_started ON orchestration_flow_runs (flow_id, started_at)",
+        "ALTER TABLE orchestration_flow_runs ADD COLUMN IF NOT EXISTS execution_state_json TEXT",
+        "CREATE TABLE IF NOT EXISTS orchestration_run_approval_gates ("
+        "gate_id VARCHAR(64) PRIMARY KEY,"
+        "run_id VARCHAR(64) NOT NULL,"
+        "flow_id VARCHAR(64) NOT NULL,"
+        "node_id VARCHAR(128) NOT NULL,"
+        "status VARCHAR(32) NOT NULL DEFAULT 'pending',"
+        "approval_title VARCHAR(512) NOT NULL,"
+        "required_role VARCHAR(128),"
+        "resolved_approver_id VARCHAR(128),"
+        "resolved_approver_role VARCHAR(128),"
+        "decided_by VARCHAR(128),"
+        "decided_at TIMESTAMP,"
+        "metadata_json TEXT NOT NULL DEFAULT '{}',"
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_orchestration_approval_gates_run_status ON orchestration_run_approval_gates (run_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_orchestration_approval_gates_flow_run ON orchestration_run_approval_gates (flow_id, run_id)",
+        "CREATE TABLE IF NOT EXISTS orchestration_jit_access_requests ("
+        "request_id VARCHAR(64) PRIMARY KEY,"
+        "flow_id VARCHAR(64) NOT NULL,"
+        "requester_id VARCHAR(128) NOT NULL,"
+        "requester_role VARCHAR(128) NOT NULL,"
+        "requested_action VARCHAR(32) NOT NULL,"
+        "justification TEXT NOT NULL,"
+        "environment VARCHAR(64) NOT NULL DEFAULT 'dev',"
+        "requested_duration_minutes INTEGER NOT NULL DEFAULT 60,"
+        "status VARCHAR(64) NOT NULL DEFAULT 'requested',"
+        "approved_by VARCHAR(128),"
+        "approved_role VARCHAR(128),"
+        "approved_at TIMESTAMP,"
+        "expires_at TIMESTAMP,"
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_orchestration_jit_status_env ON orchestration_jit_access_requests (status, environment)",
+        "CREATE INDEX IF NOT EXISTS ix_orchestration_jit_flow_requester ON orchestration_jit_access_requests (flow_id, requester_id)",
+        "CREATE TABLE IF NOT EXISTS orchestration_flow_access_certifications ("
+        "certification_id VARCHAR(64) PRIMARY KEY,"
+        "flow_id VARCHAR(64) NOT NULL,"
+        "certified_by VARCHAR(128) NOT NULL,"
+        "approver_id VARCHAR(128),"
+        "certified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "next_due_at TIMESTAMP NOT NULL,"
+        "attestation_notes TEXT NOT NULL DEFAULT '',"
+        "status VARCHAR(32) NOT NULL DEFAULT 'active'"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_orchestration_cert_flow_status ON orchestration_flow_access_certifications (flow_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_orchestration_cert_next_due ON orchestration_flow_access_certifications (next_due_at, status)",
+        "CREATE TABLE IF NOT EXISTS orchestration_flow_approval_events ("
+        "approval_event_id VARCHAR(64) PRIMARY KEY,"
+        "flow_id VARCHAR(64) NOT NULL,"
+        "event_type VARCHAR(64) NOT NULL,"
+        "stage_id VARCHAR(128),"
+        "action VARCHAR(64) NOT NULL,"
+        "state_from VARCHAR(64) NOT NULL,"
+        "state_to VARCHAR(64) NOT NULL,"
+        "actor_id VARCHAR(128) NOT NULL,"
+        "actor_role VARCHAR(128) NOT NULL,"
+        "approver_id VARCHAR(128),"
+        "decision VARCHAR(64) NOT NULL,"
+        "reason_code VARCHAR(255),"
+        "ticket_ref VARCHAR(128),"
+        "occurred_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_orchestration_approval_events_flow ON orchestration_flow_approval_events (flow_id, occurred_at)",
     ]
     with engine.begin() as connection:
         for statement in statements:
@@ -772,6 +939,7 @@ async def lifespan(_: FastAPI):
         _upgrade_browser_security_schema()
         _upgrade_operator_feedback_schema()
         _upgrade_agent_memory_schema()
+        _upgrade_gateway_assistants_schema()
         _upgrade_orchestration_schema()
     else:
         _upgrade_cache_policy_schema()
@@ -786,15 +954,18 @@ async def lifespan(_: FastAPI):
         _upgrade_browser_security_schema()
         _upgrade_operator_feedback_schema()
         _upgrade_agent_memory_schema()
+        _upgrade_gateway_assistants_schema()
         _upgrade_orchestration_schema()
         logger.info(
             "startup_schema_auto_create_skipped %s",
             sanitize_fields({"environment": _runtime_environment()}),
         )
     start_discovery_scheduler()
+    start_orchestration_scheduler()
     try:
         yield
     finally:
+        stop_orchestration_scheduler()
         stop_discovery_scheduler()
 
 
@@ -919,10 +1090,11 @@ async def ui_polling_rate_limit_middleware(request: Request, call_next):
     actor_id = _rate_limit_actor_identity(request)
     request_actor_id = actor_id
     request_user_login = None
+    request_actor_role = None
     db = SessionLocal()
     try:
-        request_actor_id, request_user_login = resolve_request_actor_identity(request, db)
-        set_request_actor(request_actor_id, request_user_login)
+        request_actor_id, request_user_login, request_actor_role = resolve_request_actor_identity(request, db)
+        set_request_actor(request_actor_id, request_user_login, request_actor_role)
     finally:
         db.close()
 

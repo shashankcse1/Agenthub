@@ -24,6 +24,41 @@ def test_master_admin_can_access_provider_read_endpoints():
     assert isinstance(response.json(), list)
 
 
+def test_master_admin_can_update_tenant_catalog_entry():
+    suffix = uuid4().hex[:8]
+    tenant_id = f"tenant-master-edit-{suffix}"
+    actor_id = f"master-tenant-{suffix}"
+    headers = _headers(actor_id, mfa=True)
+
+    created = client.post(
+        "/providers/tenants",
+        json={
+            "tenant_id": tenant_id,
+            "tenant_name": "Master Edit Tenant",
+            "tenant_type": "sandbox",
+            "description": "initial",
+            "status": "active",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 200
+
+    updated = client.put(
+        f"/providers/tenants/{tenant_id}",
+        json={
+            "tenant_id": tenant_id,
+            "tenant_name": "Master Edit Tenant Updated",
+            "tenant_type": "enterprise",
+            "description": "updated by master admin",
+            "status": "active",
+        },
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["tenant_name"] == "Master Edit Tenant Updated"
+    assert updated.json()["tenant_type"] == "enterprise"
+
+
 def test_master_admin_can_update_auth_policy_without_dual_approval_headers():
     suffix = uuid4().hex[:8]
     actor_id = f"master-auth-{suffix}"

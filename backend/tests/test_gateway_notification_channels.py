@@ -92,7 +92,7 @@ def test_gateway_notification_channel_context():
     payload = response.json()
     assert payload["channel"]["channel_id"] == "ops-sendgrid"
     assert payload["credential_binding_configured"] is True
-    assert payload["phase_1_runtime"] == "stub_simulated_only"
+    assert payload["phase_1_runtime"] == "live_delivery_enabled"
 
 
 def test_gateway_notification_channel_context_not_found():

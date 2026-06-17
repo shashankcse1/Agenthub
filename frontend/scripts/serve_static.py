@@ -32,7 +32,8 @@ class StaticHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        # Allow mic/camera on same origin for Playground voice/video capture; geolocation stays off.
+        self.send_header("Permissions-Policy", "camera=(self), microphone=(self), geolocation=()")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "

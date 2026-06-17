@@ -394,6 +394,8 @@ class AuditEventResponse(ORMBase):
     actor_type: str
     actor_id: str
     actor_login: Optional[str] = None
+    actor_role: Optional[str] = None
+    action_description: Optional[str] = None
     action_type: str
     resource_type: str
     resource_id: str
@@ -2937,6 +2939,8 @@ class ObservabilityLogResponse(BaseModel):
     request_id: str
     actor_id: str
     actor_login: Optional[str] = None
+    actor_role: Optional[str] = None
+    action_description: Optional[str] = None
     action_type: str
     resource_type: str
     resource_id: str
@@ -2960,6 +2964,45 @@ class ObservabilityLogSchemaStatusResponse(BaseModel):
     invalid_count: int
     conformance_percent: float
     missing_field_counts: dict[str, int]
+
+
+class ObservabilitySiemRuleResponse(BaseModel):
+    rule_id: str
+    name: str
+    description: str = ""
+    action_type_pattern: str
+    decision_outcomes: list[str]
+    severity: str
+    sink_route_key: str
+    enabled: bool = True
+
+
+class ObservabilitySiemRulesListResponse(BaseModel):
+    rule_count: int
+    rules: list[ObservabilitySiemRuleResponse]
+
+
+class ObservabilitySiemRulesExportResponse(BaseModel):
+    exported_at: datetime
+    rule_count: int
+    siem_callback_count: int
+    rules: list[ObservabilitySiemRuleResponse]
+    default_rule_ids: list[str] = Field(default_factory=list)
+    siem_callbacks: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ObservabilitySiemRuleEvaluationItem(BaseModel):
+    audit_event_id: str
+    action_type: str
+    decision_outcome: str
+    trace_id: str
+    matched_rule_ids: list[str]
+
+
+class ObservabilitySiemRuleEvaluationResponse(BaseModel):
+    evaluated_count: int
+    matched_count: int
+    matches: list[ObservabilitySiemRuleEvaluationItem]
 
 
 class ObservabilityBreakdownItem(BaseModel):
@@ -3199,6 +3242,7 @@ class ComplianceEvidenceBundleResponse(BaseModel):
     artifact_count: int
     latest_artifact_at: Optional[datetime] = None
     integrity_status: str
+    investigation_context: Optional[dict] = None
 
 
 class PlaygroundRunCreateRequest(BaseModel):
@@ -3947,6 +3991,7 @@ class OrchestrationFlowCreateRequest(BaseModel):
     trigger_type: str = "manual"
     trigger_config_json: str = "{}"
     graph_json: str = '{"nodes":[],"edges":[]}'
+    access_policy_json: Optional[str] = None
 
 
 class OrchestrationFlowUpdateRequest(BaseModel):
@@ -3958,15 +4003,196 @@ class OrchestrationFlowUpdateRequest(BaseModel):
     trigger_type: Optional[str] = None
     trigger_config_json: Optional[str] = None
     graph_json: Optional[str] = None
+    access_policy_json: Optional[str] = None
 
 
 class OrchestrationFlowApproveRequest(BaseModel):
     decision: str = "approved"
     approval_ticket_ref: Optional[str] = None
+    stage_id: Optional[str] = None
+
+
+class OrchestrationJitAccessRequestCreateRequest(BaseModel):
+    requested_action: str = Field(default="run", pattern="^(run|approve|manage)$")
+    justification: str = Field(min_length=1)
+    environment: Optional[str] = None
+    requested_duration_minutes: int = Field(default=60, ge=5, le=480)
+
+
+class OrchestrationJitAccessApproveRequest(BaseModel):
+    decision: str = "approve"
+
+
+class OrchestrationJitAccessRequestResponse(BaseModel):
+    request_id: str
+    flow_id: str
+    requester_id: str
+    requester_role: str
+    requested_action: str
+    justification: str
+    environment: str
+    requested_duration_minutes: int
+    status: str
+    approved_by: Optional[str] = None
+    approved_role: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrchestrationJitAccessRequestListResponse(BaseModel):
+    total: int
+    data: list[OrchestrationJitAccessRequestResponse]
+
+
+class OrchestrationAccessCertifyRequest(BaseModel):
+    attestation_notes: str = ""
+    approver_id: Optional[str] = None
+
+
+class OrchestrationAccessCertificationResponse(BaseModel):
+    certification_id: str
+    flow_id: str
+    certified_by: str
+    approver_id: Optional[str] = None
+    certified_at: datetime
+    next_due_at: datetime
+    attestation_notes: str
+    status: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrchestrationAccessCertificationDueItem(BaseModel):
+    flow_id: str
+    flow_name: str
+    environment: str
+    reason: str
+    next_due_at: Optional[str] = None
+    recertify_interval_days: int
+
+
+class OrchestrationAccessCertificationDueResponse(BaseModel):
+    total: int
+    data: list[OrchestrationAccessCertificationDueItem]
+
+
+class OrchestrationFlowApprovalEventResponse(BaseModel):
+    approval_event_id: str
+    flow_id: str
+    event_type: str
+    stage_id: Optional[str] = None
+    action: str
+    state_from: str
+    state_to: str
+    actor_id: str
+    actor_role: str
+    approver_id: Optional[str] = None
+    decision: str
+    reason_code: Optional[str] = None
+    ticket_ref: Optional[str] = None
+    occurred_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrchestrationIgaExplainRequest(BaseModel):
+    action: str = Field(default="run", pattern="^(run|approve|manage)$")
+
+
+class OrchestrationIgaExplainResponse(BaseModel):
+    flow_id: str
+    action: str
+    decision: str
+    allowed: bool
+    error_code: Optional[str] = None
+    factors: list[dict] = Field(default_factory=list)
+    policy_version: int = 1
+    decision_trace_id: str
+
+
+class OrchestrationIgaPostureResponse(BaseModel):
+    flow_id: str
+    environment: str
+    approval_status: str
+    policy_version: int = 1
+    sod: dict = Field(default_factory=dict)
+    certification: dict = Field(default_factory=dict)
+    staged_approval: dict = Field(default_factory=dict)
+    active_jit_grants: list[dict] = Field(default_factory=list)
+    entitlement: dict = Field(default_factory=dict)
+
+
+class OrchestrationDataConnectionResponse(BaseModel):
+    connection_id: str
+    label: Optional[str] = None
+    driver: str
+    enabled: bool = True
+    max_rows: int = 200
+    credential_binding_id: Optional[str] = None
+
+
+class OrchestrationDataConnectionListResponse(BaseModel):
+    total: int
+    data: list[OrchestrationDataConnectionResponse]
+
+
+class OrchestrationDataConnectionTestQueryRequest(BaseModel):
+    sql: str = Field(min_length=1, max_length=8000)
+    parameters: dict = Field(default_factory=dict)
+    preview_limit: int = Field(default=10, ge=1, le=50)
+
+
+class OrchestrationDataConnectionTestQueryResponse(BaseModel):
+    connection_id: str
+    row_count: int
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class OrchestrationAccessPolicyResolveRequest(BaseModel):
+    access_policy_json: Optional[str] = None
+
+
+class OrchestrationAccessPolicyResolveResponse(BaseModel):
+    flow_id: str
+    resolved_policy: dict = Field(default_factory=dict)
+    resolve_errors: list[str] = Field(default_factory=list)
+    template_context: dict = Field(default_factory=dict)
+
+
+class OrchestrationConsoleSummaryResponse(BaseModel):
+    flow_count: int = 0
+    flows_by_environment: dict = Field(default_factory=dict)
+    pending_prod_approvals: int = 0
+    certifications_due: int = 0
+    active_jit_grants: int = 0
+    runs_awaiting_approval: int = 0
+
+
+class OrchestrationWebhookTriggerRequest(BaseModel):
+    run_input: Optional[str] = ""
+    dry_run: bool = False
+
+
+class OrchestrationSchedulerTickResponse(BaseModel):
+    tick_at: datetime
+    triggered: list[dict] = Field(default_factory=list)
+
+
+class GatewayTunnelConfigResponse(BaseModel):
+    enabled: bool = False
+    base_url: str = "/gateway/v1"
+    openai_compatible_base: str = "/gateway/v1"
+    snippets: dict = Field(default_factory=dict)
 
 
 class OrchestrationFlowRunRequest(BaseModel):
     dry_run: bool = False
+    run_input: Optional[str] = ""
 
 
 class OrchestrationFlowResponse(BaseModel):
@@ -3979,6 +4205,8 @@ class OrchestrationFlowResponse(BaseModel):
     trigger_type: str
     trigger_config_json: str
     graph_json: str
+    access_policy_json: str = "{}"
+    approval_stage_state_json: str = "{}"
     approval_status: str
     metadata_version: int
     created_by: str
@@ -4007,17 +4235,45 @@ class OrchestrationFlowValidateResponse(BaseModel):
 class OrchestrationFlowRunResponse(BaseModel):
     run_id: str
     flow_id: str
+    flow_name: Optional[str] = None
     status: str
     started_at: datetime
     finished_at: Optional[datetime] = None
     trace_id: str
     step_results_json: str
     error_summary: Optional[str] = None
+    execution_state_json: Optional[str] = None
 
 
 class OrchestrationFlowRunListResponse(BaseModel):
     total: int
     data: list[OrchestrationFlowRunResponse]
+
+
+class OrchestrationRunApprovalGateResponse(BaseModel):
+    gate_id: str
+    run_id: str
+    flow_id: str
+    node_id: str
+    status: str
+    approval_title: str
+    required_role: Optional[str] = None
+    resolved_approver_id: Optional[str] = None
+    resolved_approver_role: Optional[str] = None
+    decided_by: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    metadata_json: str = "{}"
+    created_at: datetime
+
+
+class OrchestrationRunApprovalGateListResponse(BaseModel):
+    total: int
+    data: list[OrchestrationRunApprovalGateResponse]
+
+
+class OrchestrationRunApprovalGateDecideRequest(BaseModel):
+    decision: str
+    comment: Optional[str] = None
 
 
 class OrchestrationNodeTypeItem(BaseModel):
@@ -4031,3 +4287,173 @@ class OrchestrationNodeTypeItem(BaseModel):
 class OrchestrationNodeTypesResponse(BaseModel):
     node_types: list[OrchestrationNodeTypeItem]
     policy: dict = Field(default_factory=dict)
+
+
+# ── Gateway Assistants / Fine-tuning / Passthrough ────────────────────────────
+
+
+class GatewayAssistantCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    model: str = Field(min_length=1, max_length=255)
+    instructions: str = ""
+    metadata: dict = Field(default_factory=dict)
+    environment: str = "dev"
+
+
+class GatewayAssistantResponse(BaseModel):
+    id: str
+    object: str = "assistant"
+    created_at: int
+    name: str
+    model: str
+    instructions: str
+    metadata: dict = Field(default_factory=dict)
+    environment: str = "dev"
+
+
+class GatewayAssistantListResponse(BaseModel):
+    object: str = "list"
+    data: list[GatewayAssistantResponse]
+
+
+class GatewayAssistantDeleteResponse(BaseModel):
+    id: str
+    object: str = "assistant.deleted"
+    deleted: bool = True
+
+
+class GatewayThreadCreateRequest(BaseModel):
+    metadata: dict = Field(default_factory=dict)
+    environment: str = "dev"
+
+
+class GatewayThreadResponse(BaseModel):
+    id: str
+    object: str = "thread"
+    created_at: int
+    metadata: dict = Field(default_factory=dict)
+    environment: str = "dev"
+
+
+class GatewayThreadMessageCreateRequest(BaseModel):
+    role: str = Field(default="user", min_length=1, max_length=32)
+    content: str = Field(min_length=1)
+    metadata: dict = Field(default_factory=dict)
+
+
+class GatewayThreadMessageResponse(BaseModel):
+    id: str
+    object: str = "thread.message"
+    created_at: int
+    thread_id: str
+    role: str
+    content: list[dict] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+
+class GatewayThreadMessageListResponse(BaseModel):
+    object: str = "list"
+    data: list[GatewayThreadMessageResponse]
+
+
+class GatewayThreadRunCreateRequest(BaseModel):
+    assistant_id: str = Field(min_length=1)
+    model: Optional[str] = None
+    environment: str = "dev"
+    additional_instructions: str = ""
+    stream: bool = False
+
+
+class GatewayThreadRunResponse(BaseModel):
+    id: str
+    object: str = "thread.run"
+    created_at: int
+    thread_id: str
+    assistant_id: str
+    status: str
+    model: str
+    completed_at: Optional[int] = None
+    response_text: str = ""
+
+
+class GatewayFineTuningJobCreateRequest(BaseModel):
+    model: str = Field(min_length=1, max_length=255)
+    training_file_id: str = Field(min_length=1, max_length=128)
+    environment: str = "dev"
+    metadata: dict = Field(default_factory=dict)
+
+
+class GatewayFineTuningJobResponse(BaseModel):
+    id: str
+    object: str = "fine_tuning.job"
+    created_at: int
+    model: str
+    training_file_id: str
+    fine_tuned_model: Optional[str] = None
+    status: str
+    finished_at: Optional[int] = None
+    environment: str = "dev"
+    live_mode: bool = False
+    upstream_job_id: Optional[str] = None
+
+
+class GatewayFineTuningJobListResponse(BaseModel):
+    object: str = "list"
+    data: list[GatewayFineTuningJobResponse]
+
+
+class GatewayFineTuningJobCancelResponse(BaseModel):
+    id: str
+    object: str = "fine_tuning.job"
+    status: str = "cancelled"
+    live_mode: bool = False
+
+
+class GatewayPassthroughRequest(BaseModel):
+    provider_id: str = Field(min_length=1, max_length=128)
+    method: str = Field(default="POST", min_length=1, max_length=16)
+    path: str = Field(min_length=1, max_length=512)
+    headers: dict = Field(default_factory=dict)
+    body: Optional[dict] = None
+    environment: str = "dev"
+
+
+class GatewayPassthroughResponse(BaseModel):
+    status_code: int
+    headers: dict = Field(default_factory=dict)
+    body: object = None
+    trace_id: str
+    provider_id: str
+    path: str
+
+
+class PlaygroundRunDetailResponse(BaseModel):
+    run: PlaygroundRunResponse
+    feedback: list[PlaygroundRunFeedbackResponse] = Field(default_factory=list)
+    latest_assessment: Optional[PlaygroundRunAssessResponse] = None
+    audit_events: list[dict] = Field(default_factory=list)
+    route_draft: Optional[dict] = None
+    quality_escalation: Optional[PlaygroundQualityEscalationResponse] = None
+
+
+class ComplianceEvidenceExportRequest(BaseModel):
+    control_id: str = Field(min_length=1)
+    since_hours: int = Field(default=24, ge=1, le=720)
+    decision_outcome: Optional[str] = None
+    action_type_prefix: Optional[str] = None
+    tenant_id: Optional[str] = None
+    environment: Optional[str] = None
+    source_type: Optional[str] = None
+    source_id_prefix: Optional[str] = None
+    limit_events: int = Field(default=20, ge=1, le=200)
+    limit_artifacts: int = Field(default=20, ge=1, le=200)
+    investigation_context: Optional[dict] = None
+
+
+class ComplianceEvidenceExportResponse(BaseModel):
+    export_id: str
+    exported_at: datetime
+    control_id: str
+    bundle: ComplianceEvidenceBundleResponse
+    audit_event: dict
+    investigation_context: Optional[dict] = None

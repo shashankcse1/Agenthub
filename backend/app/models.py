@@ -137,6 +137,8 @@ class AuditEvent(Base):
     actor_type: Mapped[str] = mapped_column(String(64), default="user")
     actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
     actor_login: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    actor_role: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    action_description: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     action_type: Mapped[str] = mapped_column(String(255), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(128), nullable=False)
     resource_id: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -1309,6 +1311,92 @@ class OpenAIBatchRecord(Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class GatewayAssistantRecord(Base):
+    __tablename__ = "gateway_assistant_records"
+    __table_args__ = (
+        Index("ix_gateway_assistant_records_actor_created", "actor_id", "created_at"),
+    )
+
+    assistant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    instructions: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class GatewayAssistantThreadRecord(Base):
+    __tablename__ = "gateway_assistant_thread_records"
+    __table_args__ = (
+        Index("ix_gateway_assistant_threads_actor_created", "actor_id", "created_at"),
+    )
+
+    thread_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GatewayAssistantThreadMessageRecord(Base):
+    __tablename__ = "gateway_assistant_thread_message_records"
+    __table_args__ = (
+        Index("ix_gateway_assistant_thread_messages_thread_created", "thread_id", "created_at"),
+    )
+
+    message_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GatewayAssistantThreadRunRecord(Base):
+    __tablename__ = "gateway_assistant_thread_run_records"
+    __table_args__ = (
+        Index("ix_gateway_assistant_thread_runs_thread_created", "thread_id", "created_at"),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    assistant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    response_text: Mapped[str] = mapped_column(Text, default="")
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class GatewayFineTuningJobRecord(Base):
+    __tablename__ = "gateway_fine_tuning_job_records"
+    __table_args__ = (
+        Index("ix_gateway_fine_tuning_jobs_actor_created", "actor_id", "created_at"),
+        Index("ix_gateway_fine_tuning_jobs_status_created", "status", "created_at"),
+    )
+
+    job_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    training_file_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    fine_tuned_model: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 # ── Browser Security Models ────────────────────────────────────────────────────
 
 class BrowserExtensionSession(Base):
@@ -1574,6 +1662,8 @@ class OrchestrationFlowDefinition(Base):
     trigger_config_json: Mapped[str] = mapped_column(Text, default="{}")
     graph_json: Mapped[str] = mapped_column(Text, default='{"nodes":[],"edges":[]}')
     approval_status: Mapped[str] = mapped_column(String(32), default="pending")
+    access_policy_json: Mapped[str] = mapped_column(Text, default="{}")
+    approval_stage_state_json: Mapped[str] = mapped_column(Text, default="{}")
     metadata_version: Mapped[int] = mapped_column(Integer, default=1)
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
@@ -1593,6 +1683,89 @@ class OrchestrationFlowRun(Base):
     trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
     step_results_json: Mapped[str] = mapped_column(Text, default="[]")
     error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    execution_state_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class OrchestrationRunApprovalGate(Base):
+    __tablename__ = "orchestration_run_approval_gates"
+    __table_args__ = (
+        Index("ix_orchestration_approval_gates_run_status", "run_id", "status"),
+        Index("ix_orchestration_approval_gates_flow_run", "flow_id", "run_id"),
+    )
+
+    gate_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    flow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    node_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    approval_title: Mapped[str] = mapped_column(String(512), nullable=False)
+    required_role: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    resolved_approver_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    resolved_approver_role: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    decided_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class OrchestrationJitAccessRequest(Base):
+    __tablename__ = "orchestration_jit_access_requests"
+    __table_args__ = (
+        Index("ix_orchestration_jit_status_env", "status", "environment"),
+        Index("ix_orchestration_jit_flow_requester", "flow_id", "requester_id"),
+    )
+
+    request_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    flow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    requester_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    requester_role: Mapped[str] = mapped_column(String(128), nullable=False)
+    requested_action: Mapped[str] = mapped_column(String(32), nullable=False)
+    justification: Mapped[str] = mapped_column(Text, nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), default="dev")
+    requested_duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    status: Mapped[str] = mapped_column(String(64), default="requested")
+    approved_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    approved_role: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class OrchestrationFlowAccessCertification(Base):
+    __tablename__ = "orchestration_flow_access_certifications"
+    __table_args__ = (
+        Index("ix_orchestration_cert_flow_status", "flow_id", "status"),
+        Index("ix_orchestration_cert_next_due", "next_due_at", "status"),
+    )
+
+    certification_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    flow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    certified_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    approver_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    certified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    next_due_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    attestation_notes: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="active")
+
+
+class OrchestrationFlowApprovalEvent(Base):
+    __tablename__ = "orchestration_flow_approval_events"
+    __table_args__ = (Index("ix_orchestration_approval_events_flow", "flow_id", "occurred_at"),)
+
+    approval_event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    flow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    stage_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    state_from: Mapped[str] = mapped_column(String(64), nullable=False)
+    state_to: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_role: Mapped[str] = mapped_column(String(128), nullable=False)
+    approver_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    decision: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason_code: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    ticket_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class AgentMemoryRecord(Base):

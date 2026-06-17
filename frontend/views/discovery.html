@@ -1,132 +1,427 @@
-<section id="discovery" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Discovery Posture</h3>
-              <button id="loadDiscoveryTriage" class="ghost" type="button">Refresh Triage</button>
-            </div>
-            <div class="card-grid compact">
-              <div class="chip">Healthy Sources: <span id="discoveryHealthySources">0</span></div>
-              <div class="chip">Stale Sources: <span id="discoveryStaleSources">0</span></div>
-              <div class="chip">Conflicts: <span id="discoveryConflictCount">0</span></div>
-              <div class="chip">High Alerts: <span id="discoveryAlertCount">0</span></div>
-              <div class="chip">Promote Ready: <span id="discoveryPromoteReadyCount">0</span></div>
-            </div>
-          </article>
+<section id="discovery" class="view runtime-config-view discovery-console-view">
+  <article class="card runtime-config-hero discovery-hero">
+    <div class="card-head discovery-console-head">
+      <div>
+        <p class="eyebrow">Agent Inventory · Source Sync · Risk Triage</p>
+        <h3>Discovery Console</h3>
+        <p class="card-lead">Sync sources, map agent-scoped cloud infra, merge duplicates, and promote high-confidence agents into governed inventory — with posture metrics, topology, and unified triage.</p>
+      </div>
+      <div class="inline-actions discovery-console-toolbar">
+        <label class="discovery-workspace-label">
+          Workspace
+          <select id="discoveryWorkspaceSelect" aria-label="Jump to discovery workspace">
+            <option value="overview">Overview</option>
+            <option value="agents">Agents</option>
+            <option value="sources">Sources</option>
+            <option value="triage">Triage</option>
+          </select>
+        </label>
+        <button id="refreshDiscoveryConsole" class="ghost" type="button">Refresh All</button>
+      </div>
+    </div>
+    <p id="discoveryConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Refresh triage to populate inventory.</p>
+    <div class="view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Discovery
+          <input class="view-page-search-input" data-view-search-input type="search" placeholder="Filter agents, sources, triage, and connections" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Discovery console sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="agents">Agents</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="sources">Sources</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="triage">Triage <span id="discoveryTriageTabBadge" class="console-tab-badge" hidden></span></button>
+    </div>
+  </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Discovered Agents</h3>
-              <button id="loadDiscovery" class="ghost" type="button">Load</button>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Discovered agents and confidence status</caption>
-                <thead>
-                  <tr><th>Agent Key</th><th>Source</th><th>Confidence</th><th>Status</th><th>Promoted Agent</th></tr>
-                </thead>
-                <tbody id="discoveryTable"></tbody>
-              </table>
-            </div>
-          </article>
+  <div data-console-panel="overview" class="runtime-console-panel active">
+    <div id="discoveryPostureBanner" class="console-alert-banner" hidden aria-live="polite"></div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Discovery Sources</h3>
-              <div class="inline-actions">
-                <button id="loadDiscoverySources" class="ghost" type="button">Load Sources</button>
-                <button id="syncRuntimeInventory" class="ghost" type="button">Sync Runtime Inventory</button>
-                <button id="syncCodeMetadata" class="ghost" type="button">Sync Code Metadata</button>
-                <button id="syncGatewayTelemetry" class="ghost" type="button">Sync Gateway Telemetry</button>
-                <button id="syncAwsS3" class="ghost" type="button">Sync AWS S3</button>
-                <button id="syncAwsIam" class="ghost" type="button">Sync AWS IAM</button>
-                <button id="syncAwsEc2" class="ghost" type="button">Sync AWS EC2</button>
-                <button id="syncAzureBlobStorage" class="ghost" type="button">Sync Azure Blob</button>
-                <button id="syncAzureManagedIdentity" class="ghost" type="button">Sync Azure Managed Identity</button>
-                <button id="syncAzureVirtualMachines" class="ghost" type="button">Sync Azure VMs</button>
-                <button id="syncGcpCloudStorage" class="ghost" type="button">Sync GCP Cloud Storage</button>
-                <button id="syncGcpServiceAccounts" class="ghost" type="button">Sync GCP Service Accounts</button>
-                <button id="syncGcpComputeEngine" class="ghost" type="button">Sync GCP Compute Engine</button>
-              </div>
-            </div>
-            <p id="discoverySourceResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Discovery sources and sync health</caption>
-                <thead>
-                  <tr><th>Source</th><th>Status</th><th>Last Sync</th><th>Lag (min)</th><th>Discovered</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="discoverySourcesTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <div class="discovery-posture-header">
+      <article class="card discovery-posture-score-card">
+        <h4>Posture Score</h4>
+        <div class="discovery-posture-score-wrap">
+          <div id="discoveryPostureScoreRing" class="discovery-posture-score-ring" data-score="--">--</div>
+          <p id="discoveryPostureScoreHint" class="metric-sub">Inventory health composite</p>
+        </div>
+      </article>
+      <article class="card discovery-confidence-card">
+        <div class="card-head"><h4>Confidence Distribution</h4></div>
+        <div id="discoveryConfidenceChart" class="discovery-bar-chart" aria-live="polite">
+          <p class="discovery-chart-empty">Load summary to see confidence distribution.</p>
+        </div>
+      </article>
+    </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Discovery Triage</h3>
-              <div class="inline-actions">
-                <button id="loadDiscoveryConflicts" class="ghost" type="button">Load Conflicts</button>
-                <button id="loadDiscoveryAlerts" class="ghost" type="button">Load Alerts</button>
-                <button id="loadDiscoveryPromoteQueue" class="ghost" type="button">Load Promote Queue</button>
-                <label>
-                  Type
-                  <select id="discoveryTriageTypeFilter">
-                    <option value="all">All</option>
-                    <option value="conflict">Conflict</option>
-                    <option value="alert">Alert</option>
-                    <option value="promote">Promote</option>
-                  </select>
-                </label>
-                <label>
-                  Urgency
-                  <select id="discoveryTriageSeverityFilter">
-                    <option value="all">All</option>
-                    <option value="critical">Critical</option>
-                    <option value="high">High</option>
-                    <option value="normal">Normal</option>
-                  </select>
-                </label>
-                <label>
-                  Search
-                  <input id="discoveryTriageSearch" type="text" placeholder="agent/source/detail" />
-                </label>
-              </div>
-            </div>
-            <p id="discoveryTriageResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Unified discovery triage view</caption>
-                <thead>
-                  <tr><th>Type</th><th>Agent</th><th>Canonical Key</th><th>Source</th><th>Confidence</th><th>Urgency</th><th>Detail</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="discoveryUnifiedTriageTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Discovery conflicts</caption>
-                <thead>
-                  <tr><th>Agent</th><th>Canonical Key</th><th>Source</th><th>Confidence</th><th>Priority</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="discoveryConflictsTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Discovery alerts</caption>
-                <thead>
-                  <tr><th>Alert</th><th>Agent</th><th>Source</th><th>Confidence</th><th>Severity</th><th>Type</th><th>Message</th></tr>
-                </thead>
-                <tbody id="discoveryAlertsTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Discovery promote queue</caption>
-                <thead>
-                  <tr><th>Agent</th><th>Canonical Key</th><th>Source</th><th>Confidence</th><th>Priority</th><th>Reason</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="discoveryPromoteQueueTable"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+    <div class="console-panel-toolbar discovery-overview-toolbar">
+      <button id="refreshDiscoverySummary" class="ghost" type="button">Refresh Summary</button>
+      <label class="console-auto-refresh-label">
+        <input id="discoveryAutoRefresh" type="checkbox" />
+        Auto-refresh
+      </label>
+      <select id="discoveryAutoRefreshInterval" aria-label="Discovery auto-refresh interval">
+        <option value="60" selected>Every 60s</option>
+        <option value="120">Every 2m</option>
+        <option value="300">Every 5m</option>
+      </select>
+    </div>
+
+    <div class="card-grid compact discovery-posture-metrics">
+      <article class="card metric discovery-metric-card discovery-metric-clickable" data-metric-tone="neutral" data-discovery-jump="agents" tabindex="0" role="button">
+        <h4>Discovered Agents</h4>
+        <p class="metric-value" id="discoveryDiscoveredAgentCount">0</p>
+        <p class="metric-sub">Across all connected sources</p>
+      </article>
+      <article class="card metric discovery-metric-card discovery-metric-clickable" data-metric-tone="success" data-discovery-jump="sources" tabindex="0" role="button">
+        <h4>Healthy Sources</h4>
+        <p class="metric-value" id="discoveryHealthySources">0</p>
+        <p class="metric-sub">Sync within SLA</p>
+      </article>
+      <article class="card metric discovery-metric-card discovery-metric-clickable" data-metric-tone="warn" data-discovery-jump="sources" tabindex="0" role="button">
+        <h4>Stale Sources</h4>
+        <p class="metric-value" id="discoveryStaleSources">0</p>
+        <p class="metric-sub">Needs sync attention</p>
+      </article>
+      <article class="card metric discovery-metric-card discovery-metric-clickable" data-metric-tone="neutral" data-discovery-jump="sources" tabindex="0" role="button">
+        <h4>Connections</h4>
+        <p class="metric-value" id="discoveryConnectionCount">0</p>
+        <p class="metric-sub" id="discoveryActiveConnectionSub">0 active</p>
+      </article>
+      <article class="card metric discovery-metric-card discovery-metric-clickable" data-metric-tone="warn" data-discovery-jump="triage" data-discovery-triage-tab="conflicts" tabindex="0" role="button">
+        <h4>Conflicts</h4>
+        <p class="metric-value" id="discoveryConflictCount">0</p>
+        <p class="metric-sub">Awaiting resolution</p>
+      </article>
+      <article class="card metric discovery-metric-card discovery-metric-clickable" data-metric-tone="error" data-discovery-jump="triage" data-discovery-triage-tab="alerts" tabindex="0" role="button">
+        <h4>High Alerts</h4>
+        <p class="metric-value" id="discoveryAlertCount">0</p>
+        <p class="metric-sub">Severity high or critical</p>
+      </article>
+      <article class="card metric discovery-metric-card discovery-metric-clickable" data-metric-tone="success" data-discovery-jump="triage" data-discovery-triage-tab="promote" tabindex="0" role="button">
+        <h4>Promote Ready</h4>
+        <p class="metric-value" id="discoveryPromoteReadyCount">0</p>
+        <p class="metric-sub">Queue depth</p>
+      </article>
+      <article class="card metric discovery-metric-card discovery-metric-clickable" data-metric-tone="neutral" data-discovery-jump="sources" tabindex="0" role="button">
+        <h4>Unknown Sources</h4>
+        <p class="metric-value" id="discoveryUnknownSources">0</p>
+        <p class="metric-sub">Never synced</p>
+      </article>
+      <article class="card metric discovery-metric-card discovery-metric-clickable" data-metric-tone="warn" data-discovery-jump="triage" data-discovery-triage-tab="duplicates" tabindex="0" role="button">
+        <h4>Duplicate Groups</h4>
+        <p class="metric-value" id="discoveryDuplicateGroupCount">0</p>
+        <p class="metric-sub">Cross-source dedup candidates</p>
+      </article>
+    </div>
+
+    <div class="discovery-overview-grid">
+      <article class="card discovery-topology-card">
+        <div class="card-head">
+          <h4>Source Topology</h4>
+          <button id="loadDiscoveryTriage" class="ghost" type="button">Refresh Posture</button>
+        </div>
+        <p class="field-help">Flow map of platform internals, live connections, and discovered agents.</p>
+        <div class="discovery-topology-legend" aria-hidden="true">
+          <span class="discovery-legend-item"><span class="discovery-legend-dot healthy"></span>Healthy</span>
+          <span class="discovery-legend-item"><span class="discovery-legend-dot stale"></span>Stale</span>
+          <span class="discovery-legend-item"><span class="discovery-legend-dot neutral"></span>Unknown</span>
+        </div>
+        <div class="discovery-topology-scroll">
+          <div id="discoverySourceTopology" class="discovery-flow-map" aria-live="polite">
+            <p class="discovery-flow-empty">Load sources to render topology.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="card discovery-breakdown-card">
+        <div class="card-head">
+          <h4>Sources by Category</h4>
+        </div>
+        <div id="discoveryCategoryBreakdown" class="discovery-bar-chart" aria-live="polite">
+          <p class="discovery-chart-empty">Load sources to see category breakdown.</p>
+        </div>
+      </article>
+    </div>
+
+    <article class="card discovery-agent-ops-card">
+      <div class="card-head">
+        <h4>Agent Ops &amp; Trace Sources</h4>
+        <button type="button" class="chip" id="discoveryOpenAgentOpsSources">Configure Sources</button>
+      </div>
+      <p class="field-help">Connect agent-ops trace inventories (sessions, runs, tool spans) and pivot discovered agents into the Observability console for audit timeline review.</p>
+      <div id="discoveryAgentOpsSummary" class="discovery-agent-ops-summary mono" aria-live="polite">Load sources to see agent-ops posture.</div>
+      <div class="chip-row discovery-agent-ops-actions">
+        <button type="button" class="chip" id="discoveryPivotObservability">Open Observability</button>
+        <button type="button" class="chip" data-discovery-jump="agents">Review Discovered Agents</button>
+      </div>
+    </article>
+
+    <article class="card discovery-triage-snapshot-card">
+      <div class="card-head">
+        <h4>Urgent Triage Queue</h4>
+        <button type="button" class="chip" data-console-tab-jump="triage">Open Triage</button>
+      </div>
+      <div id="discoveryTriageSnapshot" class="discovery-triage-snapshot" aria-live="polite">
+        <p class="discovery-snapshot-empty">Refresh triage to surface top-priority conflicts, alerts, and promote candidates.</p>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head"><h4>Operator Workflow</h4></div>
+      <div class="runtime-workflow-steps" aria-label="Discovery workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Sync sources</strong>
+          <span>Connect well-known AI providers, dev platforms, and agent-scoped cloud infra via Providers secret refs.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Review agents</strong>
+          <span>Inspect confidence scores and promotion eligibility before inventory onboarding.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Triage &amp; deduplicate</strong>
+          <span>Resolve conflicts, merge cross-source duplicates, and promote high-confidence agents.</span>
+        </div>
+      </div>
+      <div class="chip-row" aria-label="Jump to discovery workspaces">
+        <button type="button" class="chip" data-console-tab-jump="agents">Discovered Agents</button>
+        <button type="button" class="chip" data-console-tab-jump="sources">Sources &amp; Connections</button>
+        <button type="button" class="chip" data-console-tab-jump="triage">Unified Triage</button>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="agents" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Discovered Agents</h4>
+        <div class="inline-actions">
+          <button id="exportDiscoveryAgentsCsv" class="ghost" type="button">Export CSV</button>
+          <button id="loadDiscovery" class="ghost" type="button">Load Agents</button>
+        </div>
+      </div>
+      <p class="field-help">Promote requires Platform Admin role. High-confidence discovered agents (≥85) show a Promote action.</p>
+      <div class="view-page-search-row discovery-agents-search">
+        <label class="view-page-search-label">
+          Search Agents
+          <input id="discoveryAgentsSearch" class="view-page-search-input" type="search" placeholder="Filter by ID, key, source, status, promoted agent" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button id="searchDiscoveryAgents" type="button" class="primary view-page-search-btn">Search</button>
+          <button id="clearDiscoveryAgents" type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p id="discoveryAgentsResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap discovery-agents-table-wrap">
+        <table>
+          <caption class="sr-only">Discovered agents and confidence status</caption>
+          <thead>
+            <tr><th>Discovered ID</th><th>Agent Key</th><th>Source</th><th>Confidence</th><th>Status</th><th>Promoted Agent</th><th>Last Discovered</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="discoveryTable"></tbody>
+        </table>
+      </div>
+      <aside id="discoveryAgentDetailDrawer" class="card discovery-agent-detail-drawer" hidden>
+        <div class="card-head">
+          <h4>Agent Detail</h4>
+          <button id="closeDiscoveryAgentDetail" class="ghost" type="button">Close</button>
+        </div>
+        <div id="discoveryAgentDetailBody" class="discovery-agent-detail-body"></div>
+      </aside>
+    </article>
+  </div>
+
+  <div data-console-panel="sources" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Discovery Sources</h4>
+        <div class="inline-actions">
+          <button id="loadDiscoverySources" class="ghost" type="button">Load Sources</button>
+          <button id="syncAllDiscoverySources" class="primary" type="button">Sync All Sources</button>
+        </div>
+      </div>
+      <p class="field-help">Agent-scoped catalog: runtime, modules, gateway routes, AI providers, dev repos, agent-ops tooling, and cloud infra with AI/agent signals.</p>
+      <div class="view-page-search-row discovery-sources-filters">
+        <label>
+          Category
+          <select id="discoverySourceCategoryFilter">
+            <option value="all">All</option>
+            <option value="platform">Platform</option>
+            <option value="ai_cloud">AI Cloud</option>
+            <option value="ai_provider">AI Providers</option>
+            <option value="dev_platform">Dev Platforms</option>
+            <option value="agent_ops">Agent Ops</option>
+          </select>
+        </label>
+        <label class="view-page-search-label">
+          Search Sources
+          <input id="discoverySourcesSearch" class="view-page-search-input" type="search" placeholder="Filter by label, platform, or source id" autocomplete="off" />
+        </label>
+      </div>
+      <p id="discoverySourceResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap discovery-sources-table-wrap">
+        <table>
+          <caption class="sr-only">Discovery sources and sync health</caption>
+          <thead>
+            <tr><th>Source</th><th>Platform</th><th>Category</th><th>Label</th><th>Status</th><th>Last Sync</th><th>Lag (min)</th><th>Discovered</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="discoverySourcesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h4>Live Source Connections</h4>
+        <button id="loadDiscoveryConnections" class="ghost" type="button">Load Connections</button>
+      </div>
+      <p class="field-help">Quick-connect presets for OpenAI, Cursor, Perplexity, agent-ops trace sources, and other well-known integrations aligned to Providers secret refs.</p>
+      <div id="discoveryQuickConnect" class="discovery-quick-connect-groups" aria-label="Quick connect well-known discovery sources"></div>
+      <form id="discoveryConnectionForm" class="form-grid compact">
+        <input type="hidden" name="connection_id" id="discoveryConnectionId" value="" />
+        <label>Connection Name<input name="connection_name" required placeholder="OpenAI Production" /></label>
+        <label>Tenant ID<input name="tenant_id" required placeholder="tenant-a" /></label>
+        <label>Source<select name="source_id" id="discoveryConnectionSourceSelect" required></select></label>
+        <label>Enabled<select name="enabled"><option value="true" selected>enabled</option><option value="false">disabled</option></select></label>
+        <label>Credential Binding ID<input name="credential_binding_id" placeholder="optional binding_id" /></label>
+        <label>Secret Provider ID<input name="secret_provider_id" placeholder="optional secret_provider_id" /></label>
+        <label>Secret Ref<input name="secret_ref" placeholder="providers/openai/api-key" /></label>
+        <label>Base URL (override)<input name="base_url" placeholder="https://api.openai.com/v1" /></label>
+        <label>Sync Interval (min)<input name="sync_interval_minutes" type="number" min="5" max="10080" value="60" /></label>
+        <label class="wide-field">Connection Config (JSON)<textarea name="connection_config_json" rows="3" placeholder='{"org":"my-org","region":"us-east-1","project_id":"my-gcp"}'></textarea></label>
+        <div class="inline-actions wide-field">
+          <button id="saveDiscoveryConnection" class="primary" type="submit">Save Connection</button>
+          <button id="cancelDiscoveryConnectionEdit" class="ghost" type="button" hidden>Cancel Edit</button>
+        </div>
+      </form>
+      <p id="discoveryConnectionResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Discovery live source connections</caption>
+          <thead>
+            <tr><th>Name</th><th>Source</th><th>Status</th><th>Interval</th><th>Last Sync</th><th>Sync Status</th><th>Discovered</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="discoveryConnectionsTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="triage" class="runtime-console-panel" hidden>
+    <article class="card discovery-triage-card">
+      <div class="card-head">
+        <h4>Discovery Triage</h4>
+        <div class="inline-actions">
+          <button id="loadDiscoveryDuplicates" class="ghost" type="button">Load Duplicates</button>
+          <button id="loadDiscoveryConflicts" class="ghost" type="button">Load Conflicts</button>
+          <button id="loadDiscoveryAlerts" class="ghost" type="button">Load Alerts</button>
+          <button id="loadDiscoveryPromoteQueue" class="ghost" type="button">Load Promote Queue</button>
+        </div>
+      </div>
+
+      <div class="discovery-triage-subtabs" role="tablist" aria-label="Triage views">
+        <button type="button" class="ghost active" data-discovery-triage-tab="unified" aria-selected="true">Unified</button>
+        <button type="button" class="ghost" data-discovery-triage-tab="duplicates" aria-selected="false">Duplicates</button>
+        <button type="button" class="ghost" data-discovery-triage-tab="conflicts" aria-selected="false">Conflicts</button>
+        <button type="button" class="ghost" data-discovery-triage-tab="alerts" aria-selected="false">Alerts</button>
+        <button type="button" class="ghost" data-discovery-triage-tab="promote" aria-selected="false">Promote Queue</button>
+      </div>
+
+      <div class="view-page-search-row discovery-triage-filters">
+        <label>
+          Type
+          <select id="discoveryTriageTypeFilter">
+            <option value="all">All</option>
+            <option value="conflict">Conflict</option>
+            <option value="alert">Alert</option>
+            <option value="promote">Promote</option>
+          </select>
+        </label>
+        <label>
+          Urgency
+          <select id="discoveryTriageSeverityFilter">
+            <option value="all">All</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="normal">Normal</option>
+          </select>
+        </label>
+        <label class="view-page-search-label">
+          Search Triage
+          <input id="discoveryTriageSearch" class="view-page-search-input" type="search" placeholder="agent / source / detail" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button id="searchDiscoveryTriage" class="primary view-page-search-btn" type="button">Search</button>
+          <button id="clearDiscoveryTriage" class="ghost view-page-search-clear-btn" type="button">Clear</button>
+        </div>
+      </div>
+
+      <div data-discovery-triage-panel="unified" class="discovery-triage-panel active">
+        <p id="discoveryTriageResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap discovery-triage-table-wrap" data-table-search-skip="true">
+          <table>
+            <caption class="sr-only">Unified discovery triage view</caption>
+            <thead>
+              <tr><th>Type</th><th>Agent</th><th>Canonical Key</th><th>Source</th><th>Confidence</th><th>Urgency</th><th>Detail</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="discoveryUnifiedTriageTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div data-discovery-triage-panel="duplicates" class="discovery-triage-panel" hidden>
+        <p id="discoveryDuplicatesResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap discovery-triage-table-wrap" data-table-search-skip="true">
+          <table>
+            <caption class="sr-only">Cross-source duplicate discovery groups</caption>
+            <thead>
+              <tr><th>Canonical Key</th><th>Sources</th><th>Count</th><th>Max Confidence</th><th>Priority</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="discoveryDuplicatesTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div data-discovery-triage-panel="conflicts" class="discovery-triage-panel" hidden>
+        <div class="table-wrap discovery-triage-table-wrap">
+          <table>
+            <caption class="sr-only">Discovery conflicts</caption>
+            <thead>
+              <tr><th>Agent</th><th>Canonical Key</th><th>Source</th><th>Confidence</th><th>Priority</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="discoveryConflictsTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div data-discovery-triage-panel="alerts" class="discovery-triage-panel" hidden>
+        <div class="table-wrap discovery-triage-table-wrap">
+          <table>
+            <caption class="sr-only">Discovery alerts</caption>
+            <thead>
+              <tr><th>Alert</th><th>Agent</th><th>Source</th><th>Confidence</th><th>Severity</th><th>Type</th><th>Message</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="discoveryAlertsTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div data-discovery-triage-panel="promote" class="discovery-triage-panel" hidden>
+        <div class="table-wrap discovery-triage-table-wrap">
+          <table>
+            <caption class="sr-only">Discovery promote queue</caption>
+            <thead>
+              <tr><th>Agent</th><th>Canonical Key</th><th>Source</th><th>Confidence</th><th>Priority</th><th>Reason</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="discoveryPromoteQueueTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </article>
+  </div>
+</section>

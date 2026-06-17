@@ -19,18 +19,21 @@ This backend follows an agent-first governance model.
 9. Release evidence bundle script: ../scripts/release_evidence_bundle.sh
 10. Day-0 password and secrets hardening: docs/security/day0-password-and-secrets-hardening.md
 11. AWS integration and multi-cloud fallback design: docs/integrations/aws-integration-and-multicloud-model-fallback.md
+12. Security risk closure tracker: docs/governance/security-risk-closure-plan.md
+13. Multi-lens security architecture review template: docs/governance/multi-lens-security-architecture-review.md
 
 All substantial changes should satisfy Security Architect, Audit Architect, CISO, AWS Engineer, Cloud Engineer, Frontend UI Expert, and Security Engineer Expert lenses before completion.
 
 ## What is implemented
 
-This bootstrap includes Phase 0 API foundations:
+Phase 0 foundations (registration, auth, audit) remain in place. For current module coverage, UI/API inventory, and operator workflows, see **Design and Use-Case Completion Status** below and `docs/governance/api-inventory-and-ui-map.md`.
 
-- Agent registration and ownership APIs
-- Identity provider setup and SCIM sync placeholders
-- Session and role binding validation endpoints
-- Optional basic-auth fallback controls (disabled by default)
-- Audit event retrieval endpoint
+Recent additions (2026-06-12):
+
+- **Governance:** `app/routers/governance.py` — UI coverage gap reports from canonical inventory markdown.
+- **Platform operator experience:** `app/routers/platform.py` — operational posture, operator feedback, analytics, triage actions.
+- **Domain constants:** `app/domain_constants.py` — discovery, observability, platform UX defaults (runtime-config overrides in `app/runtime_constants.py`).
+- **Services:** `app/services/ui_coverage.py`, `app/services/platform_operational.py`, `app/services/observability_summary.py`, `app/services/config_cache.py` (health posture).
 
 ## Run locally with PostgreSQL
 
@@ -86,6 +89,8 @@ PY
 7. Open API docs:
 
    http://127.0.0.1:8000/docs (or the port printed by `make dev`)
+
+   Swagger tags **Platform** (feedback DB persistence, operational status) and **Governance** (UI coverage gaps) include summaries and error contracts. Machine-readable schema: `GET /openapi.json`.
 
 Alternative infra bootstrapping:
 
@@ -242,9 +247,24 @@ The following Make targets are available exactly as requested:
    make release-evidence-auto-strict ENV=production OWNER=ops
    make release-evidence-ciso RELEASE_ID=rel-001 OWNER=ciso-review
    make release-evidence-ciso-auto OWNER=ciso-review
+   make risk-closure-dashboard
+   make pending-closure-report
+   make release-decision-record RELEASE_ID=rel-001 ENV=staging OWNER=ops DECISION=TBD
+   make release-risk-guardrails ENV=production DECISION=GO DECISION_RECORD=../artifacts/release-decision-rel-001.md
+   RELEASE_DECISION=GO RELEASE_ACCEPTED_RISK_APPROVED=yes RELEASE_CISO_ACK=yes make release-evidence-strict RELEASE_ID=rel-001 ENV=production OWNER=ciso-review
+   bash ../scripts/render_risk_closure_dashboard.sh --json
+   bash ../scripts/render_risk_closure_dashboard.sh --strict-overdue
+   bash ../scripts/generate_release_decision_record.sh --release-id rel-001 --env production --owner ciso-review --decision GO --accepted-risk yes --ciso-ack yes --impact-line 'All required review approvals completed' --impact-line 'Risk posture reviewed' --impact-line 'Residual items governed' --output ../artifacts/release-decision-rel-001.md
+   bash ../scripts/validate_release_risk_guardrails.sh --env production --decision GO --decision-record ../artifacts/release-decision-rel-001.md
 
    These targets default `DATABASE_URL` to `postgresql+psycopg://$USER@localhost:5432/agenthub` when unset.
    Non-strict evidence runs treat migration validation as warning-level; strict runs require migration checks to pass.
+   Release evidence bundles include a risk-closure dashboard snapshot at `metadata/risk_closure_dashboard.txt`.
+   Release evidence bundles also include machine-readable risk data at `metadata/risk_closure_dashboard.json`.
+   Release evidence bundles now include a generated decision record template at `metadata/release_decision_record.md`.
+   Release evidence bundles include pending action summaries at `metadata/pending_closure_report.txt` and `metadata/pending_closure_report.json`.
+   Optional strict production exceptions can be passed via `RISK_EXCEPTION_REF=<approved-id>` when invoking release evidence commands.
+   For strict production GO runs, set `RELEASE_ACCEPTED_RISK_APPROVED=yes` and `RELEASE_CISO_ACK=yes` to avoid unresolved assertion fields.
 
 12. Session token signing key rotation
 
@@ -492,6 +512,10 @@ Implemented module coverage:
    - Implemented via `app/routers/observability.py`, `app/routers/audit.py`, and `app/routers/compliance.py`.
    - Includes structured decision outcomes and policy version tracking.
 
+8. MOD-GOV (UI coverage and platform operator experience)
+   - Implemented via `app/routers/governance.py` (backend-vs-frontend gap reporting) and `app/routers/platform.py` (operational status, operator feedback, analytics, triage).
+   - Health endpoint (`GET /health`) exposes rate-limiter and runtime config cache posture for cloud operators.
+
 Completion verification gate:
 
 1. Run the full end-to-end confidence pipeline:
@@ -505,10 +529,9 @@ Completion verification gate:
 
 Current validated baseline in this workspace:
 
-1. Full suite green with 103 passing tests.
-2. `make verify` passes end-to-end.
-
-3. Control coverage check passes via `python3 scripts/check_control_coverage.py`.
+1. Full suite: run `python3 -m pytest` (490+ tests collected; environment-dependent).
+2. Focused governance/platform slice: `python3 -m pytest tests/test_ui_coverage.py tests/test_platform_feedback.py tests/test_health_runtime_config_cache.py -q`.
+3. `make verify` passes end-to-end when local infra is available.
 
 ## Authn and actor context
 

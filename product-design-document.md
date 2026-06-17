@@ -1,7 +1,18 @@
 # Product Design Document
 
-Date: 2026-06-02
+Date: 2026-06-09
 Product: Enterprise Multi-Agent Platform
+
+## 0. Current Capability Sync (2026-06-10)
+
+This document now reflects completion of the previously tracked parity-depth backlog for gateway and operations governance:
+
+1. Realtime/media binary governance depth is implemented with explicit inline policy controls (allowlisted event types, inline byte ceilings, and optional correlation-id requirements) enforced during realtime event ingest.
+2. Prompt release governance depth is implemented with stronger promotion and validation workflow controls.
+3. Operator-grade quality triage and escalation workflows are implemented, including lifecycle handling and audit-backed delivery tracing.
+4. Long-window quality analytics rollups are implemented across provider/route/model dimensions.
+5. Model catalog recommendation explainability plus approval/version controls are implemented in provider model governance workflows.
+6. External observability sink productization depth is implemented with sink routing metadata and correlation preset controls.
 
 ## 1. Purpose
 
@@ -918,10 +929,10 @@ SLOs:
 
 ### Phase 1
 
-1. Discovery connectors (registry, runtime inventory, code metadata, gateway logs)
+1. Discovery connectors (registry, runtime inventory, code metadata, gateway logs, and cloud product sources for AWS/Azure/GCP)
 2. Discovery console and conflict queue
 3. Promote-to-registry flow
-4. Module catalog and compatibility validator
+4. Module catalog, AI Skills Registry, and compatibility validator
 5. Gateway compatibility APIs and virtual key service
 6. Scale tier 1 certification for 10k users
 7. Workload identity provider baseline (STS optional) and secret provider integration baseline

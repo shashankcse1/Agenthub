@@ -16,7 +16,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.logging_utils import get_logger, sanitize_fields
 from app.models import DirectoryUser, SessionRecord
-from app.policy_constants import DUAL_APPROVAL_REQUIRED_APPROVER_ROLE_DEFAULT, ROLE_MASTER_ADMIN, ROLE_SUPER_ADMIN, SUPPORTED_ACTOR_ROLES
+from app.request_context import set_request_actor
+from app.policy_constants import (
+    DUAL_APPROVAL_REQUIRED_APPROVER_ROLE_DEFAULT,
+    ROLE_MASTER_ADMIN,
+    ROLE_PLATFORM_ADMIN,
+    ROLE_SUPER_ADMIN,
+    SUPPORTED_ACTOR_ROLES,
+)
 from app.services.policy_config import get_auth_policy
 
 logger = get_logger(__name__)
@@ -36,10 +43,10 @@ _ALLOW_HEADER_ACTOR_AUTH_RAW = (os.getenv("ALLOW_HEADER_ACTOR_AUTH") or "").stri
 if _ALLOW_HEADER_ACTOR_AUTH_RAW:
     _ALLOW_HEADER_ACTOR_AUTH = _ALLOW_HEADER_ACTOR_AUTH_RAW in {"1", "true", "yes"}
 else:
-    _ALLOW_HEADER_ACTOR_AUTH = _RUNTIME_ENVIRONMENT in {"dev", "test", "local"}
+    _ALLOW_HEADER_ACTOR_AUTH = _RUNTIME_ENVIRONMENT not in {"prod", "production"}
 
-# Never permit header-asserted identities outside local/test environments.
-if _RUNTIME_ENVIRONMENT not in {"dev", "test", "local"}:
+# Never permit header-asserted identities in production.
+if _RUNTIME_ENVIRONMENT in {"prod", "production"}:
     _ALLOW_HEADER_ACTOR_AUTH = False
 
 _PASSWORD_HASH_VERSION = "v1"
@@ -186,6 +193,17 @@ def validate_session_secret_configuration() -> None:
             raise RuntimeError("SESSION_TOKEN_SECRET must be at least 32 characters outside dev/test/local.")
 
 
+def validate_runtime_auth_guardrails() -> None:
+    if _RUNTIME_ENVIRONMENT not in {"prod", "production"}:
+        return
+
+    if _ALLOW_HEADER_ACTOR_AUTH_RAW in {"1", "true", "yes"}:
+        raise RuntimeError("ALLOW_HEADER_ACTOR_AUTH must remain disabled in production.")
+
+    if _MFA_ENFORCEMENT_OPTIONAL_RAW:
+        raise RuntimeError("MFA_ENFORCEMENT_OPTIONAL cannot be enabled outside dev/test/local.")
+
+
 def insecure_configuration_warnings() -> list[str]:
     warnings: list[str] = []
     in_non_dev = _RUNTIME_ENVIRONMENT not in {"dev", "test", "local"}
@@ -247,9 +265,92 @@ def insecure_configuration_warnings() -> list[str]:
 class ActorContext:
     actor_id: str
     actor_role: str
+    user_login: Optional[str]
     approver_id: Optional[str]
     approver_role: Optional[str]
     mfa_verified: bool
+
+
+def resolve_user_login_for_actor(db: Session, actor_id: str) -> Optional[str]:
+    normalized_actor = (actor_id or "").strip()
+    if not normalized_actor:
+        return None
+    if normalized_actor.startswith("ip:") or normalized_actor.startswith("session:"):
+        return None
+    if normalized_actor in {"system-user", "unknown"}:
+        return None
+
+    directory_user = db.query(DirectoryUser).filter_by(user_id=normalized_actor).first()
+    if directory_user:
+        email = (directory_user.email or "").strip()
+        if email:
+            return email
+        display_name = (directory_user.display_name or "").strip()
+        if display_name:
+            return display_name
+    return normalized_actor
+
+
+def resolve_actor_role_for_actor(db: Session, actor_id: str) -> str:
+    normalized_actor = (actor_id or "").strip()
+    if not normalized_actor:
+        return "unknown"
+    if normalized_actor.startswith("ip:") or normalized_actor.startswith("session:"):
+        return "unknown"
+    if normalized_actor in {"system-user", "unknown", "system"}:
+        return "unknown"
+
+    directory_user = db.query(DirectoryUser).filter_by(user_id=normalized_actor).first()
+    if directory_user:
+        directory_role = _canonicalize_role(directory_user.role_name)
+        if directory_role:
+            return directory_role
+
+    session = (
+        db.query(SessionRecord)
+        .filter_by(actor_id=normalized_actor)
+        .order_by(SessionRecord.last_activity_at.desc())
+        .first()
+    )
+    if session:
+        session_role = _canonicalize_role(session.actor_role)
+        if session_role:
+            return session_role
+
+    return "unknown"
+
+
+def resolve_request_actor_identity(request, db: Session) -> tuple[str, Optional[str], Optional[str]]:
+    auth_header = _normalize_header_value(request.headers.get("Authorization"))
+    if auth_header:
+        scheme, _, token = auth_header.partition(" ")
+        if scheme.lower() == "bearer" and token.strip():
+            try:
+                session_id = resolve_session_id_from_bearer_token(token.strip())
+                session = db.query(SessionRecord).filter_by(session_id=session_id).first()
+                if session:
+                    user_login = resolve_user_login_for_actor(db, session.actor_id)
+                    actor_role = _canonicalize_role(session.actor_role)
+                    directory_user = db.query(DirectoryUser).filter_by(user_id=session.actor_id).first()
+                    if directory_user and str(directory_user.role_name or "").strip():
+                        directory_role = _canonicalize_role(directory_user.role_name)
+                        if directory_role:
+                            actor_role = directory_role
+                    return session.actor_id, user_login, actor_role
+            except HTTPException:
+                pass
+
+    if _ALLOW_HEADER_ACTOR_AUTH:
+        header_actor = _normalize_header_value(request.headers.get("X-Actor-Id"))
+        if header_actor:
+            user_login = resolve_user_login_for_actor(db, header_actor)
+            header_role = _canonicalize_role(request.headers.get("X-Actor-Role"))
+            if not header_role:
+                header_role = resolve_actor_role_for_actor(db, header_actor)
+            return header_actor, user_login, header_role
+
+    client_ip = request.client.host if request.client and request.client.host else "unknown"
+    return f"ip:{client_ip}", None, None
 
 
 def _normalize_header_value(value: Optional[str]) -> Optional[str]:
@@ -445,7 +546,7 @@ def get_actor_context(
         db.commit()
         logger.info(
             "auth_session_validated %s",
-            sanitize_fields({"actor_id": actor_id, "actor_role": actor_role}),
+            sanitize_fields({"actor_id": actor_id, "actor_role": actor_role, "user_login": resolve_user_login_for_actor(db, actor_id)}),
         )
     else:
         if not _ALLOW_HEADER_ACTOR_AUTH:
@@ -461,13 +562,17 @@ def get_actor_context(
         actor_id = actor_id or "system-user"
         actor_role = _canonicalize_role(actor_role) or "unknown"
 
+    user_login = resolve_user_login_for_actor(db, actor_id)
+    set_request_actor(actor_id, user_login, actor_role)
+
     logger.trace(
         "auth_context_ready %s",
-        sanitize_fields({"actor_id": actor_id, "actor_role": actor_role, "mfa_verified": mfa_verified}),
+        sanitize_fields({"actor_id": actor_id, "actor_role": actor_role, "user_login": user_login, "mfa_verified": mfa_verified}),
     )
     return ActorContext(
         actor_id=actor_id,
         actor_role=actor_role,
+        user_login=user_login,
         approver_id=approver_id,
         approver_role=approver_role,
         mfa_verified=mfa_verified,
@@ -497,13 +602,27 @@ def require_role(ctx: ActorContext, allowed_roles: set[str]) -> None:
         )
 
 
+_PLATFORM_ADMIN_EQUIVALENT_APPROVER_ROLES = {ROLE_PLATFORM_ADMIN, ROLE_SUPER_ADMIN}
+
+
+def approver_role_satisfies(required_approver_role: str, approver_role: Optional[str]) -> bool:
+    actual = str(approver_role or "").strip()
+    if not actual:
+        return False
+    if actual == required_approver_role:
+        return True
+    if required_approver_role == ROLE_PLATFORM_ADMIN and actual in _PLATFORM_ADMIN_EQUIVALENT_APPROVER_ROLES:
+        return True
+    return False
+
+
 def require_dual_approval(
     ctx: ActorContext,
     required_approver_role: str = DUAL_APPROVAL_REQUIRED_APPROVER_ROLE_DEFAULT,
 ) -> None:
     if ctx.actor_role in {ROLE_MASTER_ADMIN, ROLE_SUPER_ADMIN}:
         return
-    if ctx.approver_role != required_approver_role or not ctx.approver_id:
+    if not approver_role_satisfies(required_approver_role, ctx.approver_role) or not ctx.approver_id:
         logger.error(
             "authz_dual_approval_missing %s",
             sanitize_fields({"actor_id": ctx.actor_id, "approver_id": ctx.approver_id}),
@@ -528,7 +647,13 @@ def require_dual_approval(
         )
         raise HTTPException(
             status_code=400,
-            detail="Approver must be different from actor.",
+            detail={
+                "error_code": "AUTHZ_DUAL_APPROVAL_IDENTITY_CONFLICT",
+                "message": "Approver must be different from actor.",
+                "policy_version": "v1",
+                "decision_trace_id": "authz-dual-approval-identity",
+                "remediation_hint": "Use a different approver identity header.",
+            },
         )
 
 

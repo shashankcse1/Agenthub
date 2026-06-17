@@ -5,11 +5,20 @@ from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
+from sqlalchemy.orm import Session
 from uuid import uuid4
 
 from app.database import engine
-from app.models import CostEvent, SessionRecord
+from app.models import CostEvent, RuntimeConfig, SecretProviderConfig, SessionRecord
 from app.main import app
+from tests.conftest import (
+    post_benchmark_run_and_wait,
+    post_scan_run_and_wait,
+    response_error_code,
+    response_error_message,
+    wait_for_benchmark_run,
+    wait_for_scan_run,
+)
 
 client = TestClient(app)
 
@@ -346,6 +355,72 @@ def test_agent_registration_and_lookup():
     assert any(a["agent_id"] == agent["agent_id"] for a in lookup.json())
 
 
+def test_agent_register_options_endpoint():
+    resp = client.get(
+        "/agents/register-options",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-register-options"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert isinstance(payload.get("allowed_agent_types"), list)
+    assert payload.get("default_environment") == "dev"
+    assert "other" in payload["allowed_agent_types"]
+
+
+def test_agent_register_options_derives_types_from_active_providers():
+    from app.database import SessionLocal
+    from app.models import SecretProviderConfig
+
+    suffix = uuid4().hex[:8]
+    secret_provider_id = f"sec-aws-{suffix}"
+    db = SessionLocal()
+    try:
+        db.add(
+            SecretProviderConfig(
+                secret_provider_id=secret_provider_id,
+                tenant_id=f"tenant-{suffix}",
+                provider_type="aws-secrets-manager",
+                provider_address="https://secretsmanager.us-east-1.amazonaws.com",
+                auth_method="iam_role",
+                role_or_mount="arn:aws:iam::123456789012:role/agent-register-test",
+                secret_path_prefixes='["agents/"]',
+                status="active",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    resp = client.get(
+        "/agents/register-options",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": f"aud-register-options-{suffix}"},
+    )
+    assert resp.status_code == 200
+    assert "aws" in resp.json()["allowed_agent_types"]
+
+
+def test_agent_register_persists_inventory_without_auto_config_stub():
+    payload = {
+        "name": "agent-inventory-only",
+        "owner_id": "owner-inventory",
+        "owner_name": "Owner Inventory",
+        "owner_team": "Platform Ops",
+        "agent_type": "other",
+        "risk_tier": "medium",
+    }
+    created = client.post(
+        "/agents/register",
+        json=payload,
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-inventory"},
+    )
+    assert created.status_code == 200
+    agent_id = created.json()["agent_id"]
+
+    configs = client.get("/agent-configs", headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-inventory"})
+    assert configs.status_code == 200
+    assert not any(row["agent_key"] == agent_id for row in configs.json())
+
+
 def test_agent_owner_scoped_ownership_history_and_owner_listing():
     from app.database import SessionLocal
     from app.models import Agent
@@ -561,6 +636,73 @@ def test_auth_session_get_requires_read_roles_and_role_binding_validate_requires
     assert role_binding_allowed.json()["valid"] is True
 
 
+def test_auth_authz_explain_returns_decision_trace_and_dual_approval_requirements():
+    denied = client.post(
+        "/auth/authz/explain",
+        json={
+            "actor_role": "Release Manager",
+            "actor_id": "rel-authz-explain",
+            "action": "auth.session.issue",
+            "resource_type": "session",
+            "resource_id": "session-issue",
+            "target_actor_id": "platform-admin-target",
+            "target_actor_role": "Platform Admin",
+        },
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-authz-explain"},
+    )
+    assert denied.status_code == 200
+    denied_payload = denied.json()
+    assert denied_payload["decision"] == "deny"
+    assert denied_payload["requires_dual_approval"] is True
+    assert denied_payload["required_approver_role"] == "Security Approver"
+    assert denied_payload["decision_trace_id"] == "authz-auth-explain-deny"
+
+    allowed = client.post(
+        "/auth/authz/explain",
+        json={
+            "actor_role": "Platform Admin",
+            "actor_id": "admin-authz-explain",
+            "action": "auth.session.issue",
+            "resource_type": "session",
+            "resource_id": "session-issue",
+            "target_actor_id": "platform-admin-target",
+            "target_actor_role": "Platform Admin",
+            "approver_role": "Security Approver",
+            "approver_id": "sec-authz-explain",
+        },
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-authz-explain-reader"},
+    )
+    assert allowed.status_code == 200
+    allowed_payload = allowed.json()
+    assert allowed_payload["decision"] == "allow"
+    assert allowed_payload["requires_dual_approval"] is True
+    assert allowed_payload["decision_trace_id"] == "authz-auth-explain-allow"
+
+    unknown_action = client.post(
+        "/auth/authz/explain",
+        json={
+            "actor_role": "Platform Admin",
+            "actor_id": "admin-authz-explain",
+            "action": "auth.unknown.action",
+            "resource_type": "auth_action",
+            "resource_id": "auth.unknown.action",
+        },
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-authz-explain"},
+    )
+    assert unknown_action.status_code == 200
+    assert unknown_action.json()["decision"] == "warn"
+    assert unknown_action.json()["decision_trace_id"] == "authz-auth-explain-unknown-action"
+
+    evidence = client.get(
+        "/audit/events?action_type=auth.authz.explain&resource_type=session&resource_id=session-issue&limit=20",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-authz-explain"},
+    )
+    assert evidence.status_code == 200
+    events = evidence.json()
+    assert any(evt["actor_id"] == "aud-authz-explain" and evt["decision_outcome"] == "deny" for evt in events)
+    assert any(evt["actor_id"] == "sec-authz-explain-reader" and evt["decision_outcome"] == "allow" for evt in events)
+
+
 def test_sso_provider_test_and_scim_sync_emit_allow_audit_events():
     payload = {
         "tenant_id": "tenant-audit-1",
@@ -746,7 +888,7 @@ def test_workload_identity_trust_validation_health_and_degraded_exchange_block()
     )
     assert exchanged.status_code in {200, 502, 503}
     if exchanged.status_code != 200:
-        assert "AWS STS" in exchanged.json()["detail"]
+        assert "AWS STS" in response_error_message(exchanged)
 
     health = client.get(
         f"/auth/workload-identity/providers/{profile_id}/health?tenant_id=tenant-token-health",
@@ -777,7 +919,8 @@ def test_workload_identity_trust_validation_health_and_degraded_exchange_block()
         headers={"X-Actor-Role": "Release Manager", "X-Actor-Id": "rel-provider-health", "X-MFA-Verified": "true"},
     )
     assert blocked_exchange.status_code == 400
-    assert blocked_exchange.json()["detail"] == "Workload identity profile is not active"
+    assert response_error_code(blocked_exchange) == "VALIDATION_ERROR"
+    assert "not active" in response_error_message(blocked_exchange)
 
 
 def test_workload_identity_token_exchange_rejects_tenant_mismatch():
@@ -803,7 +946,8 @@ def test_workload_identity_token_exchange_rejects_tenant_mismatch():
         headers={"X-Actor-Role": "Release Manager", "X-Actor-Id": "rel-provider-match", "X-MFA-Verified": "true"},
     )
     assert mismatch.status_code == 403
-    assert mismatch.json()["detail"] == "Tenant scope mismatch for workload identity token exchange"
+    assert response_error_code(mismatch) == "AUTHZ_SCOPE_FORBIDDEN"
+    assert "Tenant scope mismatch" in response_error_message(mismatch)
 
 
 def test_workload_identity_token_exchange_supports_azure_runtime_injection():
@@ -881,7 +1025,8 @@ def test_workload_identity_provider_health_rejects_tenant_mismatch():
         headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-provider-health-scope"},
     )
     assert mismatch.status_code == 403
-    assert mismatch.json()["detail"] == "Tenant scope mismatch for workload identity health"
+    assert response_error_code(mismatch) == "AUTHZ_SCOPE_FORBIDDEN"
+    assert "Tenant scope mismatch" in response_error_message(mismatch)
 
 
 def test_workload_identity_provider_list_supports_filters_and_pagination():
@@ -1081,7 +1226,8 @@ def test_workload_identity_token_exchange_azure_native_missing_config_fails_clos
                 os.environ[key] = value
 
     assert exchanged.status_code == 503
-    assert "Azure workload identity native exchange missing configuration" in exchanged.json()["detail"]
+    assert response_error_code(exchanged) == "SERVICE_UNAVAILABLE"
+    assert "Azure workload identity native exchange missing configuration" in response_error_message(exchanged)
 
 
 def test_workload_identity_token_exchange_supports_google_native_metadata_fallback():
@@ -1355,7 +1501,8 @@ def test_workload_identity_token_exchange_anthropic_runtime_missing_config_fails
             os.environ["ANTHROPIC_WORKLOAD_IDENTITY_EXPIRES_IN"] = original_expires
 
     assert exchanged.status_code == 503
-    assert "Anthropic workload identity exchange requires ANTHROPIC_WORKLOAD_IDENTITY_ACCESS_TOKEN runtime injection." == exchanged.json()["detail"]
+    assert response_error_code(exchanged) == "SERVICE_UNAVAILABLE"
+    assert "ANTHROPIC_WORKLOAD_IDENTITY_ACCESS_TOKEN" in response_error_message(exchanged)
 
 
 def test_secret_provider_lease_renew_list_and_health():
@@ -1605,7 +1752,8 @@ def test_basic_auth_enable_rejects_duration_over_limit_without_side_effects():
         },
     )
     assert rejected.status_code == 400
-    assert rejected.json()["detail"] == "Requested duration exceeds max limit"
+    assert response_error_code(rejected) == "VALIDATION_ERROR"
+    assert "max limit" in response_error_message(rejected)
 
     current = client.patch(
         f"/auth/basic/config/{config_id}",
@@ -1643,7 +1791,7 @@ def test_basic_auth_enable_missing_config_with_valid_approvals_has_no_audit_side
         },
     )
     assert missing.status_code == 404
-    assert missing.json()["detail"] == "Basic auth config not found"
+    assert response_error_code(missing) == "RESOURCE_NOT_FOUND"
 
     allow_events = client.get(
         f"/audit/events?action_type=auth.basic_fallback.enable&resource_type=basic_auth_config&resource_id={missing_id}&decision_outcome=allow&limit=50",
@@ -1818,7 +1966,7 @@ def test_basic_auth_enable_rejects_same_actor_and_approver_after_normalization()
         },
     )
     assert denied.status_code == 400
-    assert denied.json()["detail"] == "Approver must be different from actor."
+    assert response_error_code(denied) == "AUTHZ_DUAL_APPROVAL_IDENTITY_CONFLICT"
 
     # Same actor/approver identity rejection must not change config state.
     current = client.patch(
@@ -2024,7 +2172,7 @@ def test_basic_auth_disable_returns_404_for_missing_config():
         headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-disable-missing"},
     )
     assert missing.status_code == 404
-    assert missing.json()["detail"] == "Basic auth config not found"
+    assert response_error_code(missing) == "RESOURCE_NOT_FOUND"
 
     allow_events = client.get(
         f"/audit/events?action_type=auth.basic_fallback.disable&resource_type=basic_auth_config&resource_id={missing_id}&decision_outcome=allow&limit=50",
@@ -2048,7 +2196,7 @@ def test_basic_auth_disable_missing_config_with_security_approver_has_no_audit_s
         headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-disable-missing"},
     )
     assert missing.status_code == 404
-    assert missing.json()["detail"] == "Basic auth config not found"
+    assert response_error_code(missing) == "RESOURCE_NOT_FOUND"
 
     allow_events = client.get(
         f"/audit/events?action_type=auth.basic_fallback.disable&resource_type=basic_auth_config&resource_id={missing_id}&decision_outcome=allow&limit=50",
@@ -2219,26 +2367,62 @@ def test_basic_auth_disable_emits_allow_audit_event():
 
 
 def test_discovery_sync_and_list():
+    from app.database import SessionLocal
+    from app.discovery_sources import SUPPORTED_DISCOVERY_SOURCES
+    from app.models import AgentConfig
+
+    db = SessionLocal()
+    try:
+        existing = db.query(AgentConfig).filter(AgentConfig.config_id == "discovery-sync-test").first()
+        if not existing:
+            config = AgentConfig(
+                config_id="discovery-sync-test",
+                agent_key="discovery-sync-agent",
+                display_name="Discovery Sync Agent",
+                provider="openai",
+                model="gpt-4",
+                environment="dev",
+                enabled=True,
+            )
+            db.add(config)
+            db.commit()
+    finally:
+        db.close()
+
     sources_before = client.get(
         "/discovery/sources",
         headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-discovery-sources"},
     )
     assert sources_before.status_code == 200
+    assert len(sources_before.json()) == len(SUPPORTED_DISCOVERY_SOURCES)
 
     sync = client.post(
         "/discovery/sources/runtime_inventory/sync",
         headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-1"},
     )
     assert sync.status_code == 200
+    sync_payload = sync.json()
+    assert sync_payload["sync_status"] == "completed"
+    assert sync_payload["discovered_count"] >= 1
 
     sources_after = client.get(
         "/discovery/sources",
         headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-discovery-sources"},
     )
     assert sources_after.status_code == 200
+    source_ids = {item["source_id"] for item in sources_after.json()}
+    for expected_source in SUPPORTED_DISCOVERY_SOURCES:
+        assert expected_source in source_ids
     runtime_source = next(s for s in sources_after.json() if s["source_id"] == "runtime_inventory")
     assert runtime_source["last_sync_at"] is not None
     assert runtime_source["discovered_count"] >= 1
+    assert runtime_source["platform"] == "agenthub"
+    assert runtime_source["category"] == "platform"
+    assert runtime_source["label"] == "Agent Runtime Inventory"
+
+    openai_source = next(s for s in sources_after.json() if s["source_id"] == "openai")
+    assert openai_source["platform"] == "openai"
+    assert openai_source["category"] == "ai_provider"
 
     records = client.get(
         "/discovery/agents",
@@ -2246,6 +2430,16 @@ def test_discovery_sync_and_list():
     )
     assert records.status_code == 200
     assert isinstance(records.json(), list)
+
+
+def test_discovery_sync_rejects_unsupported_source():
+    sync = client.post(
+        "/discovery/sources/aws_unknown_product/sync",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-discovery-invalid"},
+    )
+    assert sync.status_code == 400
+    assert response_error_code(sync) == "VALIDATION_ERROR"
+    assert "Unsupported discovery source" in response_error_message(sync)
 
 
 def test_discovery_conflicts_and_unmanaged_high_risk_alerts():
@@ -2422,10 +2616,13 @@ def test_gateway_route_execute_fallback_requires_dual_approval_in_prod():
 def test_gateway_cache_stats_returns_operational_fields():
     created = client.post(
         "/gateway/cache/policies",
-        json={"scope": "tenant:cache-stats", "ttl_seconds": 120, "key_strategy": "default"},
+        json={"scope": "tenant:cache-stats", "ttl_seconds": 120, "key_strategy": "default", "cache_mode": "semantic", "similarity_threshold": 0.87},
         headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cache-stats"},
     )
     assert created.status_code == 200
+    policy = created.json()
+    assert policy["cache_mode"] == "semantic"
+    assert policy["similarity_threshold"] == 0.87
 
     stats = client.get(
         "/gateway/cache/stats",
@@ -2438,13 +2635,15 @@ def test_gateway_cache_stats_returns_operational_fields():
     assert "hits" in payload
     assert "misses" in payload
     assert "active_policies" in payload
+    assert "semantic_policies" in payload
     assert "avg_ttl_seconds" in payload
+    assert "avg_similarity_threshold" in payload
 
 
 def test_gateway_cache_health_and_invalidate_endpoints():
     created = client.post(
         "/gateway/cache/policies",
-        json={"scope": "tenant:cache-health", "ttl_seconds": 180, "key_strategy": "request-hash"},
+        json={"scope": "tenant:cache-health", "ttl_seconds": 180, "key_strategy": "request-hash", "cache_mode": "semantic"},
         headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cache-health"},
     )
     assert created.status_code == 200
@@ -2457,6 +2656,8 @@ def test_gateway_cache_health_and_invalidate_endpoints():
     health_payload = health.json()
     assert health_payload["status"] == "healthy"
     assert health_payload["cache_backend"] == "policy-managed"
+    assert "semantic_policies" in health_payload
+    assert "avg_similarity_threshold" in health_payload
     assert "invalidation_requests_last_24h" in health_payload
 
     invalidated = client.post(
@@ -2476,6 +2677,127 @@ def test_gateway_cache_health_and_invalidate_endpoints():
         headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-cache-health"},
     )
     assert deny.status_code == 403
+
+
+def test_gateway_cache_decision_readback_returns_explanation_and_provenance():
+    base_seed = uuid4().hex[:8]
+    first_prompt = f"semantic cache evidence {base_seed} alpha"
+    second_prompt = f"semantic cache evidence {base_seed} beta"
+    policy_created = client.post(
+        "/gateway/cache/policies",
+        json={"scope": "global", "ttl_seconds": 120, "cache_mode": "semantic", "similarity_threshold": 0.5},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cache-decision"},
+    )
+    assert policy_created.status_code == 200
+    cache_policy_id = policy_created.json()["cache_policy_id"]
+
+    created = client.post(
+        "/v1/responses",
+        json={"model": "gpt-4o-mini", "input": first_prompt},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cache-decision"},
+    )
+    assert created.status_code == 200
+    trace_id = created.json()["trace_id"]
+
+    read = client.get(
+        f"/gateway/cache/decisions?trace_id={trace_id}&limit=10",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-cache-decision"},
+    )
+    assert read.status_code == 200
+    rows = read.json()
+    assert len(rows) >= 1
+    row = rows[0]
+    assert row["trace_id"] == trace_id
+    assert row["decision"] == "miss"
+    assert row["match_score"] == 0.0
+    assert "cache miss" in row["explanation"].lower()
+    assert cache_policy_id == row["cache_policy_id"]
+    assert "cache-policy:" in row["match_provenance"]
+
+    second = client.post(
+        "/v1/responses",
+        json={"model": "gpt-4o-mini", "input": second_prompt},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cache-decision"},
+    )
+    assert second.status_code == 200
+    second_trace_id = second.json()["trace_id"]
+
+    second_read = client.get(
+        f"/gateway/cache/decisions?trace_id={second_trace_id}&limit=10",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-cache-decision"},
+    )
+    assert second_read.status_code == 200
+    second_row = second_read.json()[0]
+    assert second_row["decision"] == "hit"
+    assert 0.5 <= second_row["match_score"] <= 1.0
+    assert second_row["source_request_id"] == row["request_id"]
+    assert second_row["request_fingerprint"] != row["request_fingerprint"]
+
+
+def test_gateway_cache_decision_readback_enforces_read_roles():
+    denied = client.get(
+        "/gateway/cache/decisions?limit=5",
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "owner-cache-decision"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_ROLE_FORBIDDEN"
+
+
+def test_gateway_cache_policy_privacy_scope_and_non_cache_data_classes():
+    created = client.post(
+        "/gateway/cache/policies",
+        json={
+            "scope": "tenant:cache-privacy",
+            "ttl_seconds": 120,
+            "privacy_mode": "strict",
+            "privacy_scope": "owner",
+            "non_cache_data_classes": '["pii","secret"]',
+            "cache_mode": "semantic",
+            "similarity_threshold": 0.8,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cache-privacy"},
+    )
+    assert created.status_code == 200
+    payload = created.json()
+    assert payload["privacy_scope"] == "owner"
+    assert "pii" in payload["non_cache_data_classes"]
+
+
+def test_gateway_cache_decision_bypasses_disallowed_data_class():
+    policy_created = client.post(
+        "/gateway/cache/policies",
+        json={
+            "scope": "global",
+            "ttl_seconds": 120,
+            "privacy_mode": "strict",
+            "privacy_scope": "tenant",
+            "non_cache_data_classes": '["pii"]',
+            "cache_mode": "semantic",
+            "similarity_threshold": 0.5,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cache-privacy-bypass"},
+    )
+    assert policy_created.status_code == 200
+
+    created = client.post(
+        "/v1/responses",
+        json={"model": "gpt-4o-mini", "input": "Customer SSN is 123-45-6789", "request_tag": "pii.customer-profile"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cache-privacy-bypass"},
+    )
+    assert created.status_code == 200
+    trace_id = created.json()["trace_id"]
+
+    read = client.get(
+        f"/gateway/cache/decisions?trace_id={trace_id}&limit=10",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-cache-privacy-bypass"},
+    )
+    assert read.status_code == 200
+    rows = read.json()
+    assert len(rows) >= 1
+    row = rows[0]
+    assert row["decision"] == "bypass"
+    assert row["data_class"] == "pii"
+    assert "disallowed" in row["explanation"].lower()
 
 
 def test_gateway_key_block_and_unblock_controls():
@@ -2717,6 +3039,9 @@ def test_gateway_external_callback_registry_and_export_flow():
             "callback_url": "https://hooks.example.com/gateway-dev",
             "event_types": ["gateway.route.execute_fallback", "gateway.mcp.tools.call"],
             "environment": "dev",
+            "sink_type": "siem",
+            "sink_route_key": "soc.high-priority",
+            "correlation_preset": "tenant_environment",
             "redact_sensitive": True,
             "enabled": True,
             "description": "dev callback",
@@ -2725,6 +3050,9 @@ def test_gateway_external_callback_registry_and_export_flow():
     )
     assert created.status_code == 200
     callback_id = created.json()["callback_id"]
+    assert created.json()["sink_type"] == "siem"
+    assert created.json()["sink_route_key"] == "soc.high-priority"
+    assert created.json()["correlation_preset"] == "tenant_environment"
 
     listed = client.get(
         "/gateway/external-callbacks",
@@ -2740,6 +3068,8 @@ def test_gateway_external_callback_registry_and_export_flow():
             "sample_payload": {
                 "actor_id": "ops-user",
                 "resource_id": "route-1",
+                "tenant_id": "tenant-a",
+                "trace_id": "trace-callback-dev-01",
                 "description": "test payload",
             },
         },
@@ -2749,6 +3079,11 @@ def test_gateway_external_callback_registry_and_export_flow():
     payload = tested.json()
     assert payload["delivery_status"] == "delivered_simulated"
     assert payload["redaction_applied"] is True
+    assert payload["sink_type"] == "siem"
+    assert payload["sink_route_key"] == "soc.high-priority"
+    assert payload["correlation_preset"] == "tenant_environment"
+    assert payload["correlation_context"]["tenant_id"] == "tenant-a"
+    assert payload["correlation_context"]["trace_id"] == "trace-callback-dev-01"
     assert str(payload["payload_preview"]["actor_id"]).startswith("fp:")
 
     exported = client.post(
@@ -2759,6 +3094,8 @@ def test_gateway_external_callback_registry_and_export_flow():
     assert exported.status_code == 200
     assert exported.json()["callback_count"] >= 1
     assert exported.json()["event_count"] >= 1
+    assert "siem" in exported.json()["sink_distribution"]
+    assert "tenant_environment" in exported.json()["correlation_preset_distribution"]
 
 
 def test_gateway_external_callback_prod_requires_dual_approval():
@@ -2768,6 +3105,9 @@ def test_gateway_external_callback_prod_requires_dual_approval():
             "callback_url": "https://hooks.example.com/gateway-prod",
             "event_types": ["gateway.route.execute_fallback"],
             "environment": "prod",
+            "sink_type": "pagerduty",
+            "sink_route_key": "oncall.primary",
+            "correlation_preset": "incident_minimal",
             "redact_sensitive": True,
             "enabled": True,
             "description": "prod callback",
@@ -2783,6 +3123,9 @@ def test_gateway_external_callback_prod_requires_dual_approval():
             "callback_url": "https://hooks.example.com/gateway-prod",
             "event_types": ["gateway.route.execute_fallback"],
             "environment": "prod",
+            "sink_type": "pagerduty",
+            "sink_route_key": "oncall.primary",
+            "correlation_preset": "incident_minimal",
             "redact_sensitive": True,
             "enabled": True,
             "description": "prod callback",
@@ -2911,6 +3254,24 @@ def test_gateway_openai_chat_completions_supports_json_response_format_contract(
     assert payload["usage"]["total_tokens"] == payload["usage"]["prompt_tokens"] + payload["usage"]["completion_tokens"]
 
 
+def test_gateway_openai_chat_completions_streaming_contract():
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "Stream fallback status."}],
+            "stream": True,
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-chat-stream"},
+    )
+    assert response.status_code == 200
+    assert "text/event-stream" in str(response.headers.get("content-type", "")).lower()
+    body = response.text
+    assert "chat.completion.chunk" in body
+    assert "data: [DONE]" in body
+
+
 def test_gateway_openai_chat_completions_max_tokens_sets_length_finish_reason():
     response = client.post(
         "/v1/chat/completions",
@@ -2960,6 +3321,24 @@ def test_gateway_openai_chat_completions_provider_prefixed_model_requires_tenant
     assert response.json()["detail"] == "tenant_id is required when model includes provider prefix"
 
 
+def test_gateway_openai_chat_completions_cursor_provider_skips_catalog_entitlement():
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "cursor/composer-2.5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+            "environment": "dev",
+            "tenant_id": "tenant-platform",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-chat-cursor-provider"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"] == "cursor/composer-2.5"
+    assert payload["choices"][0]["message"]["content"]
+
+
 def test_gateway_openai_chat_completions_forbidden_role_emits_deny_audit():
     denied = client.post(
         "/v1/chat/completions",
@@ -2980,6 +3359,737 @@ def test_gateway_openai_chat_completions_forbidden_role_emits_deny_audit():
     )
     assert audits.status_code == 200
     assert any(row["actor_id"] == "aud-chat-denied" for row in audits.json())
+
+
+def test_gateway_openai_embeddings_success_contract():
+    response = client.post(
+        "/v1/embeddings",
+        json={
+            "model": "text-embedding-3-small",
+            "input": "Summarize the current gateway policy posture.",
+            "dimensions": 8,
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-embeddings-create"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["object"] == "list"
+    assert payload["model"] == "text-embedding-3-small"
+    assert payload["data"][0]["object"] == "embedding"
+    assert len(payload["data"][0]["embedding"]) == 8
+    assert payload["usage"]["prompt_tokens"] >= 1
+    assert payload["usage"]["total_tokens"] == payload["usage"]["prompt_tokens"]
+    assert payload["risk_tier"] == "low"
+    assert "frontier_model_family" not in payload["risk_reasons"]
+
+    from app.database import SessionLocal
+    from app.models import CostEvent
+
+    db = SessionLocal()
+    try:
+        event = db.query(CostEvent).filter_by(trace_id=payload["trace_id"]).first()
+        assert event is not None
+        assert event.endpoint_family == "embeddings"
+        assert event.estimated_cost_cents >= 0
+    finally:
+        db.close()
+
+
+def test_gateway_openai_embeddings_forbidden_role_emits_deny_audit():
+    denied = client.post(
+        "/v1/embeddings",
+        json={
+            "model": "text-embedding-3-small",
+            "input": "hello",
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-embeddings-denied"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_ROLE_FORBIDDEN"
+
+    audits = client.get(
+        "/audit/events?action_type=gateway.embeddings.create&decision_outcome=deny&limit=20",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-embeddings-denied"},
+    )
+    assert audits.status_code == 200
+    assert any(row["actor_id"] == "aud-embeddings-denied" for row in audits.json())
+
+
+def test_gateway_openai_images_generation_success_contract():
+    response = client.post(
+        "/v1/images/generations",
+        json={
+            "model": "gpt-image-1",
+            "prompt": "A transparent security shield over a gateway dashboard",
+            "n": 2,
+            "size": "1024x1024",
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-images-create"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"] == "gpt-image-1"
+    assert len(payload["data"]) == 2
+    assert payload["data"][0]["b64_json"].startswith("iVBORw0KGgo")
+    assert payload["risk_tier"] == "low"
+
+    from app.database import SessionLocal
+    from app.models import CostEvent
+
+    db = SessionLocal()
+    try:
+        event = db.query(CostEvent).filter_by(trace_id=payload["trace_id"]).first()
+        assert event is not None
+        assert event.endpoint_family == "images"
+    finally:
+        db.close()
+
+
+def test_gateway_openai_images_generation_forbidden_role_emits_deny_audit():
+    denied = client.post(
+        "/v1/images",
+        json={
+            "model": "gpt-image-1",
+            "prompt": "hello",
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-images-denied"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_ROLE_FORBIDDEN"
+
+    audits = client.get(
+        "/audit/events?action_type=gateway.images.generate&decision_outcome=deny&limit=20",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-images-denied"},
+    )
+    assert audits.status_code == 200
+    assert any(row["actor_id"] == "aud-images-denied" for row in audits.json())
+
+
+def test_gateway_openai_audio_transcriptions_success_contract():
+    response = client.post(
+        "/v1/audio/transcriptions",
+        json={
+            "model": "gpt-audio-1",
+            "input_text": "Security review recorded for the gateway rollout.",
+            "language": "en",
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-audio-transcribe"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"] == "gpt-audio-1"
+    assert "Security review" in payload["text"]
+    assert payload["language"] == "en"
+    assert payload["duration_seconds"] >= 1.0
+    assert payload["risk_tier"] == "low"
+
+    from app.database import SessionLocal
+    from app.models import CostEvent
+
+    db = SessionLocal()
+    try:
+        event = db.query(CostEvent).filter_by(trace_id=payload["trace_id"]).first()
+        assert event is not None
+        assert event.endpoint_family == "audio.transcriptions"
+    finally:
+        db.close()
+
+
+def test_gateway_openai_audio_translations_forbidden_role_emits_deny_audit():
+    denied = client.post(
+        "/v1/audio/translations",
+        json={
+            "model": "gpt-audio-1",
+            "input_text": "hello",
+            "target_language": "fr",
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-audio-denied"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_ROLE_FORBIDDEN"
+
+    audits = client.get(
+        "/audit/events?action_type=gateway.audio.translations.create&decision_outcome=deny&limit=20",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-audio-denied"},
+    )
+    assert audits.status_code == 200
+    assert any(row["actor_id"] == "aud-audio-denied" for row in audits.json())
+
+
+def test_gateway_openai_realtime_success_contract():
+    response = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "session_label": "ops-realtime-check",
+            "requested_modalities": ["text", "audio"],
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-create"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["object"] == "realtime.session"
+    assert payload["status"] == "created"
+    assert payload["model"] == "gpt-realtime-1"
+    assert payload["requested_modalities"] == ["text", "audio"]
+    assert payload["expires_at"] >= payload["created"] if "created" in payload else payload["expires_at"] > 0
+    assert payload["risk_tier"] == "low"
+
+    from app.database import SessionLocal
+    from app.models import CostEvent
+
+    db = SessionLocal()
+    try:
+        event = db.query(CostEvent).filter_by(trace_id=payload["trace_id"]).first()
+        assert event is not None
+        assert event.endpoint_family == "realtime"
+    finally:
+        db.close()
+
+
+def test_gateway_openai_realtime_streaming_contract():
+    response = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "session_label": "ops-realtime-stream",
+            "requested_modalities": ["text", "audio"],
+            "stream": True,
+            "stream_binary_mode": "metadata_only",
+            "stream_max_event_bytes": 32768,
+            "stream_heartbeat_interval_seconds": 12,
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-stream"},
+    )
+    assert response.status_code == 200
+    assert "text/event-stream" in str(response.headers.get("content-type", "")).lower()
+    body = response.text
+    assert "realtime.session.event" in body
+    assert "session.created" in body
+    assert "session.policy" in body
+    assert "session.keepalive" in body
+    assert '"binary_mode":"metadata_only"' in body
+    assert '"max_event_bytes":32768' in body
+    assert '"heartbeat_interval_seconds":12' in body
+    assert "data: [DONE]" in body
+
+
+def test_gateway_openai_realtime_inline_binary_prod_requires_dual_approval():
+    denied = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "requested_modalities": ["audio"],
+            "stream": True,
+            "stream_binary_mode": "inline_base64",
+            "environment": "prod",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-inline-prod"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_DUAL_APPROVAL_REQUIRED"
+
+    allowed = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "requested_modalities": ["audio"],
+            "stream": True,
+            "stream_binary_mode": "inline_base64",
+            "environment": "prod",
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-realtime-inline-prod",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-realtime-inline-prod",
+        },
+    )
+    assert allowed.status_code == 200
+    assert "text/event-stream" in str(allowed.headers.get("content-type", "")).lower()
+    assert "data: [DONE]" in allowed.text
+
+
+def test_gateway_openai_realtime_session_lifecycle_contract():
+    created = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "session_label": "ops-lifecycle",
+            "requested_modalities": ["text"],
+            "stream_binary_mode": "metadata_only",
+            "stream_max_event_bytes": 2048,
+            "stream_heartbeat_interval_seconds": 10,
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-lifecycle"},
+    )
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    read_before = client.get(
+        f"/v1/realtime/sessions/{session_id}",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-lifecycle"},
+    )
+    assert read_before.status_code == 200
+    read_before_payload = read_before.json()
+    assert read_before_payload["status"] == "active"
+    assert read_before_payload["event_count"] == 0
+    assert read_before_payload["stream_policy"]["max_event_bytes"] == 2048
+
+    appended = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "metadata_only",
+            "event_bytes": 1024,
+            "payload": {"chunk": 1},
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-lifecycle"},
+    )
+    assert appended.status_code == 200
+    assert appended.json()["status"] == "accepted"
+
+    events = client.get(
+        f"/v1/realtime/sessions/{session_id}/events?limit=20&offset=0",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-lifecycle"},
+    )
+    assert events.status_code == 200
+    event_rows = events.json()["data"]
+    assert len(event_rows) >= 1
+    assert event_rows[0]["session_id"] == session_id
+    assert event_rows[0]["event_type"] == "input.audio.append"
+
+    listed = client.get(
+        "/v1/realtime/sessions?status=active&limit=20&offset=0",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-lifecycle"},
+    )
+    assert listed.status_code == 200
+    assert any(row["id"] == session_id for row in listed.json()["data"])
+
+    read_after = client.get(
+        f"/v1/realtime/sessions/{session_id}",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-lifecycle"},
+    )
+    assert read_after.status_code == 200
+    read_after_payload = read_after.json()
+    assert read_after_payload["event_count"] >= 1
+    assert read_after_payload["last_event_type"] == "input.audio.append"
+
+    closed = client.post(
+        f"/v1/realtime/sessions/{session_id}/close",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-lifecycle"},
+    )
+    assert closed.status_code == 200
+    assert closed.json()["status"] == "closed"
+    assert closed.json()["event_count"] >= 1
+
+
+def test_gateway_openai_realtime_session_event_inline_binary_prod_requires_dual_approval():
+    created = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "requested_modalities": ["audio"],
+            "stream_binary_mode": "inline_base64",
+            "stream_max_event_bytes": 4096,
+            "environment": "prod",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-event-prod"},
+    )
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    denied = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "inline_base64",
+            "event_bytes": 1024,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-event-prod"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_DUAL_APPROVAL_REQUIRED"
+
+    allowed = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "inline_base64",
+            "event_bytes": 1024,
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-realtime-event-prod",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-realtime-event-prod",
+        },
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["status"] == "accepted"
+
+
+def test_gateway_openai_realtime_session_events_owner_scope_enforced():
+    created = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "requested_modalities": ["text"],
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "agent-owner-a"},
+    )
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    denied = client.get(
+        f"/v1/realtime/sessions/{session_id}/events?limit=20&offset=0",
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "agent-owner-b"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_SCOPE_FORBIDDEN"
+
+
+def test_gateway_openai_realtime_session_expiry_blocks_event_append_and_persists_expired_status():
+    created = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "requested_modalities": ["text"],
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-expiry"},
+    )
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    from app.database import SessionLocal
+    from app.models import RealtimeSessionRecord
+    from datetime import datetime, timedelta
+
+    db = SessionLocal()
+    try:
+        row = db.query(RealtimeSessionRecord).filter_by(session_id=session_id).first()
+        assert row is not None
+        row.expires_at = datetime.utcnow() - timedelta(minutes=1)
+        db.commit()
+    finally:
+        db.close()
+
+    denied = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "metadata_only",
+            "event_bytes": 100,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-expiry"},
+    )
+    assert denied.status_code == 409
+    assert denied.json()["detail"] == "Realtime session has expired"
+
+    read_back = client.get(
+        f"/v1/realtime/sessions/{session_id}",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-expiry"},
+    )
+    assert read_back.status_code == 200
+    assert read_back.json()["status"] == "expired"
+
+
+def test_gateway_openai_realtime_session_event_count_cap_enforced():
+    created = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "requested_modalities": ["text"],
+            "stream_max_event_bytes": 4096,
+            "stream_max_session_events": 1,
+            "stream_max_session_event_bytes": 4096,
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-event-cap"},
+    )
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    first = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "metadata_only",
+            "event_bytes": 100,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-event-cap"},
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "metadata_only",
+            "event_bytes": 100,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-event-cap"},
+    )
+    assert second.status_code == 422
+    assert second.json()["detail"] == "session event count exceeds stream policy max_session_events"
+
+
+def test_gateway_openai_realtime_session_event_bytes_cap_enforced():
+    created = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "requested_modalities": ["text"],
+            "stream_max_event_bytes": 4096,
+            "stream_max_session_events": 10,
+            "stream_max_session_event_bytes": 1024,
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-bytes-cap"},
+    )
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    first = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "metadata_only",
+            "event_bytes": 700,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-bytes-cap"},
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "metadata_only",
+            "event_bytes": 400,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-bytes-cap"},
+    )
+    assert second.status_code == 422
+    assert second.json()["detail"] == "session event bytes exceed stream policy max_session_event_bytes"
+
+
+def test_gateway_openai_realtime_inline_policy_enforces_event_allowlist_byte_cap_and_correlation_id():
+    created = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "requested_modalities": ["audio", "video"],
+            "stream_binary_mode": "inline_base64",
+            "stream_inline_max_event_bytes": 1024,
+            "stream_inline_allowed_event_types": ["input.audio.append"],
+            "stream_inline_require_correlation_id": True,
+            "stream_max_event_bytes": 4096,
+            "stream_max_session_events": 10,
+            "stream_max_session_event_bytes": 8192,
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-inline-policy"},
+    )
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    disallowed_event_type = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.video.append",
+            "binary_mode": "inline_base64",
+            "event_bytes": 200,
+            "payload": {"media_id": "media-video-1"},
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-inline-policy"},
+    )
+    assert disallowed_event_type.status_code == 422
+    assert disallowed_event_type.json()["detail"] == "event_type is not allowed for inline_base64 under stream policy"
+
+    exceeds_inline_bytes = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "inline_base64",
+            "event_bytes": 1500,
+            "payload": {"media_id": "media-audio-1"},
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-inline-policy"},
+    )
+    assert exceeds_inline_bytes.status_code == 422
+    assert exceeds_inline_bytes.json()["detail"] == "event_bytes exceeds stream policy inline_max_event_bytes"
+
+    missing_correlation = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "inline_base64",
+            "event_bytes": 256,
+            "payload": {"chunk": 1},
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-inline-policy"},
+    )
+    assert missing_correlation.status_code == 422
+    assert missing_correlation.json()["detail"] == "inline_base64 events require payload correlation id under stream policy"
+
+    accepted = client.post(
+        f"/v1/realtime/sessions/{session_id}/events",
+        json={
+            "event_type": "input.audio.append",
+            "binary_mode": "inline_base64",
+            "event_bytes": 256,
+            "payload": {"media_id": "media-audio-2", "chunk": 2},
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-realtime-inline-policy"},
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["status"] == "accepted"
+
+
+def test_gateway_openai_realtime_forbidden_role_emits_deny_audit():
+    denied = client.post(
+        "/v1/realtime",
+        json={
+            "model": "gpt-realtime-1",
+            "requested_modalities": ["text"],
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-realtime-denied"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_ROLE_FORBIDDEN"
+
+    audits = client.get(
+        "/audit/events?action_type=gateway.realtime.create&decision_outcome=deny&limit=20",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-realtime-denied"},
+    )
+    assert audits.status_code == 200
+    assert any(row["actor_id"] == "aud-realtime-denied" for row in audits.json())
+
+
+def test_gateway_openai_messages_success_contract():
+    response = client.post(
+        "/v1/messages",
+        json={
+            "model": "gpt-4o-mini",
+            "input": "Summarize the gateway parity posture.",
+            "conversation_id": "conv-gateway-ops",
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-messages-create"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["object"] == "message"
+    assert payload["role"] == "assistant"
+    assert payload["conversation_id"] == "conv-gateway-ops"
+    assert payload["model"] == "gpt-4o-mini"
+    assert payload["risk_tier"] == "low"
+
+    from app.database import SessionLocal
+    from app.models import CostEvent
+
+    db = SessionLocal()
+    try:
+        event = db.query(CostEvent).filter_by(trace_id=payload["trace_id"]).first()
+        assert event is not None
+        assert event.endpoint_family == "messages"
+    finally:
+        db.close()
+
+
+def test_gateway_openai_a2a_messages_forbidden_role_emits_deny_audit():
+    denied = client.post(
+        "/v1/a2a/messages",
+        json={
+            "from_agent_id": "agent-alpha",
+            "to_agent_id": "agent-beta",
+            "message": "handoff status",
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-a2a-denied"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_ROLE_FORBIDDEN"
+
+    audits = client.get(
+        "/audit/events?action_type=gateway.a2a.messages.create&decision_outcome=deny&limit=20",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-a2a-denied"},
+    )
+    assert audits.status_code == 200
+    assert any(row["actor_id"] == "aud-a2a-denied" for row in audits.json())
+
+
+def test_gateway_openai_rerank_success_contract():
+    response = client.post(
+        "/v1/rerank",
+        json={
+            "model": "text-rerank-3-small",
+            "query": "gateway policy posture",
+            "documents": [
+                "This document explains gateway policy posture and audit controls.",
+                "A totally unrelated operational note.",
+                {"text": "Policy posture review and gateway audit summary."},
+            ],
+            "top_n": 2,
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-rerank-create"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["object"] == "list"
+    assert payload["model"] == "text-rerank-3-small"
+    assert len(payload["results"]) == 2
+    assert payload["results"][0]["relevance_score"] >= payload["results"][1]["relevance_score"]
+    assert payload["usage"]["prompt_tokens"] >= 1
+    assert payload["usage"]["total_tokens"] == payload["usage"]["prompt_tokens"]
+    assert payload["risk_tier"] == "low"
+
+    from app.database import SessionLocal
+    from app.models import CostEvent
+
+    db = SessionLocal()
+    try:
+        event = db.query(CostEvent).filter_by(trace_id=payload["trace_id"]).first()
+        assert event is not None
+        assert event.endpoint_family == "rerank"
+    finally:
+        db.close()
+
+
+def test_gateway_openai_rerank_forbidden_role_emits_deny_audit():
+    denied = client.post(
+        "/v1/rerank",
+        json={
+            "model": "text-rerank-3-small",
+            "query": "hello",
+            "documents": ["one", "two"],
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-rerank-denied"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_ROLE_FORBIDDEN"
+
+    audits = client.get(
+        "/audit/events?action_type=gateway.rerank.create&decision_outcome=deny&limit=20",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-rerank-denied"},
+    )
+    assert audits.status_code == 200
+    assert any(row["actor_id"] == "aud-rerank-denied" for row in audits.json())
 
 
 def test_gateway_openai_responses_success_contract():
@@ -3018,6 +4128,24 @@ def test_gateway_openai_responses_success_contract():
         assert event.estimated_cost_cents >= 0
     finally:
         db.close()
+
+
+def test_gateway_openai_responses_streaming_contract():
+    response = client.post(
+        "/v1/responses",
+        json={
+            "model": "gpt-4o-mini",
+            "input": "Stream response lifecycle status.",
+            "stream": True,
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-responses-stream"},
+    )
+    assert response.status_code == 200
+    assert "text/event-stream" in str(response.headers.get("content-type", "")).lower()
+    body = response.text
+    assert "response.chunk" in body
+    assert "data: [DONE]" in body
 
 
 def test_gateway_openai_responses_max_output_tokens_sets_length_finish_reason():
@@ -3104,6 +4232,83 @@ def test_gateway_openai_responses_forbidden_role_emits_deny_audit():
     assert any(row["actor_id"] == "aud-responses-denied" for row in audits.json())
 
 
+def test_gateway_openai_responses_external_cursor_runtime_read_failure_emits_warn_audit():
+    ensure_tenant_catalog_entry("tenant-gateway-cursor-runtime-failure", "admin-provider-tenant-gateway-cursor-runtime-failure")
+    provider_created = client.post(
+        "/secrets/providers",
+        json={
+            "tenant_id": "tenant-gateway-cursor-runtime-failure",
+            "provider_type": "vault",
+            "provider_address": "https://vault.example.com",
+            "auth_method": "approle",
+            "role_or_mount": "approle/platform",
+            "secret_path_prefixes": '["kv/data/gateway"]',
+            "lease_ttl_seconds": 600,
+            "auto_renew_enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-secret-runtime-failure", "X-MFA-Verified": "true"},
+    )
+    assert provider_created.status_code == 200
+    provider_id = provider_created.json()["secret_provider_id"]
+
+    configured = client.put(
+        "/gateway/cursor-token",
+        json={
+            "storage_mode": "external",
+            "external_provider_id": provider_id,
+            "external_secret_ref": "kv/data/gateway/cursor_token_failure",
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-cursor-token-runtime-failure",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-cursor-token-runtime-failure",
+        },
+    )
+    assert configured.status_code == 200
+
+    try:
+        with patch.dict(os.environ, {"GATEWAY_INFERENCE_SIMULATION": "false"}, clear=False):
+            with patch("app.routers.gateway.httpx.get") as mock_get:
+                mock_resp = Mock()
+                mock_resp.status_code = 500
+                mock_resp.headers = {"content-type": "application/json"}
+                mock_resp.json.return_value = {"errors": ["vault unavailable"]}
+                mock_get.return_value = mock_resp
+
+                failed = client.post(
+                    "/v1/responses",
+                    json={
+                        "model": "gpt-4o-mini",
+                        "input": "runtime token failure check",
+                        "stream": False,
+                        "environment": "dev",
+                    },
+                    headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-runtime-token-failure-check"},
+                )
+                assert failed.status_code == 502
+                assert failed.json()["detail"] == "Vault secret read failed"
+
+        audits = client.get(
+            "/audit/events?action_type=gateway.responses.create&decision_outcome=warn&limit=20",
+            headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-runtime-token-failure-check"},
+        )
+        assert audits.status_code == 200
+        assert any(row["actor_id"] == "admin-runtime-token-failure-check" for row in audits.json())
+    finally:
+        reset = client.put(
+            "/gateway/cursor-token",
+            json={"storage_mode": "db", "token": "cursor-token-reset-after-runtime-failure-test"},
+            headers={
+                "X-Actor-Role": "Platform Admin",
+                "X-Actor-Id": "admin-cursor-token-runtime-failure-reset",
+                "X-Approver-Role": "Security Approver",
+                "X-Approver-Id": "sec-cursor-token-runtime-failure-reset",
+            },
+        )
+        assert reset.status_code == 200
+
+
 def test_gateway_openai_responses_required_tool_choice_returns_tool_call_output():
     response = client.post(
         "/v1/responses",
@@ -3132,6 +4337,367 @@ def test_gateway_openai_responses_required_tool_choice_returns_tool_call_output(
     assert payload["output"][0]["finish_reason"] == "tool_calls"
     assert payload["output"][0]["content"][0]["name"] == "get_route_health"
     assert str(payload["output"][0]["content"][0]["arguments"]).startswith("{")
+
+
+def test_gateway_system_rules_crud_and_role_enforcement():
+    denied_update = client.put(
+        "/gateway/system-rules",
+        json={
+            "rules": [
+                {"rule_text": "Never expose secrets", "scope_type": "global"},
+                {"rule_text": "Prefer least-privilege actions", "scope_type": "user", "scope_id": "aud-system-rules"},
+            ]
+        },
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-system-rules"},
+    )
+    assert denied_update.status_code == 403
+
+    updated = client.put(
+        "/gateway/system-rules",
+        json={
+            "rules": [
+                {"rule_text": "Never expose secrets", "scope_type": "global"},
+                {"rule_text": "Prefer least-privilege actions", "scope_type": "user", "scope_id": "aud-system-rules"},
+            ]
+        },
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-system-rules"},
+    )
+    assert updated.status_code == 200
+    payload = updated.json()
+    assert payload["config_key"] == "gateway.system_rules_json"
+    assert len(payload["rules"]) == 2
+    assert payload["rules"][0]["scope_type"] == "global"
+    assert payload["rules"][1]["scope_type"] == "user"
+
+    fetched = client.get(
+        "/gateway/system-rules",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-system-rules"},
+    )
+    assert fetched.status_code == 200
+    assert len(fetched.json()["rules"]) == 2
+
+
+def test_gateway_cursor_token_config_masks_readback_and_enforces_roles():
+    denied_read = client.get(
+        "/gateway/cursor-token",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-cursor-token-read"},
+    )
+    assert denied_read.status_code == 403
+
+    denied_update = client.put(
+        "/gateway/cursor-token",
+        json={"token": "cursor-secret-token-123456"},
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-cursor-token-update"},
+    )
+    assert denied_update.status_code == 403
+
+    no_approval_non_prod = client.put(
+        "/gateway/cursor-token",
+        json={"token": "cursor-secret-token-123456"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cursor-token-missing-approval"},
+    )
+    assert no_approval_non_prod.status_code == 200
+
+    updated = client.put(
+        "/gateway/cursor-token",
+        json={"token": "cursor-secret-token-123456"},
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-cursor-token",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-cursor-token",
+        },
+    )
+    assert updated.status_code == 200
+    update_payload = updated.json()
+    assert update_payload["configured"] is True
+    assert "cursor-secret-token-123456" not in str(update_payload)
+    assert update_payload["masked_hint"] != "cursor-secret-token-123456"
+
+    with Session(engine) as db:
+        row = db.query(RuntimeConfig).filter_by(config_key="gateway.cursor_api_token").first()
+        assert row is not None
+        assert isinstance(row.config_value, str)
+        stored = json.loads(row.config_value)
+        assert stored["version"] == "v3"
+        assert stored["secret_provider_id"]
+        assert stored["secret_ref"] == "gateway/cursor-token"
+        assert "cursor-secret-token-123456" not in row.config_value
+
+    fetched = client.get(
+        "/gateway/cursor-token",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cursor-token-read"},
+    )
+    assert fetched.status_code == 200
+    fetch_payload = fetched.json()
+    assert fetch_payload["configured"] is True
+    assert fetch_payload["storage_mode"] == "db"
+    assert fetch_payload["external_provider_id"]
+    assert fetch_payload["external_secret_ref"] == "gateway/cursor-token"
+    assert "cursor-secret-token-123456" not in str(fetch_payload)
+    assert fetch_payload["masked_hint"] and "***" in fetch_payload["masked_hint"]
+
+    cleared = client.delete(
+        "/gateway/cursor-token",
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-cursor-token",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-cursor-token",
+        },
+    )
+    assert cleared.status_code == 200
+    clear_payload = cleared.json()
+    assert clear_payload["configured"] is False
+    assert clear_payload["storage_mode"] == "db"
+    assert clear_payload["masked_hint"] is None
+
+
+def test_gateway_cursor_token_external_provider_mode_persists_reference_only():
+    ensure_tenant_catalog_entry("tenant-gateway-cursor-ext", "admin-provider-tenant-gateway-cursor-ext")
+    provider_created = client.post(
+        "/secrets/providers",
+        json={
+            "tenant_id": "tenant-gateway-cursor-ext",
+            "provider_type": "vault",
+            "provider_address": "https://vault.example.com",
+            "auth_method": "approle",
+            "role_or_mount": "approle/platform",
+            "secret_path_prefixes": '["kv/data/gateway"]',
+            "lease_ttl_seconds": 600,
+            "auto_renew_enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-secret-ext", "X-MFA-Verified": "true"},
+    )
+    assert provider_created.status_code == 200
+    provider_id = provider_created.json()["secret_provider_id"]
+
+    updated = client.put(
+        "/gateway/cursor-token",
+        json={
+            "storage_mode": "external",
+            "external_provider_id": provider_id,
+            "external_secret_ref": "kv/data/gateway/cursor_token",
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-cursor-token-ext",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-cursor-token-ext",
+        },
+    )
+    assert updated.status_code == 200
+    payload = updated.json()
+    assert payload["configured"] is True
+    assert payload["storage_mode"] == "external"
+    assert payload["external_provider_id"] == provider_id
+    assert payload["external_secret_ref"] == "kv/data/gateway/cursor_token"
+
+    with Session(engine) as db:
+        row = db.query(RuntimeConfig).filter_by(config_key="gateway.cursor_api_token").first()
+        assert row is not None
+        stored = json.loads(row.config_value)
+        assert stored["version"] == "v3"
+        assert stored["secret_provider_id"] == provider_id
+        assert stored["secret_ref"] == "kv/data/gateway/cursor_token"
+        assert "cursor-secret-token" not in row.config_value
+
+    fetched = client.get(
+        "/gateway/cursor-token",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-cursor-token-ext-read"},
+    )
+    assert fetched.status_code == 200
+    fetched_payload = fetched.json()
+    assert fetched_payload["configured"] is True
+    assert fetched_payload["storage_mode"] == "external"
+    assert fetched_payload["external_provider_id"] == provider_id
+    assert fetched_payload["external_secret_ref"] == "kv/data/gateway/cursor_token"
+
+    reset = client.put(
+        "/gateway/cursor-token",
+        json={"storage_mode": "db", "token": "cursor-token-reset-after-external-reference-test"},
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-cursor-token-ext-reset",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-cursor-token-ext-reset",
+        },
+    )
+    assert reset.status_code == 200
+
+
+def test_gateway_cursor_token_external_provider_mode_rejects_inactive_provider():
+    ensure_tenant_catalog_entry("tenant-gateway-cursor-ext-inactive", "admin-provider-tenant-gateway-cursor-ext-inactive")
+    provider_created = client.post(
+        "/secrets/providers",
+        json={
+            "tenant_id": "tenant-gateway-cursor-ext-inactive",
+            "provider_type": "vault",
+            "provider_address": "https://vault.example.com",
+            "auth_method": "approle",
+            "role_or_mount": "approle/platform",
+            "secret_path_prefixes": '["kv/data/gateway"]',
+            "lease_ttl_seconds": 600,
+            "auto_renew_enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-secret-ext-inactive", "X-MFA-Verified": "true"},
+    )
+    assert provider_created.status_code == 200
+    provider_id = provider_created.json()["secret_provider_id"]
+
+    with Session(engine) as db:
+        row = db.query(SecretProviderConfig).filter_by(secret_provider_id=provider_id).first()
+        assert row is not None
+        row.status = "inactive"
+        db.commit()
+
+    denied = client.put(
+        "/gateway/cursor-token",
+        json={
+            "storage_mode": "external",
+            "external_provider_id": provider_id,
+            "external_secret_ref": "kv/data/gateway/cursor_token",
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-cursor-token-ext-inactive",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-cursor-token-ext-inactive",
+        },
+    )
+    assert denied.status_code == 400
+    assert denied.json()["detail"] == "External secret provider is not active"
+
+
+def test_gateway_openai_responses_applies_gateway_system_rules():
+    set_rules = client.put(
+        "/gateway/system-rules",
+        json={
+            "rules": [
+                {"rule_text": "Always provide concise answers", "scope_type": "global"},
+                {"rule_text": "Never output credentials", "scope_type": "user", "scope_id": "ops-user-1"},
+                {"rule_text": "Use agent-specific policy", "scope_type": "agent", "scope_id": "agent-ops-1"},
+                {"rule_text": "Apply team guardrails", "scope_type": "team", "scope_id": "platform-security"},
+                {"rule_text": "Apply group guardrails", "scope_type": "group", "scope_id": "soc-operators"},
+            ]
+        },
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-system-rules-apply"},
+    )
+    assert set_rules.status_code == 200
+
+    try:
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "gpt-4o-mini",
+                "input": "Summarize gateway posture.",
+                "agent_id": "agent-ops-1",
+                "owner_scope": "team:platform-security",
+                "stream": False,
+                "environment": "dev",
+            },
+            headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "ops-user-1"},
+        )
+        assert response.status_code == 200
+        content = response.json()["output"][0]["content"][0]["text"]
+        assert "Always provide concise answers" in content
+        assert "Never output credentials" in content
+        assert "Use agent-specific policy" in content
+        assert "Apply team guardrails" in content
+        assert "Apply group guardrails" not in content
+
+        group_response = client.post(
+            "/v1/responses",
+            json={
+                "model": "gpt-4o-mini",
+                "input": "Summarize gateway posture for group.",
+                "agent_id": "agent-ops-1",
+                "owner_scope": "group:soc-operators",
+                "stream": False,
+                "environment": "dev",
+            },
+            headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "ops-user-1"},
+        )
+        assert group_response.status_code == 200
+        group_content = group_response.json()["output"][0]["content"][0]["text"]
+        assert "Apply group guardrails" in group_content
+    finally:
+        cleared = client.put(
+            "/gateway/system-rules",
+            json={"rules": []},
+            headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-system-rules-cleanup"},
+        )
+        assert cleared.status_code == 200
+
+
+def test_gateway_openai_responses_resolves_external_cursor_token_at_runtime():
+    ensure_tenant_catalog_entry("tenant-gateway-cursor-runtime", "admin-provider-tenant-gateway-cursor-runtime")
+    provider_created = client.post(
+        "/secrets/providers",
+        json={
+            "tenant_id": "tenant-gateway-cursor-runtime",
+            "provider_type": "vault",
+            "provider_address": "https://vault.example.com",
+            "auth_method": "approle",
+            "role_or_mount": "approle/platform",
+            "secret_path_prefixes": '["kv/data/gateway"]',
+            "lease_ttl_seconds": 600,
+            "auto_renew_enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-secret-runtime", "X-MFA-Verified": "true"},
+    )
+    assert provider_created.status_code == 200
+    provider_id = provider_created.json()["secret_provider_id"]
+
+    configured = client.put(
+        "/gateway/cursor-token",
+        json={
+            "storage_mode": "external",
+            "external_provider_id": provider_id,
+            "external_secret_ref": "kv/data/gateway/cursor_token",
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-cursor-token-runtime",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-cursor-token-runtime",
+        },
+    )
+    assert configured.status_code == 200
+
+    try:
+        with patch.dict(os.environ, {"GATEWAY_INFERENCE_SIMULATION": "false"}, clear=False):
+            with patch("app.routers.gateway.httpx.get") as mock_get:
+                mock_resp = Mock()
+                mock_resp.status_code = 200
+                mock_resp.headers = {"content-type": "application/json"}
+                mock_resp.json.return_value = {"data": {"data": {"token": "cursor-runtime-token"}}}
+                mock_get.return_value = mock_resp
+
+                response = client.post(
+                    "/v1/responses",
+                    json={
+                        "model": "gpt-4o-mini",
+                        "input": "runtime token check",
+                        "stream": False,
+                        "environment": "dev",
+                    },
+                    headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-runtime-token-check"},
+                )
+                assert response.status_code == 200
+                assert mock_get.called
+    finally:
+        reset = client.put(
+            "/gateway/cursor-token",
+            json={"storage_mode": "db", "token": "cursor-token-reset-after-runtime-test"},
+            headers={
+                "X-Actor-Role": "Platform Admin",
+                "X-Actor-Id": "admin-cursor-token-runtime-reset",
+                "X-Approver-Role": "Security Approver",
+                "X-Approver-Id": "sec-cursor-token-runtime-reset",
+            },
+        )
+        assert reset.status_code == 200
 
 
 def test_gateway_openai_responses_rejects_invalid_tool_choice_contract():
@@ -3291,6 +4857,65 @@ def test_gateway_openai_files_lifecycle_and_delete_role_guard():
     missing_after_delete = client.get(
         f"/v1/files/{file_id}",
         headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-files-lifecycle"},
+    )
+    assert missing_after_delete.status_code == 404
+
+
+def test_gateway_openai_batches_lifecycle_and_owner_scope_guard():
+    created = client.post(
+        "/v1/batches",
+        json={
+            "endpoint_family": "responses",
+            "requests": [{"id": "req-1", "input": "batch payload"}],
+            "metadata": {"request_tag": "billing.batch-01"},
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-batches-lifecycle"},
+    )
+    assert created.status_code == 200
+    payload = created.json()
+    batch_id = payload["id"]
+    assert payload["object"] == "batch"
+    assert payload["endpoint_family"] == "responses"
+    assert payload["request_count"] == 1
+    assert payload["status"] == "queued"
+
+    retrieved = client.get(
+        f"/v1/batches/{batch_id}",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-batches-lifecycle"},
+    )
+    assert retrieved.status_code == 200
+    assert retrieved.json()["id"] == batch_id
+
+    owner_created = client.post(
+        "/v1/batches",
+        json={
+            "endpoint_family": "responses",
+            "requests": [{"id": "req-2", "input": "owner batch"}],
+            "environment": "dev",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "owner-batch-a"},
+    )
+    assert owner_created.status_code == 200
+    owner_batch_id = owner_created.json()["id"]
+
+    owner_cross_read = client.get(
+        f"/v1/batches/{owner_batch_id}",
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "owner-batch-b"},
+    )
+    assert owner_cross_read.status_code == 403
+    assert owner_cross_read.json()["detail"]["error_code"] == "AUTHZ_SCOPE_FORBIDDEN"
+
+    deleted = client.delete(
+        f"/v1/batches/{batch_id}",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-batches-lifecycle"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+
+    missing_after_delete = client.get(
+        f"/v1/batches/{batch_id}",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-batches-lifecycle"},
     )
     assert missing_after_delete.status_code == 404
 
@@ -3695,6 +5320,251 @@ def test_gateway_route_pre_call_filters_roundtrip_and_execution_blocking():
     assert allowed.json()["final_outcome"] == "success"
 
 
+def test_gateway_route_output_guardrails_roundtrip_and_execution_enforcement():
+    route = client.post(
+        "/gateway/routes",
+        json={"route_name": "output-guardrails-route"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-output-guardrails"},
+    )
+    assert route.status_code == 200
+    route_policy_id = route.json()["route_policy_id"]
+
+    configured = client.post(
+        f"/gateway/routes/{route_policy_id}/providers/priority",
+        json={
+            "tenant_id": "tenant-output-guardrails",
+            "environment": "dev",
+            "priority_order": '[{"provider_id":"provider-primary","priority":1}]',
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-output-guardrails"},
+    )
+    assert configured.status_code == 200
+
+    saved_guardrails = client.put(
+        f"/gateway/routes/{route_policy_id}/output-guardrails",
+        json={
+            "tenant_id": "tenant-output-guardrails",
+            "environment": "dev",
+            "policy_mode": "block",
+            "blocked_phrases": '["forbidden"]',
+            "redact_phrases": '["secret"]',
+            "max_output_tokens": 64,
+            "enforce": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-output-guardrails"},
+    )
+    assert saved_guardrails.status_code == 200
+
+    read_guardrails = client.get(
+        f"/gateway/routes/{route_policy_id}/output-guardrails",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-output-guardrails"},
+    )
+    assert read_guardrails.status_code == 200
+    assert read_guardrails.json()["policy_mode"] == "block"
+    assert "forbidden" in read_guardrails.json()["blocked_phrases"]
+
+    blocked = client.post(
+        f"/gateway/routes/{route_policy_id}/execute-fallback",
+        json={
+            "tenant_id": "tenant-output-guardrails",
+            "environment": "dev",
+            "agent_id": "agent-output-guardrails",
+            "session_id": "sess-output-guardrails-block",
+            "owner_scope": "team:platform",
+            "input_tokens": 40,
+            "output_tokens": 40,
+            "simulated_output_text": "This output includes forbidden content.",
+            "simulate_fail_provider_ids": "[]",
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-output-guardrails"},
+    )
+    assert blocked.status_code == 200
+    blocked_payload = blocked.json()
+    assert blocked_payload["final_outcome"] == "blocked_output_guardrail"
+    assert blocked_payload["selected_provider_id"] is None
+
+    set_warn_mode = client.put(
+        f"/gateway/routes/{route_policy_id}/output-guardrails",
+        json={
+            "tenant_id": "tenant-output-guardrails",
+            "environment": "dev",
+            "policy_mode": "warn",
+            "blocked_phrases": '["forbidden"]',
+            "enforce": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-output-guardrails"},
+    )
+    assert set_warn_mode.status_code == 200
+
+    warned = client.post(
+        f"/gateway/routes/{route_policy_id}/execute-fallback",
+        json={
+            "tenant_id": "tenant-output-guardrails",
+            "environment": "dev",
+            "agent_id": "agent-output-guardrails",
+            "session_id": "sess-output-guardrails-warn",
+            "owner_scope": "team:platform",
+            "input_tokens": 40,
+            "output_tokens": 40,
+            "simulated_output_text": "This output includes forbidden content.",
+            "simulate_fail_provider_ids": "[]",
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-output-guardrails"},
+    )
+    assert warned.status_code == 200
+    warned_payload = warned.json()
+    assert warned_payload["final_outcome"] in {"success", "warn_output_guardrail", "transformed_output_guardrail"}
+    warned_attempted = json.loads(warned_payload["attempted_providers"])
+    assert any(row.get("outcome") == "warn_output_guardrail" for row in warned_attempted)
+
+
+def test_gateway_route_output_guardrails_prod_requires_dual_approval():
+    route = client.post(
+        "/gateway/routes",
+        json={"route_name": "prod-output-guardrails-route"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-prod-output-guardrails"},
+    )
+    assert route.status_code == 200
+    route_policy_id = route.json()["route_policy_id"]
+
+    denied = client.put(
+        f"/gateway/routes/{route_policy_id}/output-guardrails",
+        json={
+            "tenant_id": "tenant-prod-output-guardrails",
+            "environment": "prod",
+            "policy_mode": "block",
+            "blocked_phrases": '["forbidden"]',
+            "enforce": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-prod-output-guardrails"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_DUAL_APPROVAL_REQUIRED"
+
+
+def test_gateway_route_input_data_policy_roundtrip_and_execution_enforcement():
+    route = client.post(
+        "/gateway/routes",
+        json={"route_name": "input-data-policy-route"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-input-data-policy"},
+    )
+    assert route.status_code == 200
+    route_policy_id = route.json()["route_policy_id"]
+
+    configured = client.post(
+        f"/gateway/routes/{route_policy_id}/providers/priority",
+        json={
+            "tenant_id": "tenant-input-data-policy",
+            "environment": "dev",
+            "priority_order": '[{"provider_id":"provider-primary","priority":1}]',
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-input-data-policy"},
+    )
+    assert configured.status_code == 200
+
+    saved_policy = client.put(
+        f"/gateway/routes/{route_policy_id}/input-data-policy",
+        json={
+            "tenant_id": "tenant-input-data-policy",
+            "environment": "dev",
+            "policy_mode": "block",
+            "data_classes": '["pii"]',
+            "block_patterns": '["ssn"]',
+            "mask_token": "[MASKED]",
+            "enforce": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-input-data-policy"},
+    )
+    assert saved_policy.status_code == 200
+
+    read_policy = client.get(
+        f"/gateway/routes/{route_policy_id}/input-data-policy",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-input-data-policy"},
+    )
+    assert read_policy.status_code == 200
+    assert read_policy.json()["policy_mode"] == "block"
+    assert "pii" in read_policy.json()["data_classes"]
+
+    blocked = client.post(
+        f"/gateway/routes/{route_policy_id}/execute-fallback",
+        json={
+            "tenant_id": "tenant-input-data-policy",
+            "environment": "dev",
+            "agent_id": "agent-input-data-policy",
+            "request_tag": "pii.customer",
+            "session_id": "sess-input-data-policy-block",
+            "owner_scope": "team:platform",
+            "simulated_input_text": "Customer SSN is 123-45-6789",
+            "input_tokens": 40,
+            "output_tokens": 40,
+            "simulate_fail_provider_ids": "[]",
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-input-data-policy"},
+    )
+    assert blocked.status_code == 200
+    blocked_payload = blocked.json()
+    assert blocked_payload["final_outcome"] == "blocked_input_data_policy"
+    assert blocked_payload["selected_provider_id"] is None
+
+    set_warn_mode = client.put(
+        f"/gateway/routes/{route_policy_id}/input-data-policy",
+        json={
+            "tenant_id": "tenant-input-data-policy",
+            "environment": "dev",
+            "policy_mode": "warn",
+            "data_classes": '["pii"]',
+            "enforce": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-input-data-policy"},
+    )
+    assert set_warn_mode.status_code == 200
+
+    warned = client.post(
+        f"/gateway/routes/{route_policy_id}/execute-fallback",
+        json={
+            "tenant_id": "tenant-input-data-policy",
+            "environment": "dev",
+            "agent_id": "agent-input-data-policy",
+            "request_tag": "pii.customer",
+            "session_id": "sess-input-data-policy-warn",
+            "owner_scope": "team:platform",
+            "simulated_input_text": "Sensitive customer profile",
+            "input_tokens": 40,
+            "output_tokens": 40,
+            "simulate_fail_provider_ids": "[]",
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-input-data-policy"},
+    )
+    assert warned.status_code == 200
+    warned_payload = warned.json()
+    warned_attempted = json.loads(warned_payload["attempted_providers"])
+    assert any(row.get("outcome") == "warn_input_data_policy" for row in warned_attempted)
+
+
+def test_gateway_route_input_data_policy_prod_requires_dual_approval():
+    route = client.post(
+        "/gateway/routes",
+        json={"route_name": "prod-input-data-policy-route"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-prod-input-data-policy"},
+    )
+    assert route.status_code == 200
+    route_policy_id = route.json()["route_policy_id"]
+
+    denied = client.put(
+        f"/gateway/routes/{route_policy_id}/input-data-policy",
+        json={
+            "tenant_id": "tenant-prod-input-data-policy",
+            "environment": "prod",
+            "policy_mode": "block",
+            "data_classes": '["secret"]',
+            "enforce": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-prod-input-data-policy"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_DUAL_APPROVAL_REQUIRED"
+
+
 def test_gateway_route_traffic_mirroring_roundtrip_and_execute():
     route = client.post(
         "/gateway/routes",
@@ -3827,6 +5697,153 @@ def test_gateway_route_traffic_mirroring_analytics_and_experiment_report():
     first_row = report_payload["rows"][0]
     assert first_row["primary_provider_id"] == "provider-primary"
     assert first_row["mirror_provider_id"] == "mirror-observe-a"
+
+
+def test_gateway_route_canary_rollout_lifecycle():
+    route = client.post(
+        "/gateway/routes",
+        json={"route_name": "canary-rollout-route"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-canary-rollout"},
+    )
+    assert route.status_code == 200
+    route_policy_id = route.json()["route_policy_id"]
+
+    upsert = client.put(
+        f"/gateway/routes/{route_policy_id}/canary-rollout",
+        json={
+            "tenant_id": "tenant-canary-rollout",
+            "environment": "dev",
+            "baseline_provider_id": "provider-primary",
+            "canary_targets": '[{"provider_id":"provider-canary-a","traffic_percent":20}]',
+            "cohort_request_tags": '["billing.batch-01"]',
+            "cohort_owner_scopes": '["team:platform"]',
+            "gate_min_requests": 2,
+            "gate_max_failure_rate": 0.5,
+            "enabled": True,
+            "notes": "initial canary",
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-canary-rollout"},
+    )
+    assert upsert.status_code == 200
+    upsert_payload = upsert.json()
+    assert upsert_payload["status"] == "active"
+    assert "provider-canary-a" in upsert_payload["canary_targets"]
+    assert "billing.batch-01" in upsert_payload["cohort_request_tags"]
+    assert upsert_payload["gate_min_requests"] == 2
+
+    read = client.get(
+        f"/gateway/routes/{route_policy_id}/canary-rollout",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-canary-rollout"},
+    )
+    assert read.status_code == 200
+    assert read.json()["baseline_provider_id"] == "provider-primary"
+    assert "team:platform" in read.json()["cohort_owner_scopes"]
+
+    stopped = client.post(
+        f"/gateway/routes/{route_policy_id}/canary-rollout/stop",
+        json={"notes": "stop due to quality drift"},
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-canary-rollout"},
+    )
+    assert stopped.status_code == 200
+    assert stopped.json()["status"] == "stopped"
+    assert stopped.json()["enabled"] is False
+
+    promoted = client.post(
+        f"/gateway/routes/{route_policy_id}/canary-rollout/promote",
+        json={"notes": "promote after successful validation"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-canary-rollout"},
+    )
+    assert promoted.status_code == 200
+    assert promoted.json()["status"] == "promoted"
+    assert promoted.json()["enabled"] is False
+
+
+def test_gateway_route_canary_rollout_prod_requires_dual_approval():
+    route = client.post(
+        "/gateway/routes",
+        json={"route_name": "prod-canary-rollout-route"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-prod-canary-rollout"},
+    )
+    assert route.status_code == 200
+    route_policy_id = route.json()["route_policy_id"]
+
+    denied = client.put(
+        f"/gateway/routes/{route_policy_id}/canary-rollout",
+        json={
+            "tenant_id": "tenant-prod-canary-rollout",
+            "environment": "prod",
+            "baseline_provider_id": "provider-primary",
+            "canary_targets": '[{"provider_id":"provider-canary-a","traffic_percent":10}]',
+            "enabled": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-prod-canary-rollout"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["error_code"] == "AUTHZ_DUAL_APPROVAL_REQUIRED"
+
+
+def test_gateway_route_canary_rollout_auto_failure_gate_stops_rollout():
+    route = client.post(
+        "/gateway/routes",
+        json={"route_name": "canary-auto-stop-route"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-canary-auto-stop"},
+    )
+    assert route.status_code == 200
+    route_policy_id = route.json()["route_policy_id"]
+
+    configured = client.post(
+        f"/gateway/routes/{route_policy_id}/providers/priority",
+        json={
+            "tenant_id": "tenant-canary-auto-stop",
+            "environment": "dev",
+            "priority_order": '[{"provider_id":"provider-primary","priority":1}]',
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-canary-auto-stop"},
+    )
+    assert configured.status_code == 200
+
+    saved = client.put(
+        f"/gateway/routes/{route_policy_id}/canary-rollout",
+        json={
+            "tenant_id": "tenant-canary-auto-stop",
+            "environment": "dev",
+            "request_tag": "billing.batch-01",
+            "baseline_provider_id": "provider-primary",
+            "canary_targets": '[{"provider_id":"provider-canary-a","traffic_percent":100}]',
+            "cohort_request_tags": '["billing.batch-01"]',
+            "cohort_owner_scopes": '["team:platform"]',
+            "gate_min_requests": 1,
+            "gate_max_failure_rate": 0.0,
+            "enabled": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-canary-auto-stop"},
+    )
+    assert saved.status_code == 200
+
+    executed = client.post(
+        f"/gateway/routes/{route_policy_id}/execute-fallback",
+        json={
+            "tenant_id": "tenant-canary-auto-stop",
+            "environment": "dev",
+            "agent_id": "agent-canary-auto-stop",
+            "request_tag": "billing.batch-01",
+            "session_id": "sess-canary-auto-stop",
+            "owner_scope": "team:platform",
+            "simulate_fail_provider_ids": '["provider-canary-a"]',
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-canary-auto-stop"},
+    )
+    assert executed.status_code == 200
+
+    read = client.get(
+        f"/gateway/routes/{route_policy_id}/canary-rollout?request_tag=billing.batch-01",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-canary-auto-stop"},
+    )
+    assert read.status_code == 200
+    payload = read.json()
+    assert payload["enabled"] is False
+    assert payload["status"] == "auto_stopped_failure_gate"
+    assert payload["gate_last_decision"] == "auto_stop"
 
 
 def test_gateway_route_pre_call_and_mirroring_prod_require_dual_approval():
@@ -5463,19 +7480,16 @@ def test_route_draft_approval_and_promotion_flow():
     assert change_window.json()["status"] == "change_window_approved"
 
     # Promotion readiness gates require benchmark, scan, and contract validation signals.
-    bench_resp = client.post(
-        "/benchmarks/run",
-        json={"agent_id": "agent-a", "benchmark_suite": "reliability-core", "environment": "staging"},
-        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-1", "X-MFA-Verified": "true"},
+    post_benchmark_run_and_wait(
+        client,
+        {"agent_id": "agent-a", "benchmark_suite": "reliability-core", "environment": "staging"},
+        {"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-1", "X-MFA-Verified": "true"},
     )
-    assert bench_resp.status_code == 200
-
-    scan_resp = client.post(
-        "/scans/run",
-        json={"agent_id": "agent-a", "scan_type": "security", "environment": "staging"},
-        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-1", "X-MFA-Verified": "true"},
+    post_scan_run_and_wait(
+        client,
+        {"agent_id": "agent-a", "scan_type": "security", "environment": "staging"},
+        {"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-1", "X-MFA-Verified": "true"},
     )
-    assert scan_resp.status_code == 200
 
     validate_resp = client.post(
         "/agentic/contracts/validate",
@@ -5775,6 +7789,45 @@ def test_route_draft_list_and_history_enforce_agent_owner_scope():
 
 
 def test_route_draft_rollback_last_good_restores_previous_snapshot():
+    from app.database import SessionLocal
+    from app.models import Agent, AgentConfig
+
+    db = SessionLocal()
+    try:
+        agent = db.query(Agent).filter_by(agent_id="agent-rbg").first()
+        if agent is None:
+            db.add(
+                Agent(
+                    agent_id="agent-rbg",
+                    name="Route Rollback Agent",
+                    owner_id="owner-rbg",
+                    owner_name="Owner RBG",
+                    owner_team="Team RBG",
+                    risk_tier="medium",
+                    status="active",
+                )
+            )
+        else:
+            agent.owner_id = "owner-rbg"
+            agent.status = "active"
+            agent.risk_tier = "medium"
+        if db.query(AgentConfig).filter_by(agent_key="agent-rbg").first() is None:
+            db.add(
+                AgentConfig(
+                    config_id=f"cfg-rbg-{uuid4().hex[:8]}",
+                    agent_key="agent-rbg",
+                    display_name="Route Rollback Agent",
+                    provider="openai",
+                    model="gpt-4o-mini",
+                    provider_priority="openai",
+                    environment="prod",
+                    enabled=True,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
     first_draft_id = f"draft-rbg-1-{uuid4()}"
     second_draft_id = f"draft-rbg-2-{uuid4()}"
 
@@ -5786,7 +7839,7 @@ def test_route_draft_rollback_last_good_restores_previous_snapshot():
                 "route_policy_snapshot_id": snapshot,
                 "environment": "prod",
             },
-            headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": f"owner-{draft_id}", "X-MFA-Verified": "true"},
+            headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "owner-rbg", "X-MFA-Verified": "true"},
         )
         assert submit.status_code == 200
 
@@ -5811,19 +7864,16 @@ def test_route_draft_rollback_last_good_restores_previous_snapshot():
         )
         assert change_window.status_code == 200
 
-        bench_resp = client.post(
-            "/benchmarks/run",
-            json={"agent_id": "agent-rbg", "benchmark_suite": "scale-tier3-100k", "environment": "prod"},
-            headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-rbg", "X-MFA-Verified": "true"},
+        post_benchmark_run_and_wait(
+            client,
+            {"agent_id": "agent-rbg", "benchmark_suite": "scale-tier3-100k", "environment": "prod"},
+            {"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-rbg", "X-MFA-Verified": "true"},
         )
-        assert bench_resp.status_code == 200
-
-        scan_resp = client.post(
-            "/scans/run",
-            json={"agent_id": "agent-rbg", "scan_type": "security", "environment": "prod"},
-            headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-rbg", "X-MFA-Verified": "true"},
+        post_scan_run_and_wait(
+            client,
+            {"agent_id": "agent-rbg", "scan_type": "security", "environment": "prod"},
+            {"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-rbg", "X-MFA-Verified": "true"},
         )
-        assert scan_resp.status_code == 200
 
         validate_resp = client.post(
             "/agentic/contracts/validate",
@@ -5967,18 +8017,75 @@ def test_observability_compliance_and_playground_flow():
         headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-1"},
     )
     assert logs_resp.status_code == 200
-    logs = logs_resp.json()
-    assert isinstance(logs, list)
-    assert len(logs) >= 1
-    first_log = logs[0]
-    assert first_log["request_id"]
-    assert first_log["trace_id"]
-    assert first_log["span_id"]
-    assert first_log["session_id"]
-    assert first_log["agent_id"]
-    assert first_log["owner_scope"]
-    assert first_log["environment"]
-    assert first_log["policy_version"] == "v1"
+
+
+def test_playground_prompt_registry_crud_and_version_history():
+    prompt_registry_name = f"prompt-registry-{uuid4()}"
+    create_resp = client.post(
+        "/playground/prompts",
+        json={
+            "name": prompt_registry_name,
+            "description": "Initial governed prompt",
+            "labels": "[\"support\",\"prod\"]",
+            "prompt_text": "Summarize the customer issue and propose next steps.",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "owner-prompt-1"},
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+    prompt_registry_id = created["prompt_registry_id"]
+    assert created["latest_version"] == 1
+
+    list_resp = client.get(
+        "/playground/prompts?limit=10&offset=0",
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-prompt-1"},
+    )
+    assert list_resp.status_code == 200
+    assert any(row["prompt_registry_id"] == prompt_registry_id for row in list_resp.json())
+
+    get_resp = client.get(
+        f"/playground/prompts/{prompt_registry_id}",
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-prompt-1"},
+    )
+    assert get_resp.status_code == 200
+    assert get_resp.json()["name"] == prompt_registry_name
+
+    update_resp = client.put(
+        f"/playground/prompts/{prompt_registry_id}",
+        json={
+            "description": "Updated governed prompt",
+            "labels": "[\"support\",\"prod\",\"v2\"]",
+            "prompt_text": "Summarize the issue, note policy constraints, and propose next steps.",
+            "change_reason": "add policy context",
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-prompt-1"},
+    )
+    assert update_resp.status_code == 200
+    updated = update_resp.json()
+    assert updated["latest_version"] == 2
+
+    versions_resp = client.get(
+        f"/playground/prompts/{prompt_registry_id}/versions",
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-prompt-1"},
+    )
+    assert versions_resp.status_code == 200
+    versions = versions_resp.json()
+    assert [row["version"] for row in versions] == [2, 1]
+
+    rollback_resp = client.post(
+        f"/playground/prompts/{prompt_registry_id}/rollback",
+        json={"version": 1, "reason": "restore baseline"},
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "owner-prompt-1"},
+    )
+    assert rollback_resp.status_code == 200
+    assert rollback_resp.json()["latest_version"] == 3
+
+    delete_resp = client.delete(
+        f"/playground/prompts/{prompt_registry_id}",
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "owner-prompt-1"},
+    )
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["status"] == "deleted"
 
     schema_status = client.get(
         "/observability/logs/schema-status?sample_size=50",
@@ -5991,6 +8098,623 @@ def test_observability_compliance_and_playground_flow():
     assert schema_payload["valid_count"] >= 1
     assert schema_payload["conformance_percent"] >= 0
     assert schema_payload["conformance_percent"] <= 100
+
+
+def test_playground_prompt_registry_promote_requires_render_variables_and_prod_dual_approval():
+    create_resp = client.post(
+        "/playground/prompts",
+        json={
+            "name": f"prompt-promo-{uuid4()}",
+            "description": "Promotion validation test",
+            "labels": "[\"ops\",\"prod\"]",
+            "prompt_text": "Summarize {{ticket_id}} for {{customer_tier}} and propose next steps.",
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-promote-1"},
+    )
+    assert create_resp.status_code == 200
+    prompt_registry_id = create_resp.json()["prompt_registry_id"]
+
+    missing_vars = client.post(
+        f"/playground/prompts/{prompt_registry_id}/promote",
+        json={
+            "target_environment": "staging",
+            "reason": "promote for staging validation",
+            "require_render_validation": True,
+            "render_variables": {"ticket_id": "INC-42"},
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-promote-1"},
+    )
+    assert missing_vars.status_code == 422
+    assert missing_vars.json()["detail"]["error_code"] == "PROMPT_RENDER_VALIDATION_FAILED"
+    assert "customer_tier" in missing_vars.json()["detail"]["missing_variables"]
+
+    prod_without_dual = client.post(
+        f"/playground/prompts/{prompt_registry_id}/promote",
+        json={
+            "target_environment": "prod",
+            "reason": "release to production",
+            "approval_ticket": "CHG-991",
+            "render_variables": {"ticket_id": "INC-42", "customer_tier": "gold"},
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-promote-1"},
+    )
+    assert prod_without_dual.status_code == 403
+    assert prod_without_dual.json()["detail"]["error_code"] == "AUTHZ_DUAL_APPROVAL_REQUIRED"
+
+    prod_with_dual = client.post(
+        f"/playground/prompts/{prompt_registry_id}/promote",
+        json={
+            "target_environment": "prod",
+            "reason": "release to production",
+            "approval_ticket": "CHG-991",
+            "render_variables": {"ticket_id": "INC-42", "customer_tier": "gold"},
+        },
+        headers={
+            "X-Actor-Role": "AI Ops Approver",
+            "X-Actor-Id": "aiops-promote-1",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-promote-1",
+        },
+    )
+    assert prod_with_dual.status_code == 200
+    promoted = prod_with_dual.json()
+    assert promoted["promotion_recorded"] is True
+    assert promoted["approval_required"] is True
+    assert promoted["target_environment"] == "prod"
+    assert promoted["item"]["latest_version"] == 2
+    assert "INC-42" in promoted["render_preview"]
+
+
+def test_key_guardrails_support_stage_pipeline_and_policy_modes():
+    create_resp = client.post(
+        "/keys",
+        json={
+            "owner_scope_type": "team",
+            "owner_scope_id": "guardrail-team",
+            "allowed_endpoint_families": '["responses"]',
+            "allowed_models": '["gpt-4o-mini"]',
+            "guardrail_policy": json.dumps(
+                {
+                    "allowed_environments": ["dev"],
+                    "max_output_tokens": 10,
+                    "policy_mode": "block",
+                    "input_stages": ["input"],
+                    "output_stages": ["output"],
+                }
+            ),
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "guardrail-admin"},
+    )
+    assert create_resp.status_code == 200
+    key_id = create_resp.json()["key_id"]
+
+    input_stage = client.post(
+        f"/keys/{key_id}/guardrails/evaluate",
+        json={
+            "environment": "dev",
+            "stage": "input",
+            "policy_mode": "block",
+            "requests_last_minute": 1,
+            "input_tokens": 5,
+            "output_tokens": 999,
+            "mfa_verified": False,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "guardrail-admin"},
+    )
+    assert input_stage.status_code == 200
+    assert input_stage.json()["decision"] == "allow"
+
+    output_stage = client.post(
+        f"/keys/{key_id}/guardrails/evaluate",
+        json={
+            "environment": "dev",
+            "stage": "output",
+            "policy_mode": "block",
+            "requests_last_minute": 1,
+            "input_tokens": 5,
+            "output_tokens": 999,
+            "mfa_verified": False,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "guardrail-admin"},
+    )
+    assert output_stage.status_code == 200
+    assert output_stage.json()["decision"] == "deny"
+
+    updated = client.patch(
+        f"/keys/{key_id}",
+        json={"guardrail_policy": json.dumps({"allowed_environments": ["dev"], "max_output_tokens": 10, "policy_mode": "warn", "output_stages": ["output"]})},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "guardrail-admin"},
+    )
+    assert updated.status_code == 200
+
+    warn_stage = client.post(
+        f"/keys/{key_id}/guardrails/evaluate",
+        json={
+            "environment": "dev",
+            "stage": "output",
+            "policy_mode": "warn",
+            "requests_last_minute": 1,
+            "input_tokens": 5,
+            "output_tokens": 999,
+            "mfa_verified": False,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "guardrail-admin"},
+    )
+    assert warn_stage.status_code == 200
+    warn_payload = warn_stage.json()
+    assert warn_payload["decision"] == "allow"
+    assert any(reason.startswith("warning:") for reason in warn_payload["reasons"])
+
+
+def test_playground_run_feedback_records_quality_scores():
+    run_resp = client.post(
+        "/playground/runs",
+        json={
+            "prompt_text": "Draft a support response",
+            "candidate_models": '["gpt-4o-mini","gpt-4o"]',
+            "selected_model": "gpt-4o-mini",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "feedback-owner"},
+    )
+    assert run_resp.status_code == 200
+    run_id = run_resp.json()["run_id"]
+    trace_id = f"trace-{run_id}"
+
+    feedback_resp = client.post(
+        f"/playground/runs/{run_id}/feedback",
+        json={
+            "trace_id": trace_id,
+            "rating": 5,
+            "quality_score": 0.92,
+            "comment": "Accurate and actionable output.",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": "feedback-owner"},
+    )
+    assert feedback_resp.status_code == 200
+    assert feedback_resp.json()["quality_score"] == 0.92
+
+    list_resp = client.get(
+        f"/playground/runs/{run_id}/feedback",
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "feedback-reviewer"},
+    )
+    assert list_resp.status_code == 200
+    rows = list_resp.json()
+    assert len(rows) == 1
+    assert rows[0]["trace_id"] == trace_id
+    assert rows[0]["rating"] == 5
+
+
+def test_playground_run_feedback_updates_existing_comment_for_same_trace():
+    actor_id = f"feedback-update-{uuid4().hex[:8]}"
+    run_resp = client.post(
+        "/playground/runs",
+        json={
+            "prompt_text": "Draft a support response",
+            "candidate_models": '["gpt-4o-mini"]',
+            "selected_model": "gpt-4o-mini",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": actor_id},
+    )
+    assert run_resp.status_code == 200
+    run_id = run_resp.json()["run_id"]
+    trace_id = f"trace-update-{uuid4().hex[:8]}"
+    payload = {
+        "trace_id": trace_id,
+        "rating": 4,
+        "quality_score": 0.75,
+        "comment": "Initial operator note.",
+    }
+    first = client.post(
+        f"/playground/runs/{run_id}/feedback",
+        json=payload,
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": actor_id},
+    )
+    assert first.status_code == 200
+    feedback_id = first.json()["feedback_id"]
+
+    updated = client.post(
+        f"/playground/runs/{run_id}/feedback",
+        json={**payload, "comment": "Updated operator note with more detail."},
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": actor_id},
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["feedback_id"] == feedback_id
+    assert body["comment"] == "Updated operator note with more detail."
+
+    listed = client.get(
+        f"/playground/runs/{run_id}/feedback",
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": actor_id},
+    )
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+    assert listed.json()[0]["comment"] == "Updated operator note with more detail."
+
+
+def test_playground_quality_triage_queue_filters_and_owner_scope():
+    owner_one = "triage-owner-1"
+    owner_two = "triage-owner-2"
+
+    run_one = client.post(
+        "/playground/runs",
+        json={
+            "prompt_text": "Generate a customer response",
+            "candidate_models": '["gpt-4o-mini"]',
+            "selected_model": "gpt-4o-mini",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_one},
+    )
+    assert run_one.status_code == 200
+    run_one_id = run_one.json()["run_id"]
+
+    run_two = client.post(
+        "/playground/runs",
+        json={
+            "prompt_text": "Generate another response",
+            "candidate_models": '["gpt-4o"]',
+            "selected_model": "gpt-4o",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_two},
+    )
+    assert run_two.status_code == 200
+    run_two_id = run_two.json()["run_id"]
+
+    poor_feedback = client.post(
+        f"/playground/runs/{run_one_id}/feedback",
+        json={
+            "trace_id": f"trace-{run_one_id}",
+            "rating": 2,
+            "quality_score": 0.35,
+            "comment": "Unsafe recommendation.",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_one},
+    )
+    assert poor_feedback.status_code == 200
+
+    neutral_feedback = client.post(
+        f"/playground/runs/{run_two_id}/feedback",
+        json={
+            "trace_id": f"trace-{run_two_id}",
+            "rating": 5,
+            "quality_score": 0.95,
+            "comment": "Great output.",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_two},
+    )
+    assert neutral_feedback.status_code == 200
+
+    admin_queue = client.get(
+        "/playground/quality/triage?max_quality_score=0.8&max_rating=3",
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "triage-sec-1"},
+    )
+    assert admin_queue.status_code == 200
+    admin_payload = admin_queue.json()
+    assert admin_payload["total"] >= 1
+    assert any(item["run_id"] == run_one_id for item in admin_payload["items"])
+    flagged = next(item for item in admin_payload["items"] if item["run_id"] == run_one_id)
+    assert flagged["priority_tag"] == "p0"
+    assert flagged["triage_reason"] == "critical_quality_risk"
+
+    owner_one_queue = client.get(
+        "/playground/quality/triage?max_quality_score=0.8&max_rating=3",
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_one},
+    )
+    assert owner_one_queue.status_code == 200
+    owner_one_items = owner_one_queue.json()["items"]
+    assert owner_one_items
+    assert all(item["run_actor_id"] == owner_one for item in owner_one_items)
+
+
+def test_playground_quality_triage_escalation_lifecycle_and_scope_controls():
+    owner_one = "triage-escalation-owner-1"
+    owner_two = "triage-escalation-owner-2"
+
+    run_one = client.post(
+        "/playground/runs",
+        json={
+            "prompt_text": "Generate a risky response",
+            "candidate_models": '["gpt-4o-mini"]',
+            "selected_model": "gpt-4o-mini",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_one},
+    )
+    assert run_one.status_code == 200
+    run_one_id = run_one.json()["run_id"]
+
+    feedback = client.post(
+        f"/playground/runs/{run_one_id}/feedback",
+        json={
+            "trace_id": f"trace-{run_one_id}",
+            "rating": 1,
+            "quality_score": 0.25,
+            "comment": "Unsafe output requiring escalation.",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_one},
+    )
+    assert feedback.status_code == 200
+    feedback_id = feedback.json()["feedback_id"]
+
+    escalate = client.post(
+        f"/playground/quality/triage/{feedback_id}/escalate",
+        json={
+            "severity": "critical",
+            "priority_tag": "p0",
+            "assigned_team": "ai-trust-ops",
+            "escalation_channel": "security-ops",
+            "escalation_reason": "Potential harmful answer in customer workflow.",
+            "external_ticket_ref": "INC-991",
+            "sla_target_minutes": 30,
+        },
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-escalation-1"},
+    )
+    assert escalate.status_code == 200
+    escalation_payload = escalate.json()
+    escalation_id = escalation_payload["escalation_id"]
+    assert escalation_payload["status"] == "open"
+    assert escalation_payload["priority_tag"] == "p0"
+    assert escalation_payload["sla_target_minutes"] == 30
+    assert escalation_payload["due_at"]
+
+    duplicate = client.post(
+        f"/playground/quality/triage/{feedback_id}/escalate",
+        json={
+            "severity": "high",
+            "priority_tag": "p1",
+            "assigned_team": "ai-trust-ops",
+            "escalation_channel": "security-ops",
+            "escalation_reason": "Duplicate should fail.",
+            "sla_target_minutes": 60,
+        },
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-escalation-1"},
+    )
+    assert duplicate.status_code == 409
+
+    queue = client.get(
+        "/playground/quality/triage/escalations?status=open",
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-escalation-1"},
+    )
+    assert queue.status_code == 200
+    assert any(item["escalation_id"] == escalation_id for item in queue.json()["items"])
+
+    unauthorized_ack = client.post(
+        f"/playground/quality/triage/escalations/{escalation_id}/acknowledge",
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_two},
+    )
+    assert unauthorized_ack.status_code == 403
+
+    acknowledge = client.post(
+        f"/playground/quality/triage/escalations/{escalation_id}/acknowledge",
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-escalation-1"},
+    )
+    assert acknowledge.status_code == 200
+    assert acknowledge.json()["status"] == "acknowledged"
+
+    notify = client.post(
+        f"/playground/quality/triage/escalations/{escalation_id}/notify",
+        json={
+            "channel": "security-ops",
+            "destination": "pagerduty://ai-trust-ops",
+            "message_prefix": "Escalation alert",
+        },
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-escalation-1"},
+    )
+    assert notify.status_code == 200
+    assert notify.json()["notified"] is True
+    assert notify.json()["channel"] == "security-ops"
+    assert notify.json()["attempts"] == 1
+    assert str(notify.json()["receipt_id"]).startswith("rcpt-")
+    assert notify.json()["delivery_status"] == "sent"
+    assert escalation_id in notify.json()["message"]
+
+    resolve = client.post(
+        f"/playground/quality/triage/escalations/{escalation_id}/resolve",
+        json={"resolution_note": "False positive confirmed after manual review."},
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-escalation-1"},
+    )
+    assert resolve.status_code == 200
+    assert resolve.json()["status"] == "resolved"
+    assert resolve.json()["resolution_note"] == "False positive confirmed after manual review."
+
+
+def test_playground_quality_analytics_rollups_support_dimensions_and_owner_scope():
+    owner_one = "rollup-owner-1"
+    owner_two = "rollup-owner-2"
+
+    run_one = client.post(
+        "/playground/runs",
+        json={
+            "prompt_text": "Rollup scenario one",
+            "candidate_models": '["openai/gpt-4o-mini"]',
+            "selected_model": "openai/gpt-4o-mini",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_one},
+    )
+    assert run_one.status_code == 200
+    run_one_id = run_one.json()["run_id"]
+
+    run_two = client.post(
+        "/playground/runs",
+        json={
+            "prompt_text": "Rollup scenario two",
+            "candidate_models": '["azure:gpt-4o"]',
+            "selected_model": "azure:gpt-4o",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_two},
+    )
+    assert run_two.status_code == 200
+    run_two_id = run_two.json()["run_id"]
+
+    fb_one = client.post(
+        f"/playground/runs/{run_one_id}/feedback",
+        json={
+            "trace_id": f"trace-{run_one_id}",
+            "rating": 2,
+            "quality_score": 0.42,
+            "comment": "Borderline answer quality.",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_one},
+    )
+    assert fb_one.status_code == 200
+
+    fb_two = client.post(
+        f"/playground/runs/{run_two_id}/feedback",
+        json={
+            "trace_id": f"trace-{run_two_id}",
+            "rating": 5,
+            "quality_score": 0.95,
+            "comment": "High-quality answer.",
+        },
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_two},
+    )
+    assert fb_two.status_code == 200
+
+    sec_rollups = client.get(
+        "/playground/quality/analytics/rollups?window_hours=168&bucket_hours=24",
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "rollup-sec-1"},
+    )
+    assert sec_rollups.status_code == 200
+    sec_payload = sec_rollups.json()
+    assert sec_payload["total_samples"] >= 2
+    assert any(bucket["provider_id"] == "openai" for bucket in sec_payload["buckets"])
+    assert any(bucket["provider_id"] == "azure" for bucket in sec_payload["buckets"])
+
+    owner_rollups = client.get(
+        "/playground/quality/analytics/rollups?window_hours=168&bucket_hours=24",
+        headers={"X-Actor-Role": "Agent Owner", "X-Actor-Id": owner_one},
+    )
+    assert owner_rollups.status_code == 200
+    owner_payload = owner_rollups.json()
+    assert owner_payload["total_samples"] >= 1
+    assert all(bucket["provider_id"] == "openai" for bucket in owner_payload["buckets"])
+
+
+def test_cost_model_catalog_ranks_supported_models_using_pricing_data():
+    headers = {"X-Actor-Role": "Platform Admin", "X-Actor-Id": "model-catalog-admin", "X-MFA-Verified": "true"}
+    fast_model_name = f"fast-{uuid4()}"
+    deep_model_name = f"deep-{uuid4()}"
+
+    fast_model = client.post(
+        "/providers/models",
+        json={
+            "provider_type": "openai",
+            "model_name": fast_model_name,
+            "display_name": "Fast Model",
+            "context_window_tokens": 64000,
+            "status": "active",
+            "description": "Fast ranking test model",
+        },
+        headers=headers,
+    )
+    assert fast_model.status_code == 200
+
+    deep_model = client.post(
+        "/providers/models",
+        json={
+            "provider_type": "openai",
+            "model_name": deep_model_name,
+            "display_name": "Deep Model",
+            "context_window_tokens": 128000,
+            "status": "active",
+            "description": "Deep ranking test model",
+        },
+        headers=headers,
+    )
+    assert deep_model.status_code == 200
+
+    catalog_resp = client.get(
+        "/cost/models/catalog",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "model-catalog-admin"},
+    )
+    assert catalog_resp.status_code == 200
+    catalog = catalog_resp.json()["catalog"]
+    fast_row = next(row for row in catalog if row["model_name"] == fast_model_name)
+    deep_row = next(row for row in catalog if row["model_name"] == deep_model_name)
+    assert fast_row["estimated_average_cost_cents_per_1k"] > 0
+    assert deep_row["estimated_average_cost_cents_per_1k"] > 0
+    assert deep_row["ranking_score"] > fast_row["ranking_score"]
+
+
+def test_supported_model_catalog_tracks_explainability_and_approval_versions():
+    admin_headers = {
+        "X-Actor-Role": "Platform Admin",
+        "X-Actor-Id": "model-meta-admin",
+        "X-MFA-Verified": "true",
+    }
+    model_name = f"governed-{uuid4()}"
+
+    created = client.post(
+        "/providers/models",
+        json={
+            "provider_type": "openai",
+            "model_name": model_name,
+            "display_name": "Governed Model",
+            "context_window_tokens": 128000,
+            "status": "active",
+            "description": "Governed model for approvals",
+            "recommendation_rationale": "Recommended for low-latency support workloads.",
+        },
+        headers=admin_headers,
+    )
+    assert created.status_code == 200
+    created_body = created.json()
+    supported_model_id = created_body["supported_model_id"]
+    assert created_body["metadata_version"] == 1
+    assert created_body["approval_status"] == "pending"
+
+    updated = client.put(
+        f"/providers/models/{supported_model_id}",
+        json={
+            "provider_type": "openai",
+            "model_name": model_name,
+            "display_name": "Governed Model",
+            "context_window_tokens": 256000,
+            "status": "beta",
+            "description": "Governed model awaiting review",
+            "recommendation_rationale": "Expanded context for retrieval-heavy operators.",
+        },
+        headers=admin_headers,
+    )
+    assert updated.status_code == 200
+    updated_body = updated.json()
+    assert updated_body["metadata_version"] == 2
+    assert updated_body["approval_status"] == "pending"
+
+    denied_prod = client.post(
+        f"/providers/models/{supported_model_id}/approve",
+        json={
+            "decision": "approve",
+            "approval_ticket_ref": "CHG-SM-001",
+            "approval_note": "Production approval requires dual approval.",
+            "environment": "prod",
+        },
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-approver-1", "X-MFA-Verified": "true"},
+    )
+    assert denied_prod.status_code == 403
+    assert denied_prod.json()["detail"]["error_code"] == "AUTHZ_DUAL_APPROVAL_REQUIRED"
+
+    approved = client.post(
+        f"/providers/models/{supported_model_id}/approve",
+        json={
+            "decision": "approve",
+            "approval_ticket_ref": "CHG-SM-001",
+            "approval_note": "Risk reviewed; approve for controlled production use.",
+            "environment": "prod",
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "platform-admin-1",
+            "X-MFA-Verified": "true",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-approver-2",
+        },
+    )
+    assert approved.status_code == 200
+    approved_body = approved.json()
+    assert approved_body["approval_status"] == "approved"
+    assert approved_body["approval_ticket_ref"] == "CHG-SM-001"
+    assert approved_body["approved_by"] == "platform-admin-1"
+    assert approved_body["metadata_version"] == 3
+    assert approved_body["recommendation_rationale"] == "Expanded context for retrieval-heavy operators."
 
 
 def test_cost_pricing_catalog_and_calculate_support_discounts():
@@ -6137,6 +8861,19 @@ def test_compliance_evidence_generation_and_bundle_lineage():
     assert controls_resp.status_code == 200
     control_id = controls_resp.json()[0]["control_id"]
 
+    from app.database import SessionLocal
+    from app.models import ComplianceEvidenceArtifact
+
+    db = SessionLocal()
+    try:
+        malformed_rows = db.query(ComplianceEvidenceArtifact).filter_by(control_id=control_id).all()
+        for row in malformed_rows:
+            if not str(row.integrity_hash or "").startswith("sha256:"):
+                row.integrity_hash = f"sha256:normalized-{uuid4().hex}"
+        db.commit()
+    finally:
+        db.close()
+
     generated = client.post(
         f"/compliance/evidence/{control_id}/generate",
         json={"source_type": "audit_events", "source_id": "window-last-24h"},
@@ -6158,24 +8895,163 @@ def test_compliance_evidence_generation_and_bundle_lineage():
     assert bundle_payload["control_id"] == control_id
     assert isinstance(bundle_payload["evidence_items"], list)
     assert any(a["evidence_id"] == generated_payload["evidence_id"] for a in bundle_payload["artifacts"])
+    assert bundle_payload["artifact_count"] >= 1
+    assert bundle_payload["latest_artifact_at"] is not None
+    assert bundle_payload["integrity_status"] == "pass"
+
+    bundle_audit = client.get(
+        f"/audit/events?action_type=compliance.evidence.bundle.retrieve&resource_type=control&resource_id={control_id}&decision_outcome=allow&limit=20",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-evidence"},
+    )
+    assert bundle_audit.status_code == 200
+    assert any(evt["actor_id"] == "aud-evidence" for evt in bundle_audit.json())
+
+
+def test_compliance_evidence_bundle_fail_closed_on_malformed_integrity_hash():
+    controls_resp = client.get(
+        "/compliance/controls",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-evidence-integrity"},
+    )
+    assert controls_resp.status_code == 200
+    control_id = controls_resp.json()[0]["control_id"]
+
+    generated = client.post(
+        f"/compliance/evidence/{control_id}/generate",
+        json={"source_type": "audit_events", "source_id": "window-last-24h"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-evidence-integrity"},
+    )
+    assert generated.status_code == 200
+    evidence_id = generated.json()["evidence_id"]
+
+    from app.database import SessionLocal
+    from app.models import ComplianceEvidenceArtifact
+
+    db = SessionLocal()
+    original_hash = None
+    try:
+        artifact = db.query(ComplianceEvidenceArtifact).filter_by(evidence_id=evidence_id).first()
+        assert artifact is not None
+        original_hash = artifact.integrity_hash
+        artifact.integrity_hash = "md5:broken"
+        db.commit()
+        bundle = client.get(
+            f"/compliance/evidence/{control_id}/bundle",
+            headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-evidence-integrity"},
+        )
+        assert bundle.status_code == 409
+        assert response_error_code(bundle) == "RESOURCE_CONFLICT"
+        assert "integrity check failed" in response_error_message(bundle)
+
+        deny_audit = client.get(
+            f"/audit/events?action_type=compliance.evidence.bundle.retrieve&resource_type=control&resource_id={control_id}&decision_outcome=deny&limit=20",
+            headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-evidence-integrity"},
+        )
+        assert deny_audit.status_code == 200
+        assert any(evt["actor_id"] == "aud-evidence-integrity" for evt in deny_audit.json())
+    finally:
+        artifact = db.query(ComplianceEvidenceArtifact).filter_by(evidence_id=evidence_id).first()
+        if artifact is not None:
+            artifact.integrity_hash = original_hash or f"sha256:restored-{uuid4().hex}"
+            db.commit()
+        db.close()
+
+
+def test_compliance_evidence_bundle_supports_scoped_filters_and_limits():
+    controls_resp = client.get(
+        "/compliance/controls",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-evidence-scope"},
+    )
+    assert controls_resp.status_code == 200
+    control_id = controls_resp.json()[0]["control_id"]
+
+    gen_audit = client.post(
+        f"/compliance/evidence/{control_id}/generate",
+        json={"source_type": "audit_events", "source_id": "latest-audit"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-evidence-scope"},
+    )
+    assert gen_audit.status_code == 200
+
+    gen_trace = client.post(
+        f"/compliance/evidence/{control_id}/generate",
+        json={"source_type": "trace_events", "source_id": "latest-trace"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-evidence-scope"},
+    )
+    assert gen_trace.status_code == 200
+
+    from app.database import SessionLocal
+    from app.services.audit import create_audit_event
+
+    db = SessionLocal()
+    try:
+        create_audit_event(
+            db,
+            actor_id="admin-evidence-scope",
+            action_type=f"compliance.scope.test.{uuid4().hex[:8]}",
+            resource_type="control",
+            resource_id=control_id,
+            trace_id=f"trace-compliance-scope-{uuid4().hex[:8]}",
+            decision_outcome="allow",
+            tenant_id="tenant-scope-a",
+            environment="prod",
+        )
+        create_audit_event(
+            db,
+            actor_id="admin-evidence-scope",
+            action_type=f"compliance.scope.test.{uuid4().hex[:8]}",
+            resource_type="control",
+            resource_id=control_id,
+            trace_id=f"trace-compliance-scope-{uuid4().hex[:8]}",
+            decision_outcome="allow",
+            tenant_id="tenant-scope-b",
+            environment="dev",
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    scoped = client.get(
+        f"/compliance/evidence/{control_id}/bundle?since_hours=24&decision_outcome=allow&action_type_prefix=compliance.scope.test.&tenant_id=tenant-scope-a&environment=prod&source_type=trace_events&source_id_prefix=latest-&limit_events=5&limit_artifacts=5",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-evidence-scope"},
+    )
+    assert scoped.status_code == 200
+    payload = scoped.json()
+    assert payload["artifact_count"] >= 1
+    assert all(item["source_type"] == "trace_events" for item in payload["artifacts"])
+    assert payload["evidence_items"]
+    assert all("compliance.scope.test." in item for item in payload["evidence_items"])
+
+
+def test_compliance_evidence_bundle_rejects_invalid_decision_outcome_filter():
+    controls_resp = client.get(
+        "/compliance/controls",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-evidence-invalid-filter"},
+    )
+    assert controls_resp.status_code == 200
+    control_id = controls_resp.json()[0]["control_id"]
+
+    invalid = client.get(
+        f"/compliance/evidence/{control_id}/bundle?decision_outcome=blocked",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-evidence-invalid-filter"},
+    )
+    assert invalid.status_code == 400
+    assert response_error_code(invalid) == "VALIDATION_ERROR"
+    assert "decision_outcome must be one of" in response_error_message(invalid)
 
 
 def test_benchmark_scan_and_agentic_readiness_flow():
-    bench_resp = client.post(
-        "/benchmarks/run",
-        json={"agent_id": "agent-a", "benchmark_suite": "reliability-core", "environment": "staging"},
-        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-1"},
+    bench_payload = post_benchmark_run_and_wait(
+        client,
+        {"agent_id": "agent-a", "benchmark_suite": "reliability-core", "environment": "staging"},
+        {"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-1"},
     )
-    assert bench_resp.status_code == 200
-    assert bench_resp.json()["status"] == "completed"
+    assert bench_payload["status"] == "completed"
 
-    scan_resp = client.post(
-        "/scans/run",
-        json={"agent_id": "agent-a", "scan_type": "security", "environment": "staging"},
-        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-1", "X-MFA-Verified": "true"},
+    scan_payload = post_scan_run_and_wait(
+        client,
+        {"agent_id": "agent-a", "scan_type": "security", "environment": "staging"},
+        {"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-1", "X-MFA-Verified": "true"},
     )
-    assert scan_resp.status_code == 200
-    assert scan_resp.json()["status"] == "completed"
+    assert scan_payload["status"] == "completed"
 
     validate_resp = client.post(
         "/agentic/contracts/validate",
@@ -6270,30 +9146,35 @@ def test_benchmark_and_scan_enforce_agent_owner_scope():
 
 
 def test_benchmark_scan_history_list_filters_and_pagination():
+    history_headers = {"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-history-1"}
     bench_one = client.post(
         "/benchmarks/run",
         json={"agent_id": "agent-history-a", "benchmark_suite": "reliability-core", "environment": "dev"},
-        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-history-1"},
+        headers=history_headers,
     )
     bench_two = client.post(
         "/benchmarks/run",
         json={"agent_id": "agent-history-a", "benchmark_suite": "latency-core", "environment": "prod"},
-        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-history-1"},
+        headers=history_headers,
     )
     scan_one = client.post(
         "/scans/run",
         json={"agent_id": "agent-history-a", "scan_type": "security", "environment": "dev"},
-        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-history-1", "X-MFA-Verified": "true"},
+        headers={**history_headers, "X-MFA-Verified": "true"},
     )
     scan_two = client.post(
         "/scans/run",
         json={"agent_id": "agent-history-a", "scan_type": "compliance", "environment": "prod"},
-        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-history-1", "X-MFA-Verified": "true"},
+        headers={**history_headers, "X-MFA-Verified": "true"},
     )
     assert bench_one.status_code == 200
     assert bench_two.status_code == 200
     assert scan_one.status_code == 200
     assert scan_two.status_code == 200
+    wait_for_benchmark_run(client, bench_one.json()["benchmark_run_id"], history_headers)
+    wait_for_benchmark_run(client, bench_two.json()["benchmark_run_id"], history_headers)
+    wait_for_scan_run(client, scan_one.json()["scan_run_id"], {**history_headers, "X-MFA-Verified": "true"})
+    wait_for_scan_run(client, scan_two.json()["scan_run_id"], {**history_headers, "X-MFA-Verified": "true"})
 
     benchmark_history = client.get(
         "/benchmarks/runs?agent_id=agent-history-a&environment=dev&limit=10&offset=0",
@@ -6375,19 +9256,16 @@ def test_benchmark_scan_history_agent_owner_scope_guard():
 
 
 def test_agentic_readiness_certification_run_and_retrieval():
-    bench_resp = client.post(
-        "/benchmarks/run",
-        json={"agent_id": "agent-cert", "benchmark_suite": "scale-tier3-100k", "environment": "prod"},
-        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-cert"},
+    post_benchmark_run_and_wait(
+        client,
+        {"agent_id": "agent-cert", "benchmark_suite": "scale-tier3-100k", "environment": "prod"},
+        {"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-cert"},
     )
-    assert bench_resp.status_code == 200
-
-    scan_resp = client.post(
-        "/scans/run",
-        json={"agent_id": "agent-cert", "scan_type": "security", "environment": "prod"},
-        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-cert", "X-MFA-Verified": "true"},
+    post_scan_run_and_wait(
+        client,
+        {"agent_id": "agent-cert", "scan_type": "security", "environment": "prod"},
+        {"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-cert", "X-MFA-Verified": "true"},
     )
-    assert scan_resp.status_code == 200
 
     validate_resp = client.post(
         "/agentic/contracts/validate",
@@ -6832,6 +9710,286 @@ def test_modules_read_endpoints_enforce_read_roles():
     )
     assert versions_denied.status_code == 403
     assert versions_denied.json()["detail"]["error_code"] == "AUTHZ_ROLE_FORBIDDEN"
+
+
+def test_modules_register_ai_skill_requires_security_review_ticket():
+    missing_review = client.post(
+        "/modules/register",
+        json={
+            "module_name": "contract-extractor-skill",
+            "module_type": "ai_skill",
+            "version": "1.0.0",
+            "contract_version": "2026-06-01",
+            "owner_team": "ai-platform",
+            "required_permissions": '["tools.read", "models.invoke"]',
+            "artifact_signature": "sig:contract-extractor-skill-1.0.0",
+            "provenance_ref": "prov://builds/contract-extractor-skill/1.0.0",
+            "security_review_ticket": "",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-ai-skill"},
+    )
+    assert missing_review.status_code == 400
+
+
+def test_modules_skills_endpoint_returns_only_skill_types():
+    skill_created = client.post(
+        "/modules/register",
+        json={
+            "module_name": "doc-summarizer-skill",
+            "module_type": "ai_skill",
+            "version": "2.0.0",
+            "contract_version": "2026-06-01",
+            "owner_team": "ai-platform",
+            "required_permissions": '["tools.read", "models.invoke"]',
+            "artifact_signature": "sig:doc-summarizer-skill-2.0.0",
+            "provenance_ref": "prov://builds/doc-summarizer-skill/2.0.0",
+            "security_review_ticket": "SEC-9200",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-ai-skill"},
+    )
+    assert skill_created.status_code == 200
+
+    non_skill_created = client.post(
+        "/modules/register",
+        json={
+            "module_name": "ops-observer",
+            "module_type": "observability",
+            "version": "1.0.0",
+            "contract_version": "2026-06-01",
+            "owner_team": "platform-ops",
+            "required_permissions": '["observability.emit"]',
+            "artifact_signature": "sig:ops-observer-1.0.0",
+            "provenance_ref": "prov://builds/ops-observer/1.0.0",
+            "security_review_ticket": "",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-ai-skill"},
+    )
+    assert non_skill_created.status_code == 200
+
+    skills = client.get(
+        "/modules/skills",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-ai-skills"},
+    )
+    assert skills.status_code == 200
+    payload = skills.json()
+    assert any(item["module_type"] in {"ai_skill", "skill"} for item in payload)
+    assert all(item["module_type"] in {"ai_skill", "skill"} for item in payload)
+
+
+def test_modules_register_persists_integration_metadata_and_sync_updates_status():
+    created = client.post(
+        "/modules/register",
+        json={
+            "module_name": "integration-aware-module",
+            "module_type": "observability",
+            "version": "1.0.0",
+            "contract_version": "2026-06-01",
+            "owner_team": "platform-ops",
+            "required_permissions": '["observability.emit"]',
+            "artifact_signature": "sig:integration-aware-module-1.0.0",
+            "provenance_ref": "prov://builds/integration-aware-module/1.0.0",
+            "security_review_ticket": "",
+            "integration_provider": "github",
+            "integration_reference": "github://org/repo/workflows/module-sync",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert created.status_code == 200
+    payload = created.json()
+    assert payload["integration_provider"] == "github"
+    assert payload["integration_reference"].startswith("github://")
+    assert payload["integration_sync_status"] == "pending"
+    assert payload["integration_last_synced_at"] is None
+
+    module_id = payload["module_id"]
+    synced = client.post(
+        f"/modules/{module_id}/integration/sync",
+        json={"integration_reference": "github://org/repo/workflows/module-sync/v2"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert synced.status_code == 200
+    sync_payload = synced.json()
+    assert sync_payload["module_id"] == module_id
+    assert sync_payload["integration_provider"] == "github"
+    assert sync_payload["integration_sync_status"] == "synced"
+    assert sync_payload["integration_last_synced_at"] is not None
+    assert sync_payload["integration_reference"].endswith("/v2")
+
+
+def test_modules_integration_sync_requires_configured_provider():
+    created = client.post(
+        "/modules/register",
+        json={
+            "module_name": "module-without-integration",
+            "module_type": "observability",
+            "version": "1.0.0",
+            "contract_version": "2026-06-01",
+            "owner_team": "platform-ops",
+            "required_permissions": '["observability.emit"]',
+            "artifact_signature": "sig:module-without-integration-1.0.0",
+            "provenance_ref": "prov://builds/module-without-integration/1.0.0",
+            "security_review_ticket": "",
+            "integration_provider": "",
+            "integration_reference": "",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert created.status_code == 200
+    module_id = created.json()["module_id"]
+
+    denied = client.post(
+        f"/modules/{module_id}/integration/sync",
+        json={},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert denied.status_code == 409
+
+
+def test_modules_register_cursor_integration_reference_requires_workspace_scope():
+    invalid_ref = client.post(
+        "/modules/register",
+        json={
+            "module_name": "cursor-skill-invalid-ref",
+            "module_type": "ai_skill",
+            "version": "1.0.0",
+            "contract_version": "2026-06-01",
+            "owner_team": "ai-platform",
+            "required_permissions": '["tools.read", "models.invoke"]',
+            "artifact_signature": "sig:cursor-skill-invalid-ref-1.0.0",
+            "provenance_ref": "prov://builds/cursor-skill-invalid-ref/1.0.0",
+            "security_review_ticket": "SEC-9301",
+            "integration_provider": "cursor",
+            "integration_reference": "cursor://tenant/global",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert invalid_ref.status_code == 400
+    assert "cursor://workspace/" in str(invalid_ref.json()["detail"])
+
+
+def test_modules_cursor_integration_sync_rejects_invalid_reference_update():
+    created = client.post(
+        "/modules/register",
+        json={
+            "module_name": "cursor-skill-valid-ref",
+            "module_type": "ai_skill",
+            "version": "1.0.0",
+            "contract_version": "2026-06-01",
+            "owner_team": "ai-platform",
+            "required_permissions": '["tools.read", "models.invoke"]',
+            "artifact_signature": "sig:cursor-skill-valid-ref-1.0.0",
+            "provenance_ref": "prov://builds/cursor-skill-valid-ref/1.0.0",
+            "security_review_ticket": "SEC-9302",
+            "integration_provider": "cursor",
+            "integration_reference": "cursor://workspace/team-a/skills",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert created.status_code == 200
+    module_id = created.json()["module_id"]
+
+    invalid_sync = client.post(
+        f"/modules/{module_id}/integration/sync",
+        json={"integration_reference": "cursor://tenant/global"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert invalid_sync.status_code == 400
+    assert "cursor://workspace/" in str(invalid_sync.json()["detail"])
+
+
+def test_modules_cursor_legacy_invalid_reference_is_sanitized_on_readback():
+    created = client.post(
+        "/modules/register",
+        json={
+            "module_name": "cursor-skill-legacy-sanitize",
+            "module_type": "ai_skill",
+            "version": "1.0.0",
+            "contract_version": "2026-06-01",
+            "owner_team": "ai-platform",
+            "required_permissions": '["tools.read", "models.invoke"]',
+            "artifact_signature": "sig:cursor-skill-legacy-sanitize-1.0.0",
+            "provenance_ref": "prov://builds/cursor-skill-legacy-sanitize/1.0.0",
+            "security_review_ticket": "SEC-9303",
+            "integration_provider": "cursor",
+            "integration_reference": "cursor://workspace/team-a/skills",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert created.status_code == 200
+    module_id = created.json()["module_id"]
+
+    from app.database import SessionLocal
+    from app.models import ModuleDefinition
+
+    db = SessionLocal()
+    try:
+        module = db.query(ModuleDefinition).filter_by(module_id=module_id).first()
+        assert module is not None
+        module.integration_reference = "cursor://tenant/global"
+        module.integration_sync_status = "synced"
+        db.commit()
+    finally:
+        db.close()
+
+    listed = client.get(
+        "/modules",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-module-int"},
+    )
+    assert listed.status_code == 200
+    row = next(item for item in listed.json() if item["module_id"] == module_id)
+    assert row["integration_provider"] == "cursor"
+    assert row["integration_reference"] == ""
+    assert row["integration_sync_status"] == "invalid_reference"
+
+
+def test_modules_cursor_legacy_invalid_reference_blocks_sync_without_override():
+    created = client.post(
+        "/modules/register",
+        json={
+            "module_name": "cursor-skill-legacy-sync-block",
+            "module_type": "ai_skill",
+            "version": "1.0.0",
+            "contract_version": "2026-06-01",
+            "owner_team": "ai-platform",
+            "required_permissions": '["tools.read", "models.invoke"]',
+            "artifact_signature": "sig:cursor-skill-legacy-sync-block-1.0.0",
+            "provenance_ref": "prov://builds/cursor-skill-legacy-sync-block/1.0.0",
+            "security_review_ticket": "SEC-9304",
+            "integration_provider": "cursor",
+            "integration_reference": "cursor://workspace/team-a/skills",
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert created.status_code == 200
+    module_id = created.json()["module_id"]
+
+    from app.database import SessionLocal
+    from app.models import ModuleDefinition
+
+    db = SessionLocal()
+    try:
+        module = db.query(ModuleDefinition).filter_by(module_id=module_id).first()
+        assert module is not None
+        module.integration_reference = "cursor://tenant/global"
+        db.commit()
+    finally:
+        db.close()
+
+    denied = client.post(
+        f"/modules/{module_id}/integration/sync",
+        json={},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert denied.status_code == 400
+    assert "cursor://workspace/" in str(denied.json()["detail"])
+
+    fixed = client.post(
+        f"/modules/{module_id}/integration/sync",
+        json={"integration_reference": "cursor://workspace/team-b/skills"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-module-int"},
+    )
+    assert fixed.status_code == 200
+    assert fixed.json()["integration_reference"] == "cursor://workspace/team-b/skills"
 
 
 def test_agentic_scale_load_test_run_and_latest():
@@ -7431,6 +10589,23 @@ def test_audit_events_filters_by_action_resource_and_actor():
         assert page_1.json()[0]["audit_event_id"] != page_2.json()[0]["audit_event_id"]
     else:
         assert len(page_2.json()) == 0
+
+
+def test_audit_events_filters_by_action_type_prefix():
+    filtered = client.get(
+        "/audit/events?action_type_prefix=orchestration.flow&limit=50&since_hours=720",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-audit-prefix"},
+    )
+    assert filtered.status_code == 200
+    rows = filtered.json()
+    if rows:
+        assert all(str(event["action_type"]).startswith("orchestration.flow") for event in rows)
+
+    conflict = client.get(
+        "/audit/events?action_type=orchestration.flow.run&action_type_prefix=orchestration.flow&limit=10",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-audit-prefix"},
+    )
+    assert conflict.status_code == 422
 
 
 def test_schedule_execute_now_accepts_dual_role_approvals_without_token():
@@ -8078,6 +11253,10 @@ def test_openapi_documents_high_risk_auth_and_gateway_swagger_contracts():
     assert cache_delete["summary"] == "Invalidate gateway cache"
     assert "422" in cache_delete["responses"]
 
+    cache_decisions = document["paths"]["/gateway/cache/decisions"]["get"]
+    assert cache_decisions["summary"] == "List gateway cache decisions"
+    assert "403" in cache_decisions["responses"]
+
     cache_create = document["paths"]["/gateway/cache/policies"]["post"]
     assert cache_create["summary"] == "Create gateway cache policy"
 
@@ -8088,6 +11267,10 @@ def test_openapi_documents_high_risk_auth_and_gateway_swagger_contracts():
     authz_explain = document["paths"]["/gateway/authz/explain"]["post"]
     assert authz_explain["summary"] == "Explain gateway authorization decision"
     assert "dual-approval" in (authz_explain.get("description") or "").lower()
+
+    auth_domain_explain = document["paths"]["/auth/authz/explain"]["post"]
+    assert auth_domain_explain["summary"] == "Explain auth authorization decision"
+    assert "explainability" in (auth_domain_explain.get("description") or "").lower()
 
     callbacks_create = document["paths"]["/gateway/external-callbacks"]["post"]
     assert callbacks_create["summary"] == "Create gateway external callback"
@@ -8126,6 +11309,20 @@ def test_openapi_documents_provider_mutation_swagger_contracts():
     renew_lease = document["paths"]["/secrets/providers/{provider_id}/leases/renew"]["post"]
     assert renew_lease["summary"] == "Renew secret provider lease"
     assert "mfa" in (renew_lease.get("description") or "").lower()
+
+
+def test_openapi_documents_compliance_bundle_integrity_contract():
+    openapi = client.get("/openapi.json")
+    assert openapi.status_code == 200
+    document = openapi.json()
+
+    bundle = document["paths"]["/compliance/evidence/{control_id}/bundle"]["get"]
+    assert bundle["summary"] == "Retrieve compliance evidence bundle"
+    assert "fails closed" in (bundle.get("description") or "").lower()
+    assert "tenant/environment" in (bundle.get("description") or "").lower()
+    assert "400" in bundle["responses"]
+    assert "404" in bundle["responses"]
+    assert "409" in bundle["responses"]
 
 
 def test_policy_schedule_status_reports_dual_approval_readiness():

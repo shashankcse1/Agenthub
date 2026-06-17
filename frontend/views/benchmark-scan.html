@@ -1,42 +1,236 @@
-<section id="benchmark-scan" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Benchmark & Scan</h3>
-              <div class="inline-actions">
-                <button id="runBenchmark" class="primary" type="button">Run Benchmark</button>
-                <button id="runScan" class="ghost" type="button">Run Scan</button>
-                <button id="loadBenchmarkHistory" class="ghost" type="button">Load Benchmark History</button>
-                <button id="loadScanHistory" class="ghost" type="button">Load Scan History</button>
-              </div>
-            </div>
-            <p class="mono">Run benchmarks and security scans for an agent from the same operator surface.</p>
-            <form id="agentQualityForm" class="form-grid">
-              <label>Agent ID<input name="agent_id" required placeholder="agent-001" /></label>
-              <label>Environment<input name="environment" value="dev" placeholder="dev" /></label>
-              <label>Benchmark Suite<input name="benchmark_suite" value="reliability-core" placeholder="reliability-core" /></label>
-              <label>Scan Type<input name="scan_type" value="security" placeholder="security" /></label>
-            </form>
-            <p id="benchmarkResult" class="mono"></p>
-            <p id="scanResult" class="mono"></p>
-            <p id="benchmarkTrendSummary" class="mono"></p>
-            <p id="scanTrendSummary" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Benchmark run results</caption>
-                <thead>
-                  <tr><th>Benchmark Run ID</th><th>Agent</th><th>Suite</th><th>Environment</th><th>Score</th><th>Summary</th></tr>
-                </thead>
-                <tbody id="benchmarkTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Scan run results</caption>
-                <thead>
-                  <tr><th>Scan Run ID</th><th>Agent</th><th>Type</th><th>Environment</th><th>Findings</th><th>High Severity</th><th>Summary</th></tr>
-                </thead>
-                <tbody id="scanTable"></tbody>
-              </table>
-            </div>
+<section id="benchmark-scan" class="view runtime-config-view">
+  <article class="card runtime-config-hero">
+    <div class="card-head">
+      <h3>Benchmark &amp; Scan Console</h3>
+      <button id="refreshBenchmarkScanConsole" class="ghost" type="button">Refresh All</button>
+    </div>
+    <p class="card-lead">Run agent benchmarks and security scans using gateway inference and judge scoring. Review historical results, and filter by agent, environment, suite, or scan type.</p>
+    <p id="benchmarkScanConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Run or load history to populate inventory.</p>
+    <div class="view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Results
+          <input class="view-page-search-input" data-view-search-input type="search" placeholder="Filter visible benchmark and scan sections on this page" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Benchmark and scan sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="run">Run</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="history">History</button>
+    </div>
+  </article>
+
+  <div data-console-panel="overview" class="runtime-console-panel active">
+    <article class="card">
+      <div class="card-head"><h4>Operator Workflow</h4></div>
+      <div class="runtime-workflow-steps" aria-label="Benchmark and scan workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Pick an agent</strong>
+          <span>Select a registered agent from the dropdown or enter an agent ID manually.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Run jobs</strong>
+          <span>Execute a benchmark suite and/or security scan for the chosen environment.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Review history</strong>
+          <span>Use <strong>Search History</strong> to load results, then filter each table with its own Search button.</span>
+        </div>
+      </div>
+      <div class="chip-row" aria-label="Jump to benchmark workspaces">
+        <button type="button" class="chip" data-console-tab-jump="run">Run Jobs</button>
+        <button type="button" class="chip" data-console-tab-jump="history">Run History</button>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="run" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Run Benchmark &amp; Scan</h4>
+        <div class="inline-actions">
+          <button id="refreshBenchmarkScanAgents" class="ghost" type="button">Reload Agents</button>
+          <button id="runBenchmark" class="primary" type="button">Run Benchmark</button>
+          <button id="stopBenchmark" class="ghost" type="button" hidden>Stop Benchmark</button>
+          <button id="runScan" class="ghost" type="button">Run Scan</button>
+          <button id="stopScan" class="ghost" type="button" hidden>Stop Scan</button>
+        </div>
+      </div>
+      <form id="agentQualityForm" class="form-grid">
+        <label>Agent
+          <select name="agent_id" id="benchmarkScanAgentSelect">
+            <option value="">Loading agents…</option>
+          </select>
+        </label>
+        <label class="wide-field">Or Agent ID (manual override)
+          <input name="agent_id_manual" placeholder="agent-001 — used when dropdown is empty or for custom IDs" />
+        </label>
+        <label>Environment
+          <select name="environment">
+            <option value="dev" selected>dev</option>
+            <option value="staging">staging</option>
+            <option value="prod">prod</option>
+          </select>
+        </label>
+        <label>Benchmark Suite
+          <select name="benchmark_suite">
+            <option value="reliability-core" selected>reliability-core — core reliability checks</option>
+            <option value="latency-core">latency-core — latency profile</option>
+            <option value="scale-tier3-100k">scale-tier3-100k — high-scale certification</option>
+          </select>
+        </label>
+        <label>Scan Type
+          <select name="scan_type">
+            <option value="security" selected>security — security posture scan</option>
+            <option value="compliance">compliance — policy/compliance scan</option>
+          </select>
+        </label>
+      </form>
+      <article class="card benchmark-cost-panel" aria-live="polite">
+        <div class="card-head">
+          <h4>Cost Awareness</h4>
+          <button id="refreshBenchmarkScanCostPanel" class="ghost" type="button">Refresh Costs</button>
+        </div>
+        <p class="card-lead">Benchmark and security scans invoke multiple gateway inference calls. Review live spend and per-run estimates before confirming.</p>
+        <div class="card-grid">
+          <article class="card metric">
+            <h5>Live Spend (24h)</h5>
+            <p class="metric-value" id="benchmarkScanSpendDay">--</p>
           </article>
-        </section>
+          <article class="card metric">
+            <h5>Live Spend (1h)</h5>
+            <p class="metric-value" id="benchmarkScanSpendHour">--</p>
+          </article>
+          <article class="card metric">
+            <h5>Benchmark Estimate</h5>
+            <p class="metric-value" id="benchmarkScanBenchmarkEstimate">--</p>
+          </article>
+          <article class="card metric">
+            <h5>Scan Estimate</h5>
+            <p class="metric-value" id="benchmarkScanScanEstimate">--</p>
+          </article>
+        </div>
+        <p id="benchmarkScanCostDetail" class="runtime-feedback mono"></p>
+      </article>
+      <p id="benchmarkResult" class="runtime-feedback mono" aria-live="polite"></p>
+      <p id="scanResult" class="runtime-feedback mono" aria-live="polite"></p>
+    </article>
+  </div>
+
+  <div data-console-panel="history" class="runtime-console-panel" hidden>
+    <article class="card benchmark-scan-history-filters-card">
+      <div class="card-head">
+        <h4>History Filters</h4>
+        <div class="inline-actions">
+          <button id="loadBenchmarkScanHistory" class="primary" type="button">Search History</button>
+          <button id="clearBenchmarkScanHistoryFilters" class="ghost" type="button">Clear Filters</button>
+        </div>
+      </div>
+      <p class="card-lead">Set filters below, then click <strong>Search History</strong> to load benchmark and scan results. Each section also has its own table search.</p>
+      <form id="benchmarkScanHistoryFilters" class="form-grid">
+        <label>Agent Filter
+          <select name="agent_id" id="benchmarkScanHistoryAgentSelect">
+            <option value="">All agents</option>
+          </select>
+        </label>
+        <label class="wide-field">Or Agent ID Filter
+          <input name="agent_id_manual" placeholder="Filter to one agent ID" />
+        </label>
+        <label>Environment
+          <select name="environment">
+            <option value="" selected>All environments</option>
+            <option value="dev">dev</option>
+            <option value="staging">staging</option>
+            <option value="prod">prod</option>
+          </select>
+        </label>
+        <label>Benchmark Suite
+          <select name="benchmark_suite">
+            <option value="" selected>All suites</option>
+            <option value="reliability-core">reliability-core</option>
+            <option value="latency-core">latency-core</option>
+            <option value="scale-tier3-100k">scale-tier3-100k</option>
+          </select>
+        </label>
+        <label>Scan Type
+          <select name="scan_type">
+            <option value="" selected>All scan types</option>
+            <option value="security">security</option>
+            <option value="compliance">compliance</option>
+          </select>
+        </label>
+        <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="50" /></label>
+      </form>
+    </article>
+
+    <article class="card benchmark-scan-section-card benchmark-scan-section-benchmark">
+      <div class="card-head">
+        <div class="benchmark-scan-section-title">
+          <h4>Benchmark Runs</h4>
+          <span id="benchmarkHistoryCount" class="benchmark-scan-count-badge" aria-live="polite">0 loaded</span>
+        </div>
+        <button id="loadBenchmarkHistory" class="ghost" type="button">Refresh Benchmarks</button>
+      </div>
+      <div id="benchmarkTableSearchToolbar" class="benchmark-scan-table-search view-page-search-row" data-table-search-for="benchmarkTable">
+        <label class="view-page-search-label">
+          Search benchmark rows
+          <input id="benchmarkTableSearchInput" class="view-page-search-input table-search-input" type="search" placeholder="Run ID, agent, suite, status, summary…" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button id="benchmarkTableSearchBtn" type="button" class="primary view-page-search-btn table-search-btn">Search</button>
+          <button id="benchmarkTableSearchClearBtn" type="button" class="ghost view-page-search-clear-btn table-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p id="benchmarkTableSearchStatus" class="view-page-search-status mono table-search-status" aria-live="polite"></p>
+      <p id="benchmarkHistoryResult" class="runtime-feedback mono" aria-live="polite"></p>
+      <p id="benchmarkTrendSummary" class="mono benchmark-trend-summary"></p>
+      <div class="table-wrap benchmark-table-wrap" data-table-search-skip="true">
+        <table>
+          <caption class="sr-only">Benchmark run results</caption>
+          <thead>
+            <tr><th>Run ID</th><th>Agent</th><th>Suite</th><th>Env</th><th>Status</th><th>Score</th><th>Summary</th><th>Created</th></tr>
+          </thead>
+          <tbody id="benchmarkTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card benchmark-scan-section-card benchmark-scan-section-scan">
+      <div class="card-head">
+        <div class="benchmark-scan-section-title">
+          <h4>Scan Runs</h4>
+          <span id="scanHistoryCount" class="benchmark-scan-count-badge" aria-live="polite">0 loaded</span>
+        </div>
+        <button id="loadScanHistory" class="ghost" type="button">Refresh Scans</button>
+      </div>
+      <div id="scanTableSearchToolbar" class="benchmark-scan-table-search view-page-search-row" data-table-search-for="scanTable">
+        <label class="view-page-search-label">
+          Search scan rows
+          <input id="scanTableSearchInput" class="view-page-search-input table-search-input" type="search" placeholder="Run ID, agent, scan type, status, findings, summary…" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button id="scanTableSearchBtn" type="button" class="primary view-page-search-btn table-search-btn">Search</button>
+          <button id="scanTableSearchClearBtn" type="button" class="ghost view-page-search-clear-btn table-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p id="scanTableSearchStatus" class="view-page-search-status mono table-search-status" aria-live="polite"></p>
+      <p id="scanHistoryResult" class="runtime-feedback mono" aria-live="polite"></p>
+      <p id="scanTrendSummary" class="mono benchmark-trend-summary"></p>
+      <div class="table-wrap benchmark-table-wrap" data-table-search-skip="true">
+        <table>
+          <caption class="sr-only">Scan run results</caption>
+          <thead>
+            <tr><th>Run ID</th><th>Agent</th><th>Type</th><th>Env</th><th>Status</th><th>Findings</th><th>High</th><th>Summary</th><th>Created</th></tr>
+          </thead>
+          <tbody id="scanTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

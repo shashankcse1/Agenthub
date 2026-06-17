@@ -1,183 +1,375 @@
-<section id="agents" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Register Agent</h3>
-            </div>
-            <form id="registerAgentForm" class="form-grid">
-              <label>Name<input name="name" required value="agent-ui" /></label>
-              <label>Owner ID<input name="owner_id" required value="owner-ui" /></label>
-              <label>Owner Name<input name="owner_name" required value="Owner UI" /></label>
-              <label>Owner Team<input name="owner_team" required value="Team UI" /></label>
-              <label>
-                Agent Type
-                <select name="agent_type">
-                  <option value="" selected disabled>Loading enabled agent types...</option>
-                </select>
-              </label>
-              <label>
-                Risk Tier
-                <select name="risk_tier">
-                  <option>low</option>
-                  <option selected>medium</option>
-                  <option>high</option>
-                  <option>critical</option>
-                </select>
-              </label>
-              <label class="wide-field">Description<input name="description" placeholder="What this agent does" /></label>
-              <button type="submit" class="primary">Register</button>
-            </form>
-            <p id="agentRegisterResult" class="mono"></p>
-          </article>
+<section id="agents" class="view runtime-config-view">
+  <article class="card runtime-config-hero">
+    <div class="card-head">
+      <h3>Agents Console</h3>
+      <button id="refreshAgentsConsole" class="ghost" type="button">Refresh All</button>
+    </div>
+    <p class="card-lead">Register agents, manage ownership transfers, and maintain database-backed agent configurations with security review and export/import workflows.</p>
+    <p id="agentsConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading agent inventory…</p>
+    <div class="view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Agents
+          <input class="view-page-search-input" data-view-search-input type="search" placeholder="Filter agent tables and sections" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Agents console sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="register">Register</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="ownership">Ownership</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="config">Configuration</button>
+    </div>
+  </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Ownership Operations</h3>
-            </div>
-            <form id="ownerAgentsForm" class="form-grid">
-              <label>Owner ID<input name="owner_id" required placeholder="owner-ui" /></label>
-              <button type="submit" class="ghost">Load Owner Agents</button>
-            </form>
-            <p id="ownerAgentsResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Agents by owner</caption>
-                <thead>
-                  <tr><th>Agent ID</th><th>Name</th><th>Type</th><th>Description</th><th>Owner</th><th>Team</th><th>Status</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="ownerAgentsTable"></tbody>
-              </table>
-            </div>
+  <div data-console-panel="overview" class="runtime-console-panel active">
+    <article class="card">
+      <div class="card-head"><h4>How Agents Fit Together</h4></div>
+      <div class="runtime-workflow-steps" aria-label="Agent operator workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Register</strong>
+          <span>Create agent records with owner metadata and risk tier.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Configure</strong>
+          <span>Save provider/model runtime settings in the configuration studio.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Govern ownership</strong>
+          <span>Transfer owners with ticket references and review history.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>4. Review security</strong>
+          <span>Run security review and export CISO audit bundles before promotion.</span>
+        </div>
+      </div>
+      <div class="chip-row" aria-label="Jump to agent workspaces">
+        <button type="button" class="chip" data-console-tab-jump="register">Register Agent</button>
+        <button type="button" class="chip" data-console-tab-jump="ownership">Ownership</button>
+        <button type="button" class="chip" data-console-tab-jump="config">Configuration Studio</button>
+      </div>
+    </article>
+  </div>
 
-            <div class="card-head config-actions">
-              <h4>Transfer Owner</h4>
-            </div>
-            <form id="transferOwnerForm" class="form-grid">
-              <label>Agent ID<input name="agent_id" required placeholder="agent-id" /></label>
-              <label>New Owner ID<input name="new_owner_id" required placeholder="owner-new" /></label>
-              <label>New Owner Name<input name="new_owner_name" required placeholder="Owner New" /></label>
-              <label>New Owner Team<input name="new_owner_team" required placeholder="Team New" /></label>
-              <label class="wide-field">Reason<input name="reason" required placeholder="Ownership transition reason" /></label>
-              <label>Ticket Ref<input name="ticket_ref" required placeholder="CHG-12345" /></label>
-              <button type="submit" class="primary">Transfer Ownership</button>
-            </form>
-            <p id="transferOwnerResult" class="mono"></p>
+  <div data-console-panel="register" class="runtime-console-panel" hidden>
+    <article class="card agent-register-card">
+      <div class="card-head">
+        <h4>Register Agent</h4>
+        <div class="inline-actions">
+          <button id="resetRegisterAgentForm" type="button" class="ghost">Reset</button>
+          <button id="submitRegisterAgent" type="button" class="primary">Register Agent</button>
+        </div>
+      </div>
+      <p class="card-lead">Creates an inventory record via <code>POST /agents/register</code>. Optionally bootstrap runtime configuration from the supported model catalog — no local-only stubs.</p>
 
-            <div class="card-head config-actions">
-              <h4>Ownership History</h4>
-            </div>
-            <form id="ownershipHistoryForm" class="form-grid">
-              <label>Agent ID<input name="agent_id" required placeholder="agent-id" /></label>
-              <button type="submit" class="ghost">Load History</button>
-            </form>
-            <p id="ownershipHistoryResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Ownership transfer history</caption>
-                <thead>
-                  <tr><th>Changed At</th><th>Old Owner</th><th>New Owner</th><th>Changed By</th><th>Reason</th><th>Ticket</th></tr>
-                </thead>
-                <tbody id="ownershipHistoryTable"></tbody>
-              </table>
-            </div>
-          </article>
+      <div class="runtime-workflow-steps agent-register-steps" aria-label="Register agent workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Identity &amp; ownership</strong>
+          <span>Name the agent, choose owner preset, and set risk classification.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Runtime config (optional)</strong>
+          <span>Save provider, model, and environment through <code>PUT /agent-configs/{agent_key}</code> when you have config write access.</span>
+        </div>
+      </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Agent Configuration Studio</h3>
-              <button id="resetConfigForm" class="ghost" type="button">Reset Form</button>
-            </div>
-            <p class="mono">Configuration is stored in the backend database and managed through this UI.</p>
-            <form id="agentConfigForm" class="form-grid">
-              <input type="hidden" name="config_id" />
-              <label>Agent Key<input name="agent_key" required placeholder="agent-001 or UUID" /></label>
-              <label>Display Name<input name="display_name" required placeholder="Support Copilot" /></label>
-              <label>
-                Model Scope Tenant
-                <select name="tenant_scope_id" data-tenant-select data-tenant-optional>
-                  <option value="" selected>All tenants</option>
-                </select>
-              </label>
-              <label>
-                Provider
-                <select name="provider">
-                  <option value="" selected disabled>Loading provider types...</option>
-                </select>
-              </label>
-              <label>
-                Model
-                <select name="model">
-                  <option value="" selected disabled>Loading supported models...</option>
-                </select>
-              </label>
-              <label class="wide-field">Provider Priority (comma-separated)<input name="provider_priority" value="aws,azure,google" placeholder="aws,azure,google" /></label>
-              <label>Temperature<input name="temperature" type="number" min="0" max="2" step="0.1" value="0.3" /></label>
-              <label>Max Tokens<input name="max_tokens" type="number" min="1" max="32768" step="1" value="1024" /></label>
-              <label>Timeout (ms)<input name="timeout_ms" type="number" min="100" max="120000" step="100" value="4500" /></label>
-              <label>Fallback Enabled
-                <select name="fallback_enabled">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label>Max Fallback Hops<input name="max_fallback_hops" type="number" min="0" max="10" step="1" value="2" /></label>
-              <label>Global Timeout (ms)<input name="global_timeout_ms" type="number" min="100" max="120000" step="100" value="4500" /></label>
-              <label>Retry Budget<input name="retry_budget" type="number" min="0" max="10" step="1" value="1" /></label>
-              <label>Circuit Threshold %<input name="failure_threshold_percent" type="number" min="1" max="100" step="1" value="40" /></label>
-              <label>Circuit Cooldown (s)<input name="cooldown_seconds" type="number" min="5" max="3600" step="5" value="60" /></label>
-              <label>
-                Environment
-                <select name="environment">
-                  <option value="dev">dev</option>
-                  <option value="stage">stage</option>
-                  <option value="prod">prod</option>
-                </select>
-              </label>
-              <label>
-                Enabled
-                <select name="enabled">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="wide-field">Notes<input name="notes" placeholder="Optional deployment notes" /></label>
-              <button type="submit" class="primary">Save Configuration</button>
-            </form>
-            <p id="agentConfigResult" class="mono"></p>
-            <div class="card-head config-actions">
-              <h4>Security and Audit Review</h4>
-              <div class="inline-actions">
-                <button id="runConfigSecurityReview" class="ghost" type="button">Run Security Review</button>
-                <button id="exportCisoAuditBundle" class="ghost" type="button">Export CISO Audit Bundle</button>
-              </div>
-            </div>
-            <div id="agentConfigSecuritySummary" class="mono"></div>
-            <ul id="agentConfigSecurityFindings" class="security-findings"></ul>
-            <div class="card-head config-actions">
-              <h4>Saved Configurations</h4>
-              <div class="inline-actions">
-                <button id="loadAgentConfigs" class="ghost" type="button">Refresh</button>
-                <button id="exportAgentConfigs" class="ghost" type="button">Export JSON</button>
-                <label class="file-upload">Import JSON<input id="importAgentConfigs" type="file" accept="application/json" /></label>
-              </div>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">UI-managed agent configurations</caption>
-                <thead>
-                  <tr>
-                    <th>Agent Key</th>
-                    <th>Name</th>
-                    <th>Provider/Model</th>
-                    <th>Runtime</th>
-                    <th>Fallback Policy</th>
-                    <th>Env</th>
-                    <th>Status</th>
-                    <th>Updated</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="agentConfigTable"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+      <p id="registerAgentTypeHint" class="field-help mono" aria-live="polite">Loading enabled agent types from active provider configuration…</p>
+
+      <form id="registerAgentForm" class="form-grid agent-register-form">
+        <p class="runtime-subsection-title wide-field">Agent identity</p>
+        <label>
+          Agent name
+          <input name="name" required placeholder="e.g. Support Copilot" autocomplete="off" />
+        </label>
+
+        <p class="runtime-subsection-title wide-field">Ownership</p>
+        <label class="wide-field">
+          Register as
+          <select id="registerOwnerPreset" name="owner_preset">
+            <option value="current" selected>Current operator — use my signed-in identity</option>
+            <option value="custom">Custom owner — enter owner ID and display name</option>
+          </select>
+        </label>
+        <p id="registerOwnerSummary" class="field-help mono wide-field">Registering as the current operator.</p>
+        <div id="registerOwnerCustomFields" class="agent-register-owner-grid wide-field" hidden>
+          <label>
+            Owner ID
+            <input name="owner_id" placeholder="owner-id" autocomplete="off" />
+          </label>
+          <label>
+            Owner display name
+            <input name="owner_name" placeholder="Owner display name" autocomplete="off" />
+          </label>
+        </div>
+        <label>
+          Owner team
+          <select name="owner_team" id="registerOwnerTeamSelect" required>
+            <option value="Platform Ops" selected>Platform Ops</option>
+            <option value="platform-security">Platform Security</option>
+            <option value="Team A">Team A</option>
+            <option value="Team B">Team B</option>
+            <option value="__custom__">Custom team…</option>
+          </select>
+        </label>
+        <label id="registerOwnerTeamCustomWrap" hidden>
+          Custom team name
+          <input name="owner_team_custom" placeholder="Enter team name" autocomplete="off" />
+        </label>
+
+        <p class="runtime-subsection-title wide-field">Classification</p>
+        <label>
+          Agent type
+          <select name="agent_type" required>
+            <option value="" selected disabled>Loading enabled agent types…</option>
+          </select>
+        </label>
+        <label>
+          Risk tier
+          <select name="risk_tier" required>
+            <option value="low">Low — internal / read-only workflows</option>
+            <option value="medium" selected>Medium — standard production assistant</option>
+            <option value="high">High — sensitive data or write actions</option>
+            <option value="critical">Critical — privileged privileges or prod controls</option>
+          </select>
+        </label>
+        <label class="wide-field">
+          Description
+          <textarea name="description" rows="3" placeholder="What this agent does and which workflows it supports (optional)"></textarea>
+        </label>
+      </form>
+
+      <details id="registerBootstrapDetails" class="agent-register-bootstrap-details">
+        <summary>Initial runtime configuration (optional)</summary>
+        <p class="field-help">Requires Platform Admin, Super Admin, or Security Approver. Pick a catalog-backed provider and model; credential binding is optional.</p>
+        <form id="registerAgentBootstrapForm" class="form-grid agent-register-form">
+          <label class="wide-field">
+            After registration
+            <select name="bootstrap_enabled" id="registerBootstrapEnabled">
+              <option value="false" selected>Register inventory only — configure later in Configuration Studio</option>
+              <option value="true">Also save initial runtime configuration</option>
+            </select>
+          </label>
+          <div id="registerBootstrapFields" class="agent-register-bootstrap-grid wide-field">
+            <label>
+              AI provider
+              <select name="bootstrap_provider" data-ai-provider-type-select>
+                <option value="" selected disabled>Choose AI provider…</option>
+              </select>
+            </label>
+            <label>
+              Model ID
+              <select name="bootstrap_model">
+                <option value="" selected disabled>Choose provider first…</option>
+              </select>
+            </label>
+            <label>
+              Environment
+              <select name="bootstrap_environment">
+                <option value="dev" selected>dev — development</option>
+                <option value="stage">stage — pre-production</option>
+                <option value="prod">prod — production</option>
+              </select>
+            </label>
+            <label>
+              Credential binding
+              <select name="bootstrap_credential_binding_id" id="registerCredentialBindingSelect">
+                <option value="" selected>None — optional</option>
+              </select>
+            </label>
+            <label class="wide-field">
+              Config notes
+              <textarea name="bootstrap_notes" rows="2" placeholder="Optional notes for the initial configuration"></textarea>
+            </label>
+            <p id="registerBootstrapSummary" class="field-help wide-field">Select an AI provider to load supported models from the catalog.</p>
+          </div>
+        </form>
+      </details>
+
+      <div class="inline-actions agent-register-footer-actions">
+        <button id="openRegisteredAgentConfig" type="button" class="ghost" hidden>Open in Configuration Studio</button>
+      </div>
+      <p id="agentRegisterResult" class="runtime-feedback mono" aria-live="polite"></p>
+      <article id="agentRegisterSuccessCard" class="card agent-register-success-card" hidden>
+        <div class="card-head"><h4>Registered Agent</h4></div>
+        <dl class="agent-register-success-details mono">
+          <div><dt>Agent ID</dt><dd id="agentRegisterSuccessId">—</dd></div>
+          <div><dt>Name</dt><dd id="agentRegisterSuccessName">—</dd></div>
+          <div><dt>Owner</dt><dd id="agentRegisterSuccessOwner">—</dd></div>
+          <div><dt>Type</dt><dd id="agentRegisterSuccessType">—</dd></div>
+          <div><dt>Risk</dt><dd id="agentRegisterSuccessRisk">—</dd></div>
+          <div><dt>Status</dt><dd id="agentRegisterSuccessStatus">—</dd></div>
+          <div><dt>Runtime Config</dt><dd id="agentRegisterSuccessConfig">—</dd></div>
+        </dl>
+      </article>
+    </article>
+  </div>
+
+  <div data-console-panel="ownership" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head"><h4>Ownership Operations</h4></div>
+      <form id="ownerAgentsForm" class="form-grid">
+        <label>Owner ID<input name="owner_id" required placeholder="owner-ui" /></label>
+        <button type="submit" class="ghost">Load Owner Agents</button>
+      </form>
+      <p id="ownerAgentsResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Agents by owner</caption>
+          <thead>
+            <tr><th>Agent ID</th><th>Name</th><th>Type</th><th>Description</th><th>Owner</th><th>Team</th><th>Status</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="ownerAgentsTable"></tbody>
+        </table>
+      </div>
+      <div class="card-head config-actions"><h4>Transfer Owner</h4></div>
+      <form id="transferOwnerForm" class="form-grid">
+        <label>Agent ID<input name="agent_id" required placeholder="agent-id" /></label>
+        <label>New Owner ID<input name="new_owner_id" required placeholder="owner-new" /></label>
+        <label>New Owner Name<input name="new_owner_name" required placeholder="Owner New" /></label>
+        <label>New Owner Team<input name="new_owner_team" required placeholder="Team New" /></label>
+        <label class="wide-field">Reason<input name="reason" required placeholder="Ownership transition reason" /></label>
+        <label>Ticket Ref<input name="ticket_ref" required placeholder="CHG-12345" /></label>
+        <button type="submit" class="primary">Transfer Ownership</button>
+      </form>
+      <p id="transferOwnerResult" class="runtime-feedback mono"></p>
+      <div class="card-head config-actions"><h4>Ownership History</h4></div>
+      <form id="ownershipHistoryForm" class="form-grid">
+        <label>Agent ID<input name="agent_id" required placeholder="agent-id" /></label>
+        <button type="submit" class="ghost">Load History</button>
+      </form>
+      <p id="ownershipHistoryResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Ownership transfer history</caption>
+          <thead>
+            <tr><th>Changed At</th><th>Old Owner</th><th>New Owner</th><th>Changed By</th><th>Reason</th><th>Ticket</th></tr>
+          </thead>
+          <tbody id="ownershipHistoryTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="config" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Agent Configuration Studio</h4>
+        <button id="resetConfigForm" class="ghost" type="button">Reset Form</button>
+      </div>
+      <p class="card-lead">Configuration is stored in the backend database and managed through this UI. Provider and model selections require credentials configured in <strong>Providers</strong> (secret values or workload identity).</p>
+      <p id="agentCredentialSetupStatus" class="runtime-feedback mono" aria-live="polite">Credential status: checking Providers…</p>
+      <details class="help-details runtime-help-details">
+        <summary>How credentials relate to provider and model</summary>
+        <p class="profile-note">
+          <strong>AI provider</strong> — who issues the API key (OpenAI, Anthropic, Cursor). Configure in Providers → <strong>Credential Setup Guide</strong>.
+          <strong>Model ID</strong> — which LLM to run (e.g. <code>gpt-4o-mini</code>) — pick from catalog after the provider is set.
+          <strong>Credential binding</strong> — links this agent to the stored API key for that AI provider.
+          <a href="#" data-providers-console-tab-jump="secrets" data-providers-nav-view="providers" data-providers-scroll-target="providersCredentialGuide">Open Credential Setup Guide</a>
+        </p>
+      </details>
+      <form id="agentConfigForm" class="form-grid">
+        <input type="hidden" name="config_id" />
+        <label>Agent Key<input name="agent_key" required placeholder="agent-001 or UUID" /></label>
+        <label>Display Name<input name="display_name" required placeholder="Support Copilot" /></label>
+        <label>
+          Model Scope Tenant
+          <select name="tenant_scope_id" data-tenant-select data-tenant-optional>
+            <option value="" selected>All tenants</option>
+          </select>
+        </label>
+        <label>
+          AI Provider
+          <select name="provider" data-ai-provider-type-select>
+            <option value="" selected disabled>Loading AI providers...</option>
+          </select>
+        </label>
+        <label>
+          Model ID
+          <select name="model">
+            <option value="" selected disabled>Loading supported models...</option>
+          </select>
+        </label>
+        <label>
+          Credential Binding
+          <select name="credential_binding_id" id="agentCredentialBindingSelect">
+            <option value="" selected>None — configure in Providers → Credential Bindings</option>
+          </select>
+        </label>
+        <label class="wide-field">Provider Priority (comma-separated)<input name="provider_priority" value="aws,azure,google" placeholder="aws,azure,google" /></label>
+        <label>Temperature<input name="temperature" type="number" min="0" max="2" step="0.1" value="0.3" /></label>
+        <label>Max Tokens<input name="max_tokens" type="number" min="1" max="32768" step="1" value="1024" /></label>
+        <label>Timeout (ms)<input name="timeout_ms" type="number" min="100" max="120000" step="100" value="4500" /></label>
+        <label>Fallback Enabled
+          <select name="fallback_enabled">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label>Max Fallback Hops<input name="max_fallback_hops" type="number" min="0" max="10" step="1" value="2" /></label>
+        <label>Global Timeout (ms)<input name="global_timeout_ms" type="number" min="100" max="120000" step="100" value="4500" /></label>
+        <label>Retry Budget<input name="retry_budget" type="number" min="0" max="10" step="1" value="1" /></label>
+        <label>Circuit Threshold %<input name="failure_threshold_percent" type="number" min="1" max="100" step="1" value="40" /></label>
+        <label>Circuit Cooldown (s)<input name="cooldown_seconds" type="number" min="5" max="3600" step="5" value="60" /></label>
+        <label>
+          Environment
+          <select name="environment">
+            <option value="dev">dev</option>
+            <option value="stage">stage</option>
+            <option value="prod">prod</option>
+          </select>
+        </label>
+        <label>
+          Enabled
+          <select name="enabled">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label class="wide-field">Notes<input name="notes" placeholder="Optional deployment notes" /></label>
+        <button type="submit" class="primary">Save Configuration</button>
+      </form>
+      <p id="agentConfigResult" class="runtime-feedback mono"></p>
+      <div class="card-head config-actions">
+        <h4>Security and Audit Review</h4>
+        <div class="inline-actions">
+          <button id="runConfigSecurityReview" class="ghost" type="button">Run Security Review</button>
+          <button id="exportCisoAuditBundle" class="ghost" type="button">Export CISO Audit Bundle</button>
+        </div>
+      </div>
+      <div id="agentConfigSecuritySummary" class="mono"></div>
+      <ul id="agentConfigSecurityFindings" class="security-findings"></ul>
+      <div class="card-head config-actions">
+        <h4>Saved Configurations</h4>
+        <div class="inline-actions">
+          <button id="loadAgentConfigs" class="ghost" type="button">Refresh</button>
+          <button id="exportAgentConfigs" class="ghost" type="button">Export JSON</button>
+          <label class="file-upload">Import JSON<input id="importAgentConfigs" type="file" accept="application/json" /></label>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">UI-managed agent configurations</caption>
+          <thead>
+            <tr>
+              <th>Agent Key</th>
+              <th>Name</th>
+              <th>Provider/Model</th>
+              <th>Runtime</th>
+              <th>Fallback Policy</th>
+              <th>Env</th>
+              <th>Status</th>
+              <th>Updated</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="agentConfigTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

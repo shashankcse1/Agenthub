@@ -12,17 +12,30 @@ import httpx
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from app.api_errors import (
+    api_error,
+    authz_scope_forbidden,
+    conflict_error,
+    not_found_error,
+    upstream_error,
+    validation_error as api_validation_error,
+)
 from app.database import get_db
 from app.logging_utils import get_logger, sanitize_fields
 from app.models import (
+    ProviderCredentialBinding,
     SecretProviderConfig,
     SecretProviderLease,
+    SecretProviderStoredValue,
     SupportedModelCatalogEntry,
+    SupportedModelCatalogRevision,
     TenantCatalogEntry,
     TenantSupportedModelEntitlement,
     WorkloadIdentityFederationProfile,
 )
+from app.policy_constants import ROLE_MASTER_ADMIN, ROLE_PLATFORM_ADMIN, ROLE_SECURITY_APPROVER, ROLE_SUPER_ADMIN
 from app.router_constants import (
+    PLATFORM_AVAILABLE_MODEL_READ_ROLES,
     PROVIDERS_ADMIN_ROLES,
     PROVIDERS_ADMIN_SECURITY_AUDITOR_ROLES,
     PROVIDERS_ADMIN_SECURITY_RELEASE_ROLES,
@@ -34,13 +47,19 @@ from app.runtime_constants import (
     RUNTIME_CONFIG_WORKLOAD_IDENTITY_HTTP_TIMEOUT_SECONDS,
 )
 from app.schemas import (
+    ProviderCredentialBindingResponse,
+    ProviderCredentialBindingUpsertRequest,
     SecretProviderListResponse,
     SecretProviderHealthResponse,
     SecretProviderLeaseRenewRequest,
     SecretProviderLeaseResponse,
     SecretProviderRequest,
+    SecretProviderValueResponse,
+    SecretProviderValueUpsertRequest,
+    SupportedModelApprovalRequest,
     SupportedModelResponse,
     SupportedModelUpsertRequest,
+    PlatformAvailableModelsResponse,
     TenantCatalogResponse,
     TenantSupportedModelEntitlementResponse,
     TenantSupportedModelEntitlementUpsertRequest,
@@ -55,7 +74,23 @@ from app.schemas import (
 )
 from app.security import ActorContext, get_actor_context, require_dual_approval, require_mfa, require_role
 from app.services.audit import create_audit_event
+from app.services.platform_available_models import list_platform_available_models
 from app.services.provider_crypto import decrypt_value, encrypt_value
+from app.services.provider_credential_bindings import (
+    maybe_sync_gateway_cursor_binding,
+    normalize_credential_source_class,
+    serialize_binding,
+    upsert_provider_credential_binding,
+)
+from app.services.secret_provider_values import (
+    delete_db_secret_provider_value,
+    is_db_secret_provider,
+    mask_secret_hint,
+    normalize_db_provider_defaults,
+    read_db_secret_provider_value,
+    upsert_db_secret_provider_value,
+)
+from app.services.secret_crypto import SecretCryptoError, decrypt_secret_value, encrypt_secret_value
 from app.services.runtime_config import get_runtime_config, get_runtime_config_float, get_runtime_config_int
 
 router = APIRouter()
@@ -90,6 +125,62 @@ def _is_google_provider(provider_type: str) -> bool:
     return normalized in {"google", "gcp", "google-cloud", "google_cloud"}
 
 
+def _is_runtime_prod_environment() -> bool:
+    return (os.getenv("RUNTIME_ENVIRONMENT") or os.getenv("ENVIRONMENT") or "dev").strip().lower() == "prod"
+
+
+def _required_binding_approver_role(ctx: ActorContext) -> Optional[str]:
+    actor_role = str(ctx.actor_role or "").strip()
+    if actor_role in {ROLE_PLATFORM_ADMIN, ROLE_SUPER_ADMIN, ROLE_MASTER_ADMIN}:
+        return ROLE_SECURITY_APPROVER
+    if actor_role == ROLE_SECURITY_APPROVER:
+        return ROLE_PLATFORM_ADMIN
+    return None
+
+
+def _validate_default_binding_id(db: Session, binding_id: Optional[str], provider_type: str) -> None:
+    normalized_binding_id = str(binding_id or "").strip()
+    if not normalized_binding_id:
+        return
+    binding = db.query(ProviderCredentialBinding).filter_by(binding_id=normalized_binding_id).first()
+    if not binding:
+        raise not_found_error("provider_credential_binding", normalized_binding_id, decision_trace_id="providers-default-binding-not-found")
+    if str(binding.provider_type or "").strip().lower() != str(provider_type or "").strip().lower():
+        raise api_validation_error(
+            "default_binding_id provider_type mismatch",
+            decision_trace_id="providers-default-binding-type-mismatch",
+            status_code=422,
+        )
+
+
+def _record_supported_model_revision(
+    db: Session,
+    row: SupportedModelCatalogEntry,
+    *,
+    changed_by: str,
+    change_type: str,
+) -> None:
+    revision = SupportedModelCatalogRevision(
+        revision_id=f"smr-{uuid4().hex[:16]}",
+        supported_model_id=row.supported_model_id,
+        metadata_version=int(row.metadata_version),
+        change_type=str(change_type).strip().lower(),
+        provider_type=row.provider_type,
+        model_name=row.model_name,
+        display_name=row.display_name,
+        context_window_tokens=int(row.context_window_tokens),
+        status=row.status,
+        description=row.description,
+        recommendation_rationale=row.recommendation_rationale,
+        approval_status=row.approval_status,
+        approval_ticket_ref=row.approval_ticket_ref,
+        approved_by=row.approved_by,
+        approved_at=row.approved_at,
+        changed_by=changed_by,
+    )
+    db.add(revision)
+
+
 def _is_nvidia_provider(provider_type: str) -> bool:
     normalized = (provider_type or "").strip().lower()
     return normalized in {"nvidia", "nvidia-nim", "nvidia_nim"}
@@ -112,7 +203,15 @@ def _runtime_vendor_name(provider_type: str) -> Optional[str]:
 
 def _require_tenant_match(expected_tenant_id: str, provided_tenant_id: str, resource: str) -> None:
     if expected_tenant_id != provided_tenant_id:
-        raise HTTPException(status_code=403, detail=f"Tenant scope mismatch for {resource}")
+        raise api_error(
+            403,
+            error_code="AUTHZ_SCOPE_FORBIDDEN",
+            message=f"Tenant scope mismatch for {resource}.",
+            decision_trace_id="providers-tenant-scope-mismatch",
+            remediation_hint="Use the tenant identifier associated with the resource.",
+            expected_tenant_id=expected_tenant_id,
+            provided_tenant_id=provided_tenant_id,
+        )
 
 
 def _tenant_catalog_snapshot(db: Session, tenant_ids: Optional[set[str]] = None) -> dict[str, TenantCatalogEntry]:
@@ -127,9 +226,9 @@ def _require_active_tenant_catalog_entry(db: Session, tenant_id: str) -> TenantC
     normalized_tenant_id = tenant_id.strip()
     row = db.query(TenantCatalogEntry).filter_by(tenant_id=normalized_tenant_id).first()
     if not row:
-        raise HTTPException(status_code=404, detail="Tenant catalog entry not found")
+        raise not_found_error("tenant_catalog_entry", normalized_tenant_id, decision_trace_id="providers-tenant-catalog-not-found")
     if row.status != "active":
-        raise HTTPException(status_code=400, detail="Tenant catalog entry is not active")
+        raise api_validation_error("Tenant catalog entry is not active", decision_trace_id="providers-tenant-catalog-inactive")
     return row
 
 
@@ -137,7 +236,7 @@ def _require_tenant_catalog_entry(db: Session, tenant_id: str) -> TenantCatalogE
     normalized_tenant_id = tenant_id.strip()
     row = db.query(TenantCatalogEntry).filter_by(tenant_id=normalized_tenant_id).first()
     if not row:
-        raise HTTPException(status_code=404, detail="Tenant catalog entry not found")
+        raise not_found_error("tenant_catalog_entry", normalized_tenant_id, decision_trace_id="providers-tenant-catalog-not-found")
     return row
 
 
@@ -150,7 +249,11 @@ def _require_supported_model_entry(db: Session, provider_type: str, model_name: 
         .first()
     )
     if not row:
-        raise HTTPException(status_code=404, detail="Supported model not found for provider")
+        raise not_found_error(
+            "supported_model",
+            f"{normalized_provider_type}:{normalized_model_name}",
+            decision_trace_id="providers-supported-model-not-found",
+        )
     return row
 
 
@@ -159,15 +262,15 @@ def _parse_allowed_subject_patterns(raw_value: str) -> list[str]:
     try:
         parsed = json.loads(raw_value or "[]")
     except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"allowed_subject_patterns must be valid JSON. Example: {sample}",
+        raise api_validation_error(
+            f"allowed_subject_patterns must be valid JSON. Example: {sample}",
+            decision_trace_id="providers-subject-patterns-invalid-json",
         ) from exc
 
     if not isinstance(parsed, list) or any(not isinstance(item, str) for item in parsed):
-        raise HTTPException(
-            status_code=400,
-            detail=f"allowed_subject_patterns must be a JSON array of strings. Example: {sample}",
+        raise api_validation_error(
+            f"allowed_subject_patterns must be a JSON array of strings. Example: {sample}",
+            decision_trace_id="providers-subject-patterns-invalid-shape",
         )
     return parsed
 
@@ -220,9 +323,12 @@ def _exchange_token_with_aws_sts(profile: WorkloadIdentityFederationProfile, sub
     try:
         import boto3  # type: ignore
     except ImportError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="AWS STS exchange requires boto3. Install boto3 and retry.",
+        raise api_error(
+            503,
+            error_code="SERVICE_UNAVAILABLE",
+            message="AWS STS exchange requires boto3. Install boto3 and retry.",
+            decision_trace_id="providers-aws-boto3-missing",
+            remediation_hint="Install boto3 in the runtime environment.",
         ) from exc
 
     role_session_name = f"agenthub-{uuid4().hex[:18]}"
@@ -246,16 +352,16 @@ def _exchange_token_with_aws_sts(profile: WorkloadIdentityFederationProfile, sub
                 }
             ),
         )
-        raise HTTPException(
-            status_code=502,
-            detail="AWS STS AssumeRole failed for workload identity profile.",
+        raise upstream_error(
+            "AWS STS AssumeRole failed for workload identity profile.",
+            decision_trace_id="providers-aws-sts-assume-role-failed",
         ) from exc
 
     creds = resp.get("Credentials") or {}
     session_token = creds.get("SessionToken")
     expiration = creds.get("Expiration")
     if not session_token or expiration is None:
-        raise HTTPException(status_code=502, detail="AWS STS returned incomplete credentials.")
+        raise upstream_error("AWS STS returned incomplete credentials.", decision_trace_id="providers-aws-sts-incomplete")
 
     expires_in = int(max(1, (expiration - datetime.utcnow()).total_seconds()))
     return str(session_token), expires_in
@@ -306,9 +412,11 @@ def _exchange_token_with_azure_workload_identity(
         if not value
     ]
     if missing:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Azure workload identity native exchange missing configuration: {', '.join(missing)}",
+        raise api_error(
+            503,
+            error_code="SERVICE_UNAVAILABLE",
+            message=f"Azure workload identity native exchange missing configuration: {', '.join(missing)}",
+            decision_trace_id="providers-azure-native-config-missing",
         )
 
     timeout_seconds = max(0.1, float(default_http_timeout_seconds))
@@ -325,20 +433,32 @@ def _exchange_token_with_azure_workload_identity(
             timeout=timeout_seconds,
         )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="Azure token endpoint request failed for workload identity profile.") from exc
+        raise upstream_error(
+            "Azure token endpoint request failed for workload identity profile.",
+            decision_trace_id="providers-azure-token-request-failed",
+        ) from exc
 
     if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="Azure token endpoint returned failure for workload identity profile.")
+        raise upstream_error(
+            "Azure token endpoint returned failure for workload identity profile.",
+            decision_trace_id="providers-azure-token-failure",
+        )
 
     try:
         payload = response.json()
     except ValueError as exc:
-        raise HTTPException(status_code=502, detail="Azure token endpoint returned non-JSON response.") from exc
+        raise upstream_error(
+            "Azure token endpoint returned non-JSON response.",
+            decision_trace_id="providers-azure-token-non-json",
+        ) from exc
 
     access_token = str(payload.get("access_token", "")).strip()
     expires_in_value = payload.get("expires_in")
     if not access_token:
-        raise HTTPException(status_code=502, detail="Azure token endpoint returned incomplete credentials.")
+        raise upstream_error(
+            "Azure token endpoint returned incomplete credentials.",
+            decision_trace_id="providers-azure-token-incomplete",
+        )
 
     if isinstance(expires_in_value, str) and expires_in_value.isdigit():
         expires_in = int(expires_in_value)
@@ -348,7 +468,10 @@ def _exchange_token_with_azure_workload_identity(
         expires_in = 3600
 
     if expires_in <= 0:
-        raise HTTPException(status_code=502, detail="Azure token endpoint returned invalid expires_in.")
+        raise upstream_error(
+            "Azure token endpoint returned invalid expires_in.",
+            decision_trace_id="providers-azure-token-invalid-expires",
+        )
 
     logger.info(
         "azure_workload_identity_exchange_completed %s",
@@ -404,20 +527,32 @@ def _exchange_token_with_google_workload_identity(
     try:
         response = httpx.get(token_url, headers=headers, timeout=timeout_seconds)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="Google token endpoint request failed for workload identity profile.") from exc
+        raise upstream_error(
+            "Google token endpoint request failed for workload identity profile.",
+            decision_trace_id="providers-google-token-request-failed",
+        ) from exc
 
     if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="Google token endpoint returned failure for workload identity profile.")
+        raise upstream_error(
+            "Google token endpoint returned failure for workload identity profile.",
+            decision_trace_id="providers-google-token-failure",
+        )
 
     try:
         payload = response.json()
     except ValueError as exc:
-        raise HTTPException(status_code=502, detail="Google token endpoint returned non-JSON response.") from exc
+        raise upstream_error(
+            "Google token endpoint returned non-JSON response.",
+            decision_trace_id="providers-google-token-non-json",
+        ) from exc
 
     access_token = str(payload.get("access_token", "")).strip()
     expires_in_value = payload.get("expires_in")
     if not access_token:
-        raise HTTPException(status_code=502, detail="Google token endpoint returned incomplete credentials.")
+        raise upstream_error(
+            "Google token endpoint returned incomplete credentials.",
+            decision_trace_id="providers-google-token-incomplete",
+        )
 
     if isinstance(expires_in_value, str) and expires_in_value.isdigit():
         expires_in = int(expires_in_value)
@@ -427,7 +562,10 @@ def _exchange_token_with_google_workload_identity(
         expires_in = 3600
 
     if expires_in <= 0:
-        raise HTTPException(status_code=502, detail="Google token endpoint returned invalid expires_in.")
+        raise upstream_error(
+            "Google token endpoint returned invalid expires_in.",
+            decision_trace_id="providers-google-token-invalid-expires",
+        )
 
     logger.info(
         "google_workload_identity_exchange_completed %s",
@@ -484,9 +622,11 @@ def _exchange_token_with_nvidia_workload_identity(
         if not value
     ]
     if missing:
-        raise HTTPException(
-            status_code=503,
-            detail=f"NVIDIA workload identity native exchange missing configuration: {', '.join(missing)}",
+        raise api_error(
+            503,
+            error_code="SERVICE_UNAVAILABLE",
+            message=f"NVIDIA workload identity native exchange missing configuration: {', '.join(missing)}",
+            decision_trace_id="providers-nvidia-native-config-missing",
         )
 
     timeout_seconds = max(0.1, float(default_http_timeout_seconds))
@@ -502,20 +642,32 @@ def _exchange_token_with_nvidia_workload_identity(
     try:
         response = httpx.post(token_url, data=data, timeout=timeout_seconds)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="NVIDIA token endpoint request failed for workload identity profile.") from exc
+        raise upstream_error(
+            "NVIDIA token endpoint request failed for workload identity profile.",
+            decision_trace_id="providers-nvidia-token-request-failed",
+        ) from exc
 
     if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="NVIDIA token endpoint returned failure for workload identity profile.")
+        raise upstream_error(
+            "NVIDIA token endpoint returned failure for workload identity profile.",
+            decision_trace_id="providers-nvidia-token-failure",
+        )
 
     try:
         payload = response.json()
     except ValueError as exc:
-        raise HTTPException(status_code=502, detail="NVIDIA token endpoint returned non-JSON response.") from exc
+        raise upstream_error(
+            "NVIDIA token endpoint returned non-JSON response.",
+            decision_trace_id="providers-nvidia-token-non-json",
+        ) from exc
 
     access_token = str(payload.get("access_token", "")).strip()
     expires_in_value = payload.get("expires_in")
     if not access_token:
-        raise HTTPException(status_code=502, detail="NVIDIA token endpoint returned incomplete credentials.")
+        raise upstream_error(
+            "NVIDIA token endpoint returned incomplete credentials.",
+            decision_trace_id="providers-nvidia-token-incomplete",
+        )
 
     if isinstance(expires_in_value, str) and expires_in_value.isdigit():
         expires_in = int(expires_in_value)
@@ -525,7 +677,10 @@ def _exchange_token_with_nvidia_workload_identity(
         expires_in = 3600
 
     if expires_in <= 0:
-        raise HTTPException(status_code=502, detail="NVIDIA token endpoint returned invalid expires_in.")
+        raise upstream_error(
+            "NVIDIA token endpoint returned invalid expires_in.",
+            decision_trace_id="providers-nvidia-token-invalid-expires",
+        )
 
     logger.info(
         "nvidia_workload_identity_exchange_completed %s",
@@ -548,17 +703,19 @@ def _exchange_token_with_runtime_vendor(
 ) -> tuple[str, int, str]:
     vendor = _runtime_vendor_name(profile.provider_type)
     if not vendor:
-        raise HTTPException(
-            status_code=400,
-            detail="Live token exchange is only supported for configured workload identity providers.",
+        raise api_validation_error(
+            "Live token exchange is only supported for configured workload identity providers.",
+            decision_trace_id="providers-runtime-vendor-unsupported",
         )
 
     prefix = _RUNTIME_VENDOR_PREFIXES[vendor]
     token = (os.getenv(f"{prefix}_WORKLOAD_IDENTITY_ACCESS_TOKEN") or "").strip()
     if not token:
-        raise HTTPException(
-            status_code=503,
-            detail=f"{vendor.capitalize()} workload identity exchange requires {prefix}_WORKLOAD_IDENTITY_ACCESS_TOKEN runtime injection.",
+        raise api_error(
+            503,
+            error_code="SERVICE_UNAVAILABLE",
+            message=f"{vendor.capitalize()} workload identity exchange requires {prefix}_WORKLOAD_IDENTITY_ACCESS_TOKEN runtime injection.",
+            decision_trace_id="providers-runtime-vendor-token-missing",
         )
     expires_in = max(1, int(default_expires_in_seconds))
 
@@ -605,7 +762,7 @@ def create_tenant_catalog_entry(
     tenant_id = payload.tenant_id.strip()
     existing = db.query(TenantCatalogEntry).filter_by(tenant_id=tenant_id).first()
     if existing:
-        raise HTTPException(status_code=409, detail="Tenant catalog entry already exists")
+        raise conflict_error("Tenant catalog entry already exists.", decision_trace_id="providers-tenant-catalog-exists")
 
     row = TenantCatalogEntry(
         tenant_id=tenant_id,
@@ -689,11 +846,11 @@ def update_tenant_catalog_entry(
     require_mfa(ctx)
     normalized_tenant_id = tenant_id.strip()
     if payload.tenant_id.strip() != normalized_tenant_id:
-        raise HTTPException(status_code=400, detail="tenant_id in payload must match the path")
+        raise api_validation_error("tenant_id in payload must match the path", decision_trace_id="providers-tenant-id-mismatch")
 
     row = db.query(TenantCatalogEntry).filter_by(tenant_id=normalized_tenant_id).first()
     if not row:
-        raise HTTPException(status_code=404, detail="Tenant catalog entry not found")
+        raise not_found_error("tenant_catalog_entry", normalized_tenant_id, decision_trace_id="providers-tenant-catalog-not-found")
 
     row.tenant_name = payload.tenant_name.strip()
     row.tenant_type = payload.tenant_type.strip().lower()
@@ -867,13 +1024,17 @@ def token_exchange(
             "workload_identity_profile_not_found %s",
             sanitize_fields({"workload_identity_profile_id": payload.workload_identity_profile_id}),
         )
-        raise HTTPException(status_code=404, detail="Workload identity profile not found")
+        raise not_found_error(
+            "workload_identity_profile",
+            payload.workload_identity_profile_id,
+            decision_trace_id="providers-workload-profile-not-found",
+        )
     if profile.status != "active":
         logger.error(
             "workload_identity_profile_inactive %s",
             sanitize_fields({"workload_identity_profile_id": payload.workload_identity_profile_id, "status": profile.status}),
         )
-        raise HTTPException(status_code=400, detail="Workload identity profile is not active")
+        raise api_validation_error("Workload identity profile is not active", decision_trace_id="providers-workload-profile-inactive")
     if not _subject_allowed(profile, payload.subject):
         logger.error(
             "workload_identity_subject_not_allowed %s",
@@ -884,7 +1045,13 @@ def token_exchange(
                 }
             ),
         )
-        raise HTTPException(status_code=403, detail="Subject is not allowed by workload identity profile policy")
+        raise authz_scope_forbidden(
+            message="Subject is not allowed by workload identity profile policy.",
+            actor_role=ctx.actor_role,
+            required_scope="subject matches allowed_subject_patterns",
+            decision_trace_id="providers-workload-subject-denied",
+            remediation_hint="Use a subject that matches the profile allowed_subject_patterns.",
+        )
 
     _require_tenant_match(profile.tenant_id, payload.tenant_id, "workload identity token exchange")
 
@@ -938,12 +1105,12 @@ def token_exchange(
             default_expires_in_seconds,
         )
     else:
-        raise HTTPException(
-            status_code=400,
-            detail=(
+        raise api_validation_error(
+            (
                 "Live token exchange is only supported for AWS, Azure, Google, NVIDIA, "
                 "and configured runtime-token AI providers (OpenAI, Anthropic, Cohere, Mistral, Groq, Together, Fireworks, Perplexity, xAI)."
             ),
+            decision_trace_id="providers-token-exchange-unsupported-provider",
         )
 
     profile.last_token_exchange_at = datetime.utcnow()
@@ -1011,7 +1178,11 @@ def validate_workload_identity_trust(
 
     profile = db.query(WorkloadIdentityFederationProfile).filter_by(workload_identity_profile_id=provider_id).first()
     if not profile:
-        raise HTTPException(status_code=404, detail="Workload identity profile not found")
+        raise not_found_error(
+            "workload_identity_profile",
+            provider_id,
+            decision_trace_id="providers-workload-profile-not-found",
+        )
 
     _require_tenant_match(profile.tenant_id, payload.tenant_id, "workload identity trust validation")
 
@@ -1050,7 +1221,11 @@ def get_workload_identity_provider_health(
     require_role(ctx, PROVIDERS_ADMIN_SECURITY_AUDITOR_ROLES)
     profile = db.query(WorkloadIdentityFederationProfile).filter_by(workload_identity_profile_id=provider_id).first()
     if not profile:
-        raise HTTPException(status_code=404, detail="Workload identity profile not found")
+        raise not_found_error(
+            "workload_identity_profile",
+            provider_id,
+            decision_trace_id="providers-workload-profile-not-found",
+        )
 
     _require_tenant_match(profile.tenant_id, tenant_id, "workload identity health")
 
@@ -1094,7 +1269,11 @@ def test_workload_identity_provider(
     require_mfa(ctx)
     profile = db.query(WorkloadIdentityFederationProfile).filter_by(workload_identity_profile_id=provider_id).first()
     if not profile:
-        raise HTTPException(status_code=404, detail="Workload identity profile not found")
+        raise not_found_error(
+            "workload_identity_profile",
+            provider_id,
+            decision_trace_id="providers-workload-profile-not-found",
+        )
 
     _require_tenant_match(profile.tenant_id, tenant_id, "workload identity connectivity test")
 
@@ -1155,7 +1334,10 @@ def test_workload_identity_provider(
                 default_expires_in_seconds,
             )
         else:
-            raise HTTPException(status_code=400, detail="Provider does not support workload connectivity testing")
+            raise api_validation_error(
+                "Provider does not support workload connectivity testing",
+                decision_trace_id="providers-workload-connectivity-unsupported",
+            )
         test_status = "passed"
         detail = "token exchange completed"
     except HTTPException as exc:
@@ -1202,16 +1384,23 @@ def create_secret_provider(
     require_role(ctx, PROVIDERS_ADMIN_ROLES)
     require_mfa(ctx)
     _require_active_tenant_catalog_entry(db, payload.tenant_id)
+    provider_type = str(payload.provider_type or "").strip().lower()
+    provider_address, auth_method, role_or_mount = normalize_db_provider_defaults(
+        provider_type,
+        payload.provider_address,
+        payload.auth_method,
+        payload.role_or_mount,
+    )
     provider = SecretProviderConfig(
         secret_provider_id=str(uuid4()),
         tenant_id=payload.tenant_id,
-        provider_type=payload.provider_type,
+        provider_type=provider_type,
         provider_address="[ENCRYPTED]",
-        provider_address_encrypted=encrypt_value(payload.provider_address),
+        provider_address_encrypted=encrypt_value(provider_address),
         auth_method="[ENCRYPTED]",
-        auth_method_encrypted=encrypt_value(payload.auth_method),
+        auth_method_encrypted=encrypt_value(auth_method),
         role_or_mount="[ENCRYPTED]",
-        role_or_mount_encrypted=encrypt_value(payload.role_or_mount),
+        role_or_mount_encrypted=encrypt_value(role_or_mount),
         bootstrap_token_encrypted=encrypt_value(payload.bootstrap_token or ""),
         secret_path_prefixes=payload.secret_path_prefixes,
         lease_ttl_seconds=payload.lease_ttl_seconds,
@@ -1231,6 +1420,150 @@ def create_secret_provider(
     return {"secret_provider_id": provider.secret_provider_id, "status": provider.status}
 
 
+@router.put(
+    "/secrets/providers/{provider_id}/values",
+    response_model=SecretProviderValueResponse,
+    summary="Store secret value for db provider",
+    description=(
+        "Persists an encrypted secret value for a db-type secret provider. "
+        "Plaintext is never returned on readback."
+    ),
+)
+def upsert_secret_provider_value(
+    provider_id: str,
+    payload: SecretProviderValueUpsertRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_SECURITY_ROLES)
+    require_mfa(ctx)
+    provider = db.query(SecretProviderConfig).filter_by(secret_provider_id=provider_id).first()
+    if not provider:
+        raise not_found_error("secret_provider", provider_id, decision_trace_id="providers-secret-provider-not-found")
+    if str(provider.status or "").strip().lower() != "active":
+        raise api_validation_error("Secret provider is not active", decision_trace_id="providers-secret-provider-inactive")
+
+    row = upsert_db_secret_provider_value(
+        db,
+        provider,
+        secret_ref=payload.secret_ref,
+        secret_value=payload.secret_value,
+        actor_id=ctx.actor_id,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="secret_provider.value.upsert",
+        resource_type="secret_provider",
+        resource_id=provider_id,
+        trace_id=f"trace-secret-provider-value-upsert-{provider_id}",
+    )
+    db.commit()
+    db.refresh(row)
+    return {
+        "secret_provider_id": provider_id,
+        "secret_ref": row.secret_ref,
+        "configured": True,
+        "masked_hint": mask_secret_hint(payload.secret_value),
+        "updated_by": row.updated_by,
+        "updated_at": row.updated_at,
+    }
+
+
+@router.get(
+    "/secrets/providers/{provider_id}/values/{secret_ref:path}",
+    response_model=SecretProviderValueResponse,
+    summary="Read stored secret value status for db provider",
+)
+def get_secret_provider_value_status(
+    provider_id: str,
+    secret_ref: str,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_SECURITY_AUDITOR_ROLES)
+    provider = db.query(SecretProviderConfig).filter_by(secret_provider_id=provider_id).first()
+    if not provider:
+        raise not_found_error("secret_provider", provider_id, decision_trace_id="providers-secret-provider-not-found")
+
+    normalized_ref = str(secret_ref or "").strip()
+    row = (
+        db.query(SecretProviderStoredValue)
+        .filter_by(secret_provider_id=provider_id, secret_ref=normalized_ref)
+        .first()
+    )
+    configured = bool(row and str(row.value_encrypted or "").strip())
+    masked_hint = None
+    if configured:
+        try:
+            masked_hint = mask_secret_hint(read_db_secret_provider_value(db, provider, normalized_ref))
+        except HTTPException:
+            configured = False
+
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="secret_provider.value.read",
+        resource_type="secret_provider",
+        resource_id=provider_id,
+        trace_id=f"trace-secret-provider-value-read-{provider_id}",
+    )
+    db.commit()
+    return {
+        "secret_provider_id": provider_id,
+        "secret_ref": normalized_ref,
+        "configured": configured,
+        "masked_hint": masked_hint,
+        "updated_by": row.updated_by if row else None,
+        "updated_at": row.updated_at if row else None,
+    }
+
+
+@router.delete(
+    "/secrets/providers/{provider_id}/values/{secret_ref:path}",
+    response_model=SecretProviderValueResponse,
+    summary="Delete stored secret value for db provider",
+)
+def delete_secret_provider_value(
+    provider_id: str,
+    secret_ref: str,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_SECURITY_ROLES)
+    require_mfa(ctx)
+    provider = db.query(SecretProviderConfig).filter_by(secret_provider_id=provider_id).first()
+    if not provider:
+        raise not_found_error("secret_provider", provider_id, decision_trace_id="providers-secret-provider-not-found")
+
+    normalized_ref = str(secret_ref or "").strip()
+    deleted = delete_db_secret_provider_value(db, provider, normalized_ref)
+    if not deleted:
+        raise not_found_error(
+            "stored_secret_value",
+            f"{provider_id}:{normalized_ref}",
+            decision_trace_id="providers-stored-secret-not-found",
+        )
+
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="secret_provider.value.delete",
+        resource_type="secret_provider",
+        resource_id=provider_id,
+        trace_id=f"trace-secret-provider-value-delete-{provider_id}",
+    )
+    db.commit()
+    return {
+        "secret_provider_id": provider_id,
+        "secret_ref": normalized_ref,
+        "configured": False,
+        "masked_hint": None,
+        "updated_by": ctx.actor_id,
+        "updated_at": datetime.utcnow(),
+    }
+
+
 @router.post("/providers/models", response_model=SupportedModelResponse)
 def create_supported_model(
     payload: SupportedModelUpsertRequest,
@@ -1247,7 +1580,7 @@ def create_supported_model(
         .first()
     )
     if existing:
-        raise HTTPException(status_code=409, detail="Supported model already exists for provider")
+        raise conflict_error("Supported model already exists for provider.", decision_trace_id="providers-supported-model-exists")
 
     row = SupportedModelCatalogEntry(
         supported_model_id=str(uuid4()),
@@ -1257,9 +1590,16 @@ def create_supported_model(
         context_window_tokens=payload.context_window_tokens,
         status=payload.status.strip().lower(),
         description=payload.description.strip(),
+        recommendation_rationale=payload.recommendation_rationale.strip(),
+        credential_source_class=normalize_credential_source_class(payload.credential_source_class),
+        approval_status="pending",
+        metadata_version=1,
         updated_by=ctx.actor_id,
     )
+    _validate_default_binding_id(db, payload.default_binding_id, provider_type)
+    row.default_binding_id = str(payload.default_binding_id or "").strip() or None
     db.add(row)
+    _record_supported_model_revision(db, row, changed_by=ctx.actor_id, change_type="create")
     create_audit_event(
         db,
         actor_id=ctx.actor_id,
@@ -1271,6 +1611,50 @@ def create_supported_model(
     db.commit()
     db.refresh(row)
     return row
+
+
+@router.get(
+    "/providers/models/available",
+    response_model=PlatformAvailableModelsResponse,
+    summary="Platform UI-available models (canonical register)",
+    description=(
+        "Returns the single canonical model list for all operator UI dropdowns. "
+        "Filters by catalog status, optional approval policy, and optional tenant entitlements."
+    ),
+)
+def list_platform_ui_available_models(
+    tenant_id: Optional[str] = None,
+    provider_type: Optional[str] = None,
+    limit: int = Query(default=500, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PLATFORM_AVAILABLE_MODEL_READ_ROLES)
+    if tenant_id:
+        _require_tenant_catalog_entry(db, tenant_id.strip())
+    rows, policy, total = list_platform_available_models(
+        db,
+        tenant_id=tenant_id,
+        provider_type=provider_type,
+        limit=limit,
+        offset=offset,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="platform.models.available.read",
+        resource_type="platform_model_availability",
+        resource_id=tenant_id or "global",
+        trace_id=f"trace-platform-models-available-{uuid4()}",
+    )
+    db.commit()
+    return {
+        "object": "list",
+        "data": rows,
+        "total": total,
+        "policy": policy,
+    }
 
 
 @router.get("/providers/models", response_model=list[SupportedModelResponse])
@@ -1327,7 +1711,7 @@ def update_supported_model(
     require_mfa(ctx)
     row = db.query(SupportedModelCatalogEntry).filter_by(supported_model_id=supported_model_id).first()
     if not row:
-        raise HTTPException(status_code=404, detail="Supported model not found")
+        raise not_found_error("supported_model", supported_model_id, decision_trace_id="providers-supported-model-not-found")
 
     provider_type = payload.provider_type.strip().lower()
     model_name = payload.model_name.strip()
@@ -1341,7 +1725,7 @@ def update_supported_model(
         .first()
     )
     if conflict:
-        raise HTTPException(status_code=409, detail="Supported model already exists for provider")
+        raise conflict_error("Supported model already exists for provider.", decision_trace_id="providers-supported-model-exists")
 
     row.provider_type = provider_type
     row.model_name = model_name
@@ -1349,7 +1733,17 @@ def update_supported_model(
     row.context_window_tokens = payload.context_window_tokens
     row.status = payload.status.strip().lower()
     row.description = payload.description.strip()
+    row.recommendation_rationale = payload.recommendation_rationale.strip()
+    row.credential_source_class = normalize_credential_source_class(payload.credential_source_class)
+    _validate_default_binding_id(db, payload.default_binding_id, provider_type)
+    row.default_binding_id = str(payload.default_binding_id or "").strip() or None
+    row.approval_status = "pending"
+    row.approval_ticket_ref = None
+    row.approved_by = None
+    row.approved_at = None
+    row.metadata_version = int(row.metadata_version or 1) + 1
     row.updated_by = ctx.actor_id
+    _record_supported_model_revision(db, row, changed_by=ctx.actor_id, change_type="update")
     create_audit_event(
         db,
         actor_id=ctx.actor_id,
@@ -1373,7 +1767,7 @@ def delete_supported_model(
     require_mfa(ctx)
     row = db.query(SupportedModelCatalogEntry).filter_by(supported_model_id=supported_model_id).first()
     if not row:
-        raise HTTPException(status_code=404, detail="Supported model not found")
+        raise not_found_error("supported_model", supported_model_id, decision_trace_id="providers-supported-model-not-found")
     db.delete(row)
     create_audit_event(
         db,
@@ -1385,6 +1779,50 @@ def delete_supported_model(
     )
     db.commit()
     return {"deleted": True, "supported_model_id": supported_model_id}
+
+
+@router.post("/providers/models/{supported_model_id}/approve", response_model=SupportedModelResponse)
+def approve_supported_model(
+    supported_model_id: str,
+    payload: SupportedModelApprovalRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_SECURITY_ROLES)
+    require_mfa(ctx)
+    environment = str(payload.environment or "dev").strip().lower() or "dev"
+    if environment == "prod":
+        require_dual_approval(ctx)
+
+    row = db.query(SupportedModelCatalogEntry).filter_by(supported_model_id=supported_model_id).first()
+    if not row:
+        raise not_found_error("supported_model", supported_model_id, decision_trace_id="providers-supported-model-not-found")
+
+    decision = str(payload.decision).strip().lower()
+    row.approval_status = "approved" if decision == "approve" else "rejected"
+    row.approval_ticket_ref = payload.approval_ticket_ref.strip()
+    row.approved_by = ctx.actor_id
+    row.approved_at = datetime.utcnow()
+    row.updated_by = ctx.actor_id
+    row.metadata_version = int(row.metadata_version or 1) + 1
+
+    if payload.approval_note.strip():
+        note = payload.approval_note.strip()
+        row.description = (f"{row.description.strip()}\nreview-note: {note}").strip()[:4000]
+
+    _record_supported_model_revision(db, row, changed_by=ctx.actor_id, change_type=f"approval_{decision}")
+
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="supported_model.approve" if decision == "approve" else "supported_model.reject",
+        resource_type="supported_model",
+        resource_id=row.supported_model_id,
+        trace_id=f"trace-{row.supported_model_id}-approval",
+    )
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 @router.post("/providers/tenant-model-entitlements", response_model=TenantSupportedModelEntitlementResponse)
@@ -1409,7 +1847,7 @@ def create_tenant_model_entitlement(
         .first()
     )
     if existing:
-        raise HTTPException(status_code=409, detail="Tenant model entitlement already exists")
+        raise conflict_error("Tenant model entitlement already exists.", decision_trace_id="providers-tenant-entitlement-exists")
 
     row = TenantSupportedModelEntitlement(
         tenant_model_entitlement_id=str(uuid4()),
@@ -1487,7 +1925,11 @@ def update_tenant_model_entitlement(
         .first()
     )
     if not row:
-        raise HTTPException(status_code=404, detail="Tenant model entitlement not found")
+        raise not_found_error(
+            "tenant_model_entitlement",
+            tenant_model_entitlement_id,
+            decision_trace_id="providers-tenant-entitlement-not-found",
+        )
 
     tenant_id = payload.tenant_id.strip()
     provider_type = payload.provider_type.strip().lower()
@@ -1507,7 +1949,7 @@ def update_tenant_model_entitlement(
         .first()
     )
     if conflict:
-        raise HTTPException(status_code=409, detail="Tenant model entitlement already exists")
+        raise conflict_error("Tenant model entitlement already exists.", decision_trace_id="providers-tenant-entitlement-exists")
 
     row.tenant_id = tenant_id
     row.provider_type = provider_type
@@ -1541,7 +1983,11 @@ def delete_tenant_model_entitlement(
         .first()
     )
     if not row:
-        raise HTTPException(status_code=404, detail="Tenant model entitlement not found")
+        raise not_found_error(
+            "tenant_model_entitlement",
+            tenant_model_entitlement_id,
+            decision_trace_id="providers-tenant-entitlement-not-found",
+        )
 
     db.delete(row)
     create_audit_event(
@@ -1647,7 +2093,7 @@ def test_secret_provider(
     require_mfa(ctx)
     provider = db.query(SecretProviderConfig).filter_by(secret_provider_id=provider_id).first()
     if not provider:
-        raise HTTPException(status_code=404, detail="Secret provider not found")
+        raise not_found_error("secret_provider", provider_id, decision_trace_id="providers-secret-provider-not-found")
 
     provider_type = str(provider.provider_type or "").strip().lower()
     address, _auth_method, _role_or_mount, bootstrap_token = _secret_provider_connection(provider)
@@ -1658,7 +2104,7 @@ def test_secret_provider(
     try:
         if provider_type == "vault":
             if not address:
-                raise HTTPException(status_code=400, detail="Vault provider address is missing")
+                raise api_validation_error("Vault provider address is missing", decision_trace_id="providers-vault-address-missing")
             headers = {}
             if bootstrap_token:
                 headers["X-Vault-Token"] = bootstrap_token
@@ -1672,16 +2118,24 @@ def test_secret_provider(
             try:
                 import boto3  # type: ignore
             except ImportError as exc:
-                raise HTTPException(status_code=503, detail="boto3 is required for AWS connectivity test") from exc
+                raise api_error(
+                    503,
+                    error_code="SERVICE_UNAVAILABLE",
+                    message="boto3 is required for AWS connectivity test",
+                    decision_trace_id="providers-aws-boto3-connectivity-missing",
+                ) from exc
             client = boto3.client("secretsmanager")
             client.list_secrets(MaxResults=1)
             test_status = "passed"
             detail = "aws secrets manager reachable"
         elif provider_type in {"azure-key-vault", "azure_key_vault"}:
             if not address:
-                raise HTTPException(status_code=400, detail="Azure Key Vault provider address is missing")
+                raise api_validation_error("Azure Key Vault provider address is missing", decision_trace_id="providers-azure-address-missing")
             if not bootstrap_token:
-                raise HTTPException(status_code=400, detail="Bootstrap token required for Azure Key Vault connectivity test")
+                raise api_validation_error(
+                    "Bootstrap token required for Azure Key Vault connectivity test",
+                    decision_trace_id="providers-azure-bootstrap-missing",
+                )
             response = httpx.get(
                 f"{address.rstrip('/')}/secrets?api-version=7.4",
                 headers={"Authorization": f"Bearer {bootstrap_token}"},
@@ -1692,9 +2146,27 @@ def test_secret_provider(
                 detail = "azure key vault endpoint reachable"
             else:
                 detail = f"azure key vault endpoint returned http {response.status_code}"
+        elif is_db_secret_provider(provider_type):
+            try:
+                encrypt_secret_value("connectivity-probe")
+                decrypt_secret_value(encrypt_secret_value("connectivity-probe"))
+            except SecretCryptoError as exc:
+                raise api_error(
+                    503,
+                    error_code="SERVICE_UNAVAILABLE",
+                    message="Database secret encryption is unavailable",
+                    decision_trace_id="providers-db-encryption-unavailable",
+                ) from exc
+            stored_count = (
+                db.query(SecretProviderStoredValue)
+                .filter_by(secret_provider_id=provider_id)
+                .count()
+            )
+            test_status = "passed"
+            detail = f"database secret provider ready ({stored_count} stored value(s))"
         else:
             if not address:
-                raise HTTPException(status_code=400, detail="Provider address is missing")
+                raise api_validation_error("Provider address is missing", decision_trace_id="providers-address-missing")
             response = httpx.get(address, timeout=5.0)
             if response.status_code < 400:
                 test_status = "passed"
@@ -1735,7 +2207,7 @@ def list_secret_provider_leases(
     require_role(ctx, PROVIDERS_ADMIN_SECURITY_AUDITOR_ROLES)
     provider = db.query(SecretProviderConfig).filter_by(secret_provider_id=provider_id).first()
     if not provider:
-        raise HTTPException(status_code=404, detail="Secret provider not found")
+        raise not_found_error("secret_provider", provider_id, decision_trace_id="providers-secret-provider-not-found")
     leases = (
         db.query(SecretProviderLease)
         .filter(
@@ -1789,7 +2261,7 @@ def renew_secret_provider_lease(
 
     provider = db.query(SecretProviderConfig).filter_by(secret_provider_id=provider_id).first()
     if not provider:
-        raise HTTPException(status_code=404, detail="Secret provider not found")
+        raise not_found_error("secret_provider", provider_id, decision_trace_id="providers-secret-provider-not-found")
 
     now = datetime.utcnow()
     lease = (
@@ -1841,7 +2313,7 @@ def get_secret_provider_health(
     require_role(ctx, PROVIDERS_ADMIN_SECURITY_AUDITOR_ROLES)
     provider = db.query(SecretProviderConfig).filter_by(secret_provider_id=provider_id).first()
     if not provider:
-        raise HTTPException(status_code=404, detail="Secret provider not found")
+        raise not_found_error("secret_provider", provider_id, decision_trace_id="providers-secret-provider-not-found")
 
     now = datetime.utcnow()
     active_q = db.query(SecretProviderLease).filter(
@@ -1928,3 +2400,209 @@ def rotate_key_via_provider(
         "environment": environment,
         "dual_approval_required": environment.strip().lower() == "prod",
     }
+
+
+@router.post(
+    "/providers/credential-bindings",
+    response_model=ProviderCredentialBindingResponse,
+    summary="Create provider credential binding",
+)
+def create_provider_credential_binding(
+    payload: ProviderCredentialBindingUpsertRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_SECURITY_ROLES)
+    require_mfa(ctx)
+    if payload.environment.strip().lower() == "prod" or _is_runtime_prod_environment():
+        required_approver_role = _required_binding_approver_role(ctx)
+        if required_approver_role:
+            require_dual_approval(ctx, required_approver_role=required_approver_role)
+
+    _require_active_tenant_catalog_entry(db, payload.tenant_id)
+    row = upsert_provider_credential_binding(
+        db,
+        binding_id=None,
+        tenant_id=payload.tenant_id,
+        binding_name=payload.binding_name,
+        consumer_type=payload.consumer_type,
+        consumer_key=payload.consumer_key,
+        provider_type=payload.provider_type,
+        credential_plane=payload.credential_plane,
+        secret_provider_id=payload.secret_provider_id,
+        secret_ref=payload.secret_ref,
+        workload_identity_profile_id=payload.workload_identity_profile_id,
+        environment=payload.environment,
+        status=payload.status,
+        actor_id=ctx.actor_id,
+    )
+    maybe_sync_gateway_cursor_binding(db, row, ctx.actor_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="provider_credential_binding.create",
+        resource_type="provider_credential_binding",
+        resource_id=row.binding_id,
+        trace_id=f"trace-provider-credential-binding-{row.binding_id}",
+    )
+    db.commit()
+    db.refresh(row)
+    return serialize_binding(db, row)
+
+
+@router.get(
+    "/providers/credential-bindings",
+    response_model=list[ProviderCredentialBindingResponse],
+    summary="List provider credential bindings",
+)
+def list_provider_credential_bindings(
+    tenant_id: Optional[str] = Query(default=None),
+    consumer_type: Optional[str] = Query(default=None),
+    consumer_key: Optional[str] = Query(default=None),
+    provider_type: Optional[str] = Query(default=None),
+    environment: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default="active"),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_SECURITY_AUDITOR_ROLES)
+    query = db.query(ProviderCredentialBinding)
+    if tenant_id:
+        query = query.filter_by(tenant_id=tenant_id.strip())
+    if consumer_type:
+        query = query.filter_by(consumer_type=consumer_type.strip().lower())
+    if consumer_key:
+        query = query.filter_by(consumer_key=consumer_key.strip())
+    if provider_type:
+        query = query.filter_by(provider_type=provider_type.strip().lower())
+    if environment:
+        query = query.filter_by(environment=environment.strip().lower())
+    if status:
+        query = query.filter_by(status=status.strip().lower())
+    rows = (
+        query.order_by(ProviderCredentialBinding.updated_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="provider_credential_binding.list",
+        resource_type="provider_credential_binding",
+        resource_id=tenant_id or "all",
+        trace_id=f"trace-provider-credential-binding-list-{uuid4()}",
+    )
+    db.commit()
+    return [serialize_binding(db, row) for row in rows]
+
+
+@router.get(
+    "/providers/credential-bindings/{binding_id}",
+    response_model=ProviderCredentialBindingResponse,
+    summary="Read provider credential binding",
+)
+def get_provider_credential_binding(
+    binding_id: str,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_SECURITY_AUDITOR_ROLES)
+    row = db.query(ProviderCredentialBinding).filter_by(binding_id=binding_id.strip()).first()
+    if not row:
+        raise not_found_error("credential_binding", binding_id, decision_trace_id="providers-credential-binding-not-found")
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="provider_credential_binding.read",
+        resource_type="provider_credential_binding",
+        resource_id=row.binding_id,
+        trace_id=f"trace-provider-credential-binding-read-{row.binding_id}",
+    )
+    db.commit()
+    return serialize_binding(db, row)
+
+
+@router.put(
+    "/providers/credential-bindings/{binding_id}",
+    response_model=ProviderCredentialBindingResponse,
+    summary="Update provider credential binding",
+)
+def update_provider_credential_binding(
+    binding_id: str,
+    payload: ProviderCredentialBindingUpsertRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_SECURITY_ROLES)
+    require_mfa(ctx)
+    if payload.environment.strip().lower() == "prod" or _is_runtime_prod_environment():
+        required_approver_role = _required_binding_approver_role(ctx)
+        if required_approver_role:
+            require_dual_approval(ctx, required_approver_role=required_approver_role)
+
+    _require_active_tenant_catalog_entry(db, payload.tenant_id)
+    row = upsert_provider_credential_binding(
+        db,
+        binding_id=binding_id.strip(),
+        tenant_id=payload.tenant_id,
+        binding_name=payload.binding_name,
+        consumer_type=payload.consumer_type,
+        consumer_key=payload.consumer_key,
+        provider_type=payload.provider_type,
+        credential_plane=payload.credential_plane,
+        secret_provider_id=payload.secret_provider_id,
+        secret_ref=payload.secret_ref,
+        workload_identity_profile_id=payload.workload_identity_profile_id,
+        environment=payload.environment,
+        status=payload.status,
+        actor_id=ctx.actor_id,
+    )
+    maybe_sync_gateway_cursor_binding(db, row, ctx.actor_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="provider_credential_binding.update",
+        resource_type="provider_credential_binding",
+        resource_id=row.binding_id,
+        trace_id=f"trace-provider-credential-binding-update-{row.binding_id}",
+    )
+    db.commit()
+    db.refresh(row)
+    return serialize_binding(db, row)
+
+
+@router.delete(
+    "/providers/credential-bindings/{binding_id}",
+    response_model=ProviderCredentialBindingResponse,
+    summary="Delete provider credential binding",
+)
+def delete_provider_credential_binding(
+    binding_id: str,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_SECURITY_ROLES)
+    require_mfa(ctx)
+    if _is_runtime_prod_environment():
+        required_approver_role = _required_binding_approver_role(ctx)
+        if required_approver_role:
+            require_dual_approval(ctx, required_approver_role=required_approver_role)
+
+    row = db.query(ProviderCredentialBinding).filter_by(binding_id=binding_id.strip()).first()
+    if not row:
+        raise not_found_error("credential_binding", binding_id, decision_trace_id="providers-credential-binding-not-found")
+    response = serialize_binding(db, row)
+    db.delete(row)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="provider_credential_binding.delete",
+        resource_type="provider_credential_binding",
+        resource_id=binding_id.strip(),
+        trace_id=f"trace-provider-credential-binding-delete-{binding_id.strip()}",
+    )
+    db.commit()
+    return response

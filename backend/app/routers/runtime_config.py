@@ -8,60 +8,41 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api_errors import not_found_error, validation_error as api_validation_error
 from app.database import get_db
+from app.logging_utils import get_logger, sanitize_fields
 from app.models import RuntimeConfig
 from app.policy_constants import ROLE_PLATFORM_ADMIN, ROLE_SECURITY_APPROVER, ROLE_SUPER_ADMIN
-from app.runtime_constants import RUNTIME_CONFIG_SECURITY_CORS_ALLOW_ORIGINS_CSV
-from app.runtime_constants import RUNTIME_CONFIG_WORKLOAD_IDENTITY_EXPOSE_ACCESS_TOKEN
-from app.runtime_constants import RUNTIME_CONFIG_GATEWAY_MCP_SERVERS_JSON
-from app.runtime_constants import RUNTIME_CONFIG_GATEWAY_MCP_DEFAULT_TIMEOUT_SECONDS
-from app.runtime_constants import RUNTIME_CONFIG_COST_PROVIDER_DISCOUNTS_JSON
+from app.router_constants import RUNTIME_CONFIG_ADMIN_ROLES, RUNTIME_CONFIG_SUPER_ADMIN_ROLES
+from app.runtime_constants import (
+    RUNTIME_CONFIG_COST_PROVIDER_DISCOUNTS_JSON,
+    RUNTIME_CONFIG_GATEWAY_CACHE_DEFAULT_MODE,
+    RUNTIME_CONFIG_GATEWAY_MCP_DEFAULT_TIMEOUT_SECONDS,
+    RUNTIME_CONFIG_GATEWAY_MCP_SERVERS_JSON,
+    RUNTIME_CONFIG_GATEWAY_VECTOR_STORES_JSON,
+    RUNTIME_CONFIG_GATEWAY_NOTIFICATION_CHANNELS_JSON,
+    RUNTIME_CONFIG_ORCHESTRATION_DATA_CONNECTIONS_JSON,
+    RUNTIME_CONFIG_SECURITY_CORS_ALLOW_ORIGINS_CSV,
+    RUNTIME_CONFIG_WORKLOAD_IDENTITY_EXPOSE_ACCESS_TOKEN,
+    SENSITIVE_RUNTIME_CONFIG_KEYS,
+)
 from app.security import ActorContext, get_actor_context, require_dual_approval, require_role
 from app.services.audit import create_audit_event
 from app.services.mcp_gateway import validate_mcp_servers_json
+from app.services.gateway_vector_stores import validate_vector_stores_json
+from app.services.gateway_notification_channels import validate_notification_channels_json
+from app.services.orchestration_data_connections import validate_data_connections_json
 from app.services.runtime_config import invalidate_runtime_config_cache
+from app.services.runtime_config_validation_rules import (
+    BUILTIN_VALIDATION_RULES,
+    delete_validation_rule,
+    find_rule_for_key,
+    list_validation_rules,
+    upsert_validation_rule,
+)
 
 router = APIRouter()
-
-RUNTIME_CONFIG_ADMIN_ROLES = {ROLE_PLATFORM_ADMIN, ROLE_SUPER_ADMIN, ROLE_SECURITY_APPROVER}
-
-RUNTIME_CONFIG_VALIDATION_RULES = [
-    {"key": "rate_limit.rules_exact_json", "type": "json_list", "required_fields": ["method", "path", "max_requests", "window_seconds"]},
-    {"key": "rate_limit.rules_wildcard_json", "type": "json_list", "required_fields": ["method", "path_prefix", "max_requests", "window_seconds"]},
-    {"key": "rate_limit.rules_refresh_seconds", "type": "int", "min": 1, "max": 3600},
-    {"key": "gateway.default_global_timeout_ms", "type": "int", "min": 100, "max": 120000},
-    {"key": "gateway.default_max_fallback_hops", "type": "int", "min": 0, "max": 10},
-    {"key": RUNTIME_CONFIG_GATEWAY_MCP_SERVERS_JSON, "type": "json_list", "required_fields": ["server_id", "base_url"]},
-    {"key": RUNTIME_CONFIG_GATEWAY_MCP_DEFAULT_TIMEOUT_SECONDS, "type": "float", "min": 0.5, "max": 30.0},
-    {
-        "key": "cost.model_token_rates_json",
-        "type": "json_object",
-        "required_fields": ["default"],
-        "default_required_fields": ["input_cents_per_1k", "output_cents_per_1k"],
-    },
-    {
-        "key": "cost.cloud_component_multipliers_json",
-        "type": "json_object",
-        "required_fields": ["provider_type", "endpoint_family"],
-    },
-    {
-        "key": RUNTIME_CONFIG_COST_PROVIDER_DISCOUNTS_JSON,
-        "type": "json_object",
-        "required_fields": ["provider_type", "models"],
-    },
-    {"key": "workload_identity.default_expires_in_seconds", "type": "int", "min": 60, "max": 86400},
-    {"key": "workload_identity.default_http_timeout_seconds", "type": "float", "min": 0.1, "max": 120.0},
-    {"key": RUNTIME_CONFIG_WORKLOAD_IDENTITY_EXPOSE_ACCESS_TOKEN, "type": "boolean_like"},
-    {"key": "auth.policy.revisions_default_limit", "type": "int", "min": 1, "max": 200},
-    {"key": "auth.login.max_failed_attempts", "type": "int", "min": 1, "max": 20},
-    {"key": "auth.login.lockout_minutes", "type": "int", "min": 1, "max": 240},
-    {"key": RUNTIME_CONFIG_SECURITY_CORS_ALLOW_ORIGINS_CSV, "type": "csv_origins", "allow_wildcard": False},
-    {"key": "observability.logs.default_limit", "type": "int", "min": 1, "max": 500},
-    {"key": "observability.schema.default_sample_size", "type": "int", "min": 1, "max": 1000},
-    {"key": "compliance.control_catalog_json", "type": "json_object", "value_type": "string"},
-    {"key": "compliance.default_control_mappings_json", "type": "json_object", "value_type": "mapping_object"},
-    {"key_pattern": r"^ui\.feature\.[a-z0-9-]+\.enabled(?:\.[a-z0-9-]+)?$", "type": "boolean_like"},
-]
+logger = get_logger(__name__)
 
 
 class RuntimeConfigUpsertRequest(BaseModel):
@@ -74,15 +55,18 @@ class RuntimeConfigValidateRequest(BaseModel):
     config_value: str = Field(min_length=1, max_length=524288)
 
 
-SENSITIVE_RUNTIME_CONFIG_KEYS = {
-    "cost.model_token_rates_json",
-    "cost.cloud_component_multipliers_json",
-    RUNTIME_CONFIG_COST_PROVIDER_DISCOUNTS_JSON,
-    "compliance.control_catalog_json",
-    "compliance.default_control_mappings_json",
-    RUNTIME_CONFIG_WORKLOAD_IDENTITY_EXPOSE_ACCESS_TOKEN,
-    RUNTIME_CONFIG_GATEWAY_MCP_SERVERS_JSON,
-}
+class RuntimeConfigValidationRuleUpsertRequest(BaseModel):
+    key: Optional[str] = None
+    key_pattern: Optional[str] = None
+    type: str = Field(min_length=1)
+    min: Optional[float] = None
+    max: Optional[float] = None
+    required_fields: Optional[list[str]] = None
+    default_required_fields: Optional[list[str]] = None
+    value_type: Optional[str] = None
+    allow_wildcard: Optional[bool] = None
+    example_value: Optional[str] = None
+    description: Optional[str] = None
 
 
 def _required_runtime_config_approver_role(ctx: ActorContext) -> Optional[str]:
@@ -338,7 +322,61 @@ def _validate_mcp_default_timeout_seconds(raw: str) -> Optional[str]:
     return _validate_float_range(raw, 0.5, 30.0, "gateway.mcp.default_timeout_seconds")
 
 
-def validate_runtime_config_value(config_key: str, config_value: str) -> Optional[str]:
+def _validate_cache_default_mode(raw: str) -> Optional[str]:
+    mode = raw.strip().lower()
+    if mode not in {"exact", "semantic"}:
+        return "gateway.cache.default_mode must be exact or semantic"
+    return None
+
+
+def _special_key_validators() -> dict:
+    return {
+        "rate_limit.rules_exact_json": lambda value: _validate_rate_limit_rules(value, wildcard=False),
+        "rate_limit.rules_wildcard_json": lambda value: _validate_rate_limit_rules(value, wildcard=True),
+        RUNTIME_CONFIG_GATEWAY_MCP_SERVERS_JSON: validate_mcp_servers_json,
+        RUNTIME_CONFIG_GATEWAY_MCP_DEFAULT_TIMEOUT_SECONDS: _validate_mcp_default_timeout_seconds,
+        RUNTIME_CONFIG_GATEWAY_VECTOR_STORES_JSON: validate_vector_stores_json,
+        RUNTIME_CONFIG_GATEWAY_NOTIFICATION_CHANNELS_JSON: validate_notification_channels_json,
+        RUNTIME_CONFIG_ORCHESTRATION_DATA_CONNECTIONS_JSON: validate_data_connections_json,
+        RUNTIME_CONFIG_GATEWAY_CACHE_DEFAULT_MODE: _validate_cache_default_mode,
+        "cost.model_token_rates_json": _validate_cost_model_token_rates,
+        "cost.cloud_component_multipliers_json": _validate_cost_cloud_component_multipliers,
+        RUNTIME_CONFIG_COST_PROVIDER_DISCOUNTS_JSON: _validate_cost_provider_discounts,
+        RUNTIME_CONFIG_SECURITY_CORS_ALLOW_ORIGINS_CSV: _validate_cors_allow_origins_csv,
+        "compliance.control_catalog_json": _validate_control_catalog,
+        "compliance.default_control_mappings_json": _validate_control_mappings,
+    }
+
+
+def _validate_using_catalog_rule(config_key: str, config_value: str, rule: dict) -> Optional[str]:
+    special = _special_key_validators().get(config_key)
+    if special:
+        return special(config_value)
+
+    rule_type = str(rule.get("type") or "").strip().lower()
+    if rule_type == "int":
+        return _validate_int_range(config_value, int(rule["min"]), int(rule["max"]), config_key)
+    if rule_type == "float":
+        return _validate_float_range(config_value, float(rule["min"]), float(rule["max"]), config_key)
+    if rule_type == "boolean_like":
+        if _parse_bool(config_value) is None:
+            return f"{config_key} must be boolean-like (true/false/1/0)"
+        return None
+    if rule_type == "csv_origins":
+        if rule.get("allow_wildcard") is False:
+            return _validate_cors_allow_origins_csv(config_value)
+        origins = [item.strip() for item in config_value.split(",") if item.strip()]
+        if not origins:
+            return f"{config_key} must include at least one origin"
+        for origin in origins:
+            parsed = urlparse(origin)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                return f"Invalid origin format for {origin}"
+        return None
+    return None
+
+
+def validate_runtime_config_value(config_key: str, config_value: str, db: Optional[Session] = None) -> Optional[str]:
     key = config_key.strip()
     value = config_value.strip()
 
@@ -347,55 +385,14 @@ def validate_runtime_config_value(config_key: str, config_value: str) -> Optiona
     if not value:
         return "config_value cannot be empty"
 
-    if key == "rate_limit.rules_exact_json":
-        return _validate_rate_limit_rules(value, wildcard=False)
-    if key == "rate_limit.rules_wildcard_json":
-        return _validate_rate_limit_rules(value, wildcard=True)
-    if key == "rate_limit.rules_refresh_seconds":
-        return _validate_int_range(value, 1, 3600, "rate_limit.rules_refresh_seconds")
-    if key == "gateway.default_global_timeout_ms":
-        return _validate_int_range(value, 100, 120000, "gateway.default_global_timeout_ms")
-    if key == "gateway.default_max_fallback_hops":
-        return _validate_int_range(value, 0, 10, "gateway.default_max_fallback_hops")
-    if key == RUNTIME_CONFIG_GATEWAY_MCP_SERVERS_JSON:
-        return validate_mcp_servers_json(value)
-    if key == RUNTIME_CONFIG_GATEWAY_MCP_DEFAULT_TIMEOUT_SECONDS:
-        return _validate_mcp_default_timeout_seconds(value)
-    if key == "cost.model_token_rates_json":
-        return _validate_cost_model_token_rates(value)
-    if key == "cost.cloud_component_multipliers_json":
-        return _validate_cost_cloud_component_multipliers(value)
-    if key == RUNTIME_CONFIG_COST_PROVIDER_DISCOUNTS_JSON:
-        return _validate_cost_provider_discounts(value)
-    if key == "workload_identity.default_expires_in_seconds":
-        return _validate_int_range(value, 60, 86400, "workload_identity.default_expires_in_seconds")
-    if key == "workload_identity.default_http_timeout_seconds":
-        return _validate_float_range(value, 0.1, 120.0, "workload_identity.default_http_timeout_seconds")
-    if key == RUNTIME_CONFIG_WORKLOAD_IDENTITY_EXPOSE_ACCESS_TOKEN:
-        if _parse_bool(value) is None:
-            return "workload_identity.expose_access_token must be boolean-like (true/false/1/0)"
-        return None
-    if key == "auth.policy.revisions_default_limit":
-        return _validate_int_range(value, 1, 200, "auth.policy.revisions_default_limit")
-    if key == "auth.login.max_failed_attempts":
-        return _validate_int_range(value, 1, 20, "auth.login.max_failed_attempts")
-    if key == "auth.login.lockout_minutes":
-        return _validate_int_range(value, 1, 240, "auth.login.lockout_minutes")
-    if key == RUNTIME_CONFIG_SECURITY_CORS_ALLOW_ORIGINS_CSV:
-        return _validate_cors_allow_origins_csv(value)
-    if key == "observability.logs.default_limit":
-        return _validate_int_range(value, 1, 500, "observability.logs.default_limit")
-    if key == "observability.schema.default_sample_size":
-        return _validate_int_range(value, 1, 1000, "observability.schema.default_sample_size")
-    if key == "compliance.control_catalog_json":
-        return _validate_control_catalog(value)
-    if key == "compliance.default_control_mappings_json":
-        return _validate_control_mappings(value)
+    rules = list_validation_rules(db) if db is not None else BUILTIN_VALIDATION_RULES
+    rule = find_rule_for_key(rules, key)
+    if rule:
+        return _validate_using_catalog_rule(key, value, rule)
 
-    if re.match(r"^ui\.feature\.[a-z0-9-]+\.enabled(?:\.[a-z0-9-]+)?$", key):
-        if _parse_bool(value) is None:
-            return "ui.feature.* values must be boolean-like (true/false/1/0)"
-        return None
+    special = _special_key_validators().get(key)
+    if special:
+        return special(value)
 
     return None
 
@@ -407,8 +404,12 @@ def validate_runtime_config(
     ctx: ActorContext = Depends(get_actor_context),
 ):
     require_role(ctx, RUNTIME_CONFIG_ADMIN_ROLES)
+    logger.trace(
+        "runtime_config_validate_start %s",
+        sanitize_fields({"actor_id": ctx.actor_id, "config_key": payload.config_key}),
+    )
     normalized_key = payload.config_key.strip()
-    error = validate_runtime_config_value(normalized_key, payload.config_value)
+    error = validate_runtime_config_value(normalized_key, payload.config_value, db)
     create_audit_event(
         db,
         actor_id=ctx.actor_id,
@@ -419,6 +420,10 @@ def validate_runtime_config(
         decision_outcome="warn" if error else "allow",
     )
     db.commit()
+    logger.info(
+        "runtime_config_validate_completed %s",
+        sanitize_fields({"actor_id": ctx.actor_id, "config_key": normalized_key, "valid": error is None}),
+    )
     if error:
         return {"valid": False, "error": error, "config_key": normalized_key}
     return {"valid": True, "error": None, "config_key": normalized_key}
@@ -439,7 +444,69 @@ def get_runtime_config_validation_rules(
         trace_id="trace-runtime-config-validation-rules",
     )
     db.commit()
-    return {"rules": RUNTIME_CONFIG_VALIDATION_RULES}
+    return {"rules": list_validation_rules(db)}
+
+
+@router.post("/runtime-config/validation-rules")
+def create_runtime_config_validation_rule(
+    payload: RuntimeConfigValidationRuleUpsertRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, RUNTIME_CONFIG_SUPER_ADMIN_ROLES)
+    rule = upsert_validation_rule(db, None, payload.model_dump(exclude_none=True), ctx.actor_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="runtime_config.validation_rules.create",
+        resource_type="runtime_config",
+        resource_id=rule["rule_id"],
+        trace_id=f"trace-runtime-config-validation-rule-create-{rule['rule_id']}",
+    )
+    db.commit()
+    return rule
+
+
+@router.put("/runtime-config/validation-rules/{rule_id}")
+def update_runtime_config_validation_rule(
+    rule_id: str,
+    payload: RuntimeConfigValidationRuleUpsertRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, RUNTIME_CONFIG_SUPER_ADMIN_ROLES)
+    rule = upsert_validation_rule(db, rule_id.strip(), payload.model_dump(exclude_none=True), ctx.actor_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="runtime_config.validation_rules.update",
+        resource_type="runtime_config",
+        resource_id=rule["rule_id"],
+        trace_id=f"trace-runtime-config-validation-rule-update-{rule['rule_id']}",
+    )
+    db.commit()
+    return rule
+
+
+@router.delete("/runtime-config/validation-rules/{rule_id}")
+def delete_runtime_config_validation_rule(
+    rule_id: str,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, RUNTIME_CONFIG_SUPER_ADMIN_ROLES)
+    normalized_rule_id = rule_id.strip()
+    delete_validation_rule(db, normalized_rule_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="runtime_config.validation_rules.delete",
+        resource_type="runtime_config",
+        resource_id=normalized_rule_id,
+        trace_id=f"trace-runtime-config-validation-rule-delete-{normalized_rule_id}",
+    )
+    db.commit()
+    return {"deleted": True, "rule_id": normalized_rule_id}
 
 
 @router.get("/runtime-config")
@@ -478,15 +545,19 @@ def upsert_runtime_config(
     ctx: ActorContext = Depends(get_actor_context),
 ):
     require_role(ctx, RUNTIME_CONFIG_ADMIN_ROLES)
+    logger.trace(
+        "runtime_config_upsert_start %s",
+        sanitize_fields({"actor_id": ctx.actor_id, "config_key": config_key}),
+    )
     normalized_key = config_key.strip()
     if not normalized_key:
-        raise HTTPException(status_code=422, detail="config_key cannot be empty")
+        raise api_validation_error("config_key cannot be empty", decision_trace_id="runtime-config-key-empty", status_code=422)
 
     _require_sensitive_runtime_config_approval(ctx, normalized_key)
 
-    validation_error = validate_runtime_config_value(normalized_key, payload.config_value)
-    if validation_error:
-        raise HTTPException(status_code=400, detail=validation_error)
+    validation_message = validate_runtime_config_value(normalized_key, payload.config_value, db)
+    if validation_message:
+        raise api_validation_error(validation_message, decision_trace_id="runtime-config-validation")
 
     row = db.query(RuntimeConfig).filter_by(config_key=normalized_key).first()
     if not row:
@@ -523,6 +594,10 @@ def upsert_runtime_config(
         trace_id=f"trace-runtime-config-cache-{normalized_key}",
     )
     db.commit()
+    logger.info(
+        "runtime_config_upsert_completed %s",
+        sanitize_fields({"actor_id": ctx.actor_id, "config_key": normalized_key}),
+    )
 
     return {
         "config_key": row.config_key,
@@ -540,11 +615,15 @@ def delete_runtime_config(
     ctx: ActorContext = Depends(get_actor_context),
 ):
     require_role(ctx, RUNTIME_CONFIG_ADMIN_ROLES)
+    logger.trace(
+        "runtime_config_delete_start %s",
+        sanitize_fields({"actor_id": ctx.actor_id, "config_key": config_key}),
+    )
     normalized_key = config_key.strip()
     _require_sensitive_runtime_config_approval(ctx, normalized_key)
     row = db.query(RuntimeConfig).filter_by(config_key=normalized_key).first()
     if not row:
-        raise HTTPException(status_code=404, detail="Runtime config not found")
+        raise not_found_error("runtime_config", normalized_key, decision_trace_id="runtime-config-not-found")
 
     db.delete(row)
     invalidate_runtime_config_cache(normalized_key)

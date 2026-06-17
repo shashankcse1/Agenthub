@@ -18,11 +18,60 @@ from app.router_constants import (
     SUPPORTED_MODULE_PERMISSIONS,
 )
 from app.schemas import AgentModuleActionRequest, ModuleDeprecateRequest, ModuleRegisterRequest, ModuleResponse
+from app.schemas import ModuleIntegrationSyncRequest, ModuleIntegrationSyncResponse
 from app.security import ActorContext, get_actor_context, require_role
 from app.services.audit import create_audit_event
 
 router = APIRouter()
 logger = get_logger(__name__)
+AI_SKILL_MODULE_TYPES = {"ai_skill", "skill"}
+SUPPORTED_MODULE_INTEGRATION_PROVIDERS = {"", "cursor", "github", "gitlab", "aws", "azure", "gcp"}
+CURSOR_INTEGRATION_REFERENCE_PREFIX = "cursor://workspace/"
+
+
+def _normalize_integration_reference(reference: str) -> str:
+    return (reference or "").strip()
+
+
+def _is_integration_reference_valid(provider: str, reference: str) -> bool:
+    normalized_provider = (provider or "").strip().lower()
+    normalized_reference = _normalize_integration_reference(reference)
+    if normalized_provider != "cursor":
+        return True
+    return normalized_reference.startswith(CURSOR_INTEGRATION_REFERENCE_PREFIX)
+
+
+def _validate_integration_reference(provider: str, reference: str) -> None:
+    if not _is_integration_reference_valid(provider, reference):
+        raise HTTPException(
+            status_code=400,
+            detail=f"integration_reference for cursor must start with '{CURSOR_INTEGRATION_REFERENCE_PREFIX}'",
+        )
+
+
+def _sanitize_integration_reference_for_response(provider: str, reference: str) -> str:
+    normalized_reference = _normalize_integration_reference(reference)
+    if not normalized_reference:
+        return ""
+    if _is_integration_reference_valid(provider, normalized_reference):
+        return normalized_reference
+    return ""
+
+
+def _module_response_payload(module: ModuleDefinition) -> dict:
+    payload = ModuleResponse.model_validate(module, from_attributes=True).model_dump()
+    sanitized_reference = _sanitize_integration_reference_for_response(
+        payload.get("integration_provider", ""),
+        payload.get("integration_reference", ""),
+    )
+    if (
+        (payload.get("integration_provider", "").strip().lower() == "cursor")
+        and payload.get("integration_reference", "").strip()
+        and not sanitized_reference
+    ):
+        payload["integration_sync_status"] = "invalid_reference"
+    payload["integration_reference"] = sanitized_reference
+    return payload
 
 
 def _parse_permissions(required_permissions: str) -> list[str]:
@@ -42,6 +91,7 @@ def _validate_module_register_payload(payload: ModuleRegisterRequest) -> None:
     signature = payload.artifact_signature.strip()
     provenance = payload.provenance_ref.strip()
     review_ticket = payload.security_review_ticket.strip()
+    integration_provider = payload.integration_provider.strip().lower()
 
     if not signature.startswith("sig:"):
         raise HTTPException(status_code=400, detail="artifact_signature must start with 'sig:'")
@@ -50,8 +100,13 @@ def _validate_module_register_payload(payload: ModuleRegisterRequest) -> None:
     if payload.module_type.lower() in REVIEW_REQUIRED_MODULE_TYPES and not review_ticket:
         raise HTTPException(
             status_code=400,
-            detail="security_review_ticket is required for runtime, gateway, and security modules",
+            detail="security_review_ticket is required for runtime, gateway, security, and ai_skill modules",
         )
+    if integration_provider not in SUPPORTED_MODULE_INTEGRATION_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported integration_provider")
+    if integration_provider and not payload.integration_reference.strip():
+        raise HTTPException(status_code=400, detail="integration_reference is required when integration_provider is set")
+    _validate_integration_reference(integration_provider, payload.integration_reference)
     _parse_permissions(payload.required_permissions)
 
 
@@ -108,6 +163,9 @@ def register_module(
         artifact_signature=payload.artifact_signature,
         provenance_ref=payload.provenance_ref,
         security_review_ticket=payload.security_review_ticket,
+        integration_provider=payload.integration_provider.strip().lower(),
+        integration_reference=_normalize_integration_reference(payload.integration_reference),
+        integration_sync_status="pending" if payload.integration_provider.strip() else "not_configured",
         status="active",
     )
     db.add(module)
@@ -125,7 +183,7 @@ def register_module(
         "modules_register_completed %s",
         sanitize_fields({"actor_id": ctx.actor_id, "module_id": module.module_id}),
     )
-    return module
+    return _module_response_payload(module)
 
 
 @router.get("/modules", response_model=list[ModuleResponse])
@@ -134,7 +192,21 @@ def list_modules(
     ctx: ActorContext = Depends(get_actor_context),
 ):
     require_role(ctx, MODULE_READ_ROLES)
-    return db.query(ModuleDefinition).all()
+    return [_module_response_payload(module) for module in db.query(ModuleDefinition).all()]
+
+
+@router.get("/modules/skills", response_model=list[ModuleResponse])
+def list_ai_skill_modules(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, MODULE_READ_ROLES)
+    rows = (
+        db.query(ModuleDefinition)
+        .filter(ModuleDefinition.module_type.in_(AI_SKILL_MODULE_TYPES))
+        .all()
+    )
+    return [_module_response_payload(module) for module in rows]
 
 
 @router.get("/modules/{module_id}/versions")
@@ -286,4 +358,50 @@ def deprecate_module(
         "modules_deprecate_completed %s",
         sanitize_fields({"actor_id": ctx.actor_id, "module_id": module.module_id}),
     )
-    return module
+    return _module_response_payload(module)
+
+
+@router.post("/modules/{module_id}/integration/sync", response_model=ModuleIntegrationSyncResponse)
+def sync_module_integration(
+    module_id: str,
+    payload: ModuleIntegrationSyncRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, MODULE_ADMIN_ROLES)
+    module = db.query(ModuleDefinition).filter_by(module_id=module_id).first()
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    if not (module.integration_provider or "").strip():
+        raise HTTPException(status_code=409, detail="Integration provider is not configured for this module")
+
+    effective_reference = (
+        payload.integration_reference
+        if payload.integration_reference is not None
+        else module.integration_reference
+    )
+    _validate_integration_reference(module.integration_provider, effective_reference)
+
+    if payload.integration_reference is not None:
+        module.integration_reference = _normalize_integration_reference(payload.integration_reference)
+
+    module.integration_sync_status = "synced"
+    module.integration_last_synced_at = datetime.utcnow()
+
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="modules.integration.sync",
+        resource_type="module",
+        resource_id=module.module_id,
+        trace_id=f"trace-{module.module_id}-integration-sync",
+    )
+    db.commit()
+    db.refresh(module)
+    return {
+        "module_id": module.module_id,
+        "integration_provider": module.integration_provider,
+        "integration_reference": module.integration_reference,
+        "integration_sync_status": module.integration_sync_status,
+        "integration_last_synced_at": module.integration_last_synced_at,
+    }

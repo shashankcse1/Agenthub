@@ -35,6 +35,7 @@ class RuntimeConfigCache:
         self._redis_recovery_successes = 0
         self._redis_last_recovery_unix = 0.0
         self._redis_last_error = ""
+        self._last_touch_unix: float = 0.0
         self._memory: dict[str, tuple[str, float]] = {}
         self._memory_lock = Lock()
 
@@ -61,17 +62,23 @@ class RuntimeConfigCache:
         return self._ttl_seconds
 
     def runtime_status(self) -> dict[str, object]:
+        degraded = self._configured_backend == "redis" and self._backend != "redis"
         return {
+            "status": "degraded" if degraded else "ok",
             "configured_backend": self._configured_backend,
             "active_backend": self._backend,
             "ttl_seconds": self._ttl_seconds,
-            "degraded": self._configured_backend == "redis" and self._backend != "redis",
+            "last_refresh": self._last_touch_unix or None,
+            "degraded": degraded,
             "redis_retry_seconds": self._redis_retry_seconds,
             "redis_recovery_attempts": self._redis_recovery_attempts,
             "redis_recovery_successes": self._redis_recovery_successes,
             "redis_last_recovery_unix": self._redis_last_recovery_unix,
             "redis_last_error": self._redis_last_error,
         }
+
+    def _touch(self) -> None:
+        self._last_touch_unix = time()
 
     def _try_initialize_redis_client(self) -> bool:
         if self._redis is not None:
@@ -126,6 +133,7 @@ class RuntimeConfigCache:
                 value = self._redis.get(self._redis_key(key))
                 if value is None:
                     return None
+                self._touch()
                 return str(value)
             except Exception:
                 logger.warning(
@@ -143,6 +151,7 @@ class RuntimeConfigCache:
             if expires_at <= now:
                 self._memory.pop(key, None)
                 return None
+            self._touch()
             return value
 
     def set(self, key: str, value: str) -> None:
@@ -152,6 +161,7 @@ class RuntimeConfigCache:
                 if self._redis is None:
                     raise RuntimeError("runtime config cache redis client unavailable")
                 self._redis.setex(self._redis_key(key), self._ttl_seconds, value)
+                self._touch()
                 return
             except Exception:
                 logger.warning(
@@ -163,6 +173,7 @@ class RuntimeConfigCache:
         expires_at = monotonic() + float(self._ttl_seconds)
         with self._memory_lock:
             self._memory[key] = (value, expires_at)
+        self._touch()
 
     def delete(self, key: str) -> None:
         self._try_recover_redis_backend()
@@ -171,6 +182,7 @@ class RuntimeConfigCache:
                 if self._redis is None:
                     raise RuntimeError("runtime config cache redis client unavailable")
                 self._redis.delete(self._redis_key(key))
+                self._touch()
             except Exception:
                 logger.warning(
                     "runtime_config_cache_redis_delete_failed_fallback %s",
@@ -180,6 +192,7 @@ class RuntimeConfigCache:
 
         with self._memory_lock:
             self._memory.pop(key, None)
+        self._touch()
 
 
 

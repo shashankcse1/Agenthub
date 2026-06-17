@@ -1,7 +1,41 @@
 # Architecture Document
 
-Date: 2026-06-02
+Date: 2026-06-09
 System: Enterprise Multi-Agent Platform
+
+## 0. Recent Delivery Sync (2026-06-12)
+
+1. Frontend clean-architecture component slice:
+- Shared JS modules (`constants`, `api-client`, `api-cache`, `ui-coverage`, `platform-status`, `operator-feedback`) load before `app.js`; Gap gating, boot GET dedupe, operational banners, and feedback capture are componentized without a build step.
+- Lazy view loading via `view-loader.js` hydrates only `overview` at boot; other consoles load on first navigation.
+
+2. Governance and platform operator experience:
+- `GET /governance/ui-coverage*` reports backend-vs-frontend gaps; `GET /platform/operational-status` and `/platform/feedback*` support maintenance/slow/downtime banners and operator feedback analytics with triage actions.
+- Domain constants (`backend/app/domain_constants.py`) and runtime-config keys centralize discovery, observability, and platform UX thresholds.
+
+3. Runtime config cache observability:
+- `GET /health` exposes `runtime_config_cache` posture for cloud operators without leaking secret values.
+
+4. Discovery operator UX:
+- Source topology uses horizontal-scroll layout with clickable nodes; agent-ops trace sources use functional labels and Observability pivot from Discovery.
+
+## 0.1 Prior Delivery Sync (2026-06-10)
+
+The architecture baseline now includes these delivered governance-depth capabilities:
+
+1. Realtime/media transport governance depth in gateway compatibility layer:
+- Inline-binary stream policy controls now include event-type allowlists, dedicated inline byte caps, and optional correlation-id requirements, enforced at realtime session ingest.
+- Existing production dual-approval semantics for inline binary operations remain mandatory.
+
+2. Prompt and quality operations governance depth:
+- Prompt promotion now includes stricter release discipline and validation workflow depth.
+- Quality triage and escalation lifecycle controls include operator-grade queueing, SLA-based progression, and auditable notification handoff metadata.
+
+3. Model catalog governance depth:
+- Supported-model catalog now includes recommendation explainability metadata plus approval/version progression controls suitable for CISO and security-architecture review.
+
+4. External observability sink productization:
+- Gateway external callbacks now support sink-specific routing metadata and correlation preset policy controls for downstream audit and incident triage workflows.
 
 ## 1. Architectural Goals
 
@@ -592,6 +626,8 @@ Run rolling-baseline and spike detectors for sudden token or tool cost jumps.
 26. AgenticReadinessRecord
 27. WorkloadIdentityFederationProfile
 28. SecretProviderConfig
+29. SecretProviderStoredValue (encrypted db-type secret material keyed by provider + secret_ref)
+30. SecretProviderLease
 
 ## 9. API Architecture
 
@@ -842,7 +878,7 @@ Core connectors, normalization, matching, and review queue.
 Token exchange, gateways, and actor-chain propagation.
 
 4. Security integrations
-Workload identity provider setup (STS adapter optional), secret provider onboarding (HashiCorp adapter optional), and lease health observability.
+Workload identity provider setup (STS adapter optional), unified secret provider onboarding (`db` platform-encrypted store, Vault/AWS/Azure adapters), gateway cursor secret binding, and lease health observability.
 
 5. Reliability, governance, and cost intelligence
 Checkpoint/resume, benchmarks, scans, progressive rollout, real-time cost tracking.
@@ -1200,7 +1236,7 @@ Control mapping update and evidence references attached.
 
 ### 22.8 Phase 1 implementation order by service
 
-1. Service 1: Discovery connector runtime and normalization pipeline.
+1. Service 1: Discovery connector runtime and normalization pipeline (including cloud product connectors).
 Dependencies: source auth integration and event bus contracts.
 
 2. Service 2: Gateway compatibility and key services.
@@ -1209,7 +1245,7 @@ Dependencies: service 1 discovery metadata and policy decision APIs.
 3. Service 3: Workload identity and secret provider adapters.
 Dependencies: gateway key service, policy store, audit pipeline.
 
-4. Service 4: Discovery and gateway UI projection APIs.
+4. Service 4: Discovery, modules (AI skills), and gateway UI projection APIs.
 Dependencies: services 1-3 for health, parity, and control evidence views.
 
 ### 22.9 Phase 2 implementation order by service

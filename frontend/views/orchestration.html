@@ -12,11 +12,13 @@
       </div>
     </div>
     <p id="orchestrationConsoleSummary" class="flow-console-summary" aria-live="polite">Create a new flow or open one from the sidebar to get started.</p>
+    <div id="orchestrationPlatformSummary" class="flow-platform-summary-grid" aria-live="polite"></div>
     <ol id="orchestrationWorkflowGuide" class="flow-workflow-guide" aria-label="Recommended workflow"></ol>
     <div class="runtime-console-tabs flow-studio-tabs" role="tablist" aria-label="Flow orchestration sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="studio">Studio</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="flows">All flows</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="runs">History</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="audit">Audit</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="approvals">Approvals</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="security">Security</button>
     </div>
@@ -46,6 +48,10 @@
               <option value="webhook">Webhook event</option>
             </select>
           </label>
+          <label id="orchestrationToolbarScheduleWrap" class="flow-toolbar-select-wrap" hidden>
+            <span class="flow-field-label">Cron schedule</span>
+            <input id="orchestrationToolbarCron" type="text" placeholder="0 9 * * *" autocomplete="off" aria-label="Cron expression" />
+          </label>
         </div>
         <div class="flow-studio-toolbar-center flow-zoom-cluster" aria-label="Canvas zoom">
           <button id="orchestrationZoomOut" type="button" class="ghost flow-icon-btn" title="Zoom out" aria-label="Zoom out">−</button>
@@ -55,8 +61,8 @@
         </div>
         <div class="flow-studio-toolbar-right">
           <div class="flow-toolbar-action-group">
-            <button id="orchestrationDataMappingToolbar" type="button" class="ghost flow-data-map-toolbar-btn" title="Data mapping reference — how to pass data between steps" aria-label="Data mapping reference">
-              <span class="flow-data-map-icon" aria-hidden="true">⇄</span> Data map
+            <button id="orchestrationDataMappingToolbar" type="button" class="ghost flow-data-map-toolbar-btn" title="Variable mapping guide — URL, JSON, input, and output parameters" aria-label="Variable mapping guide">
+              <span class="flow-data-map-icon" aria-hidden="true">⇄</span> Variable map
             </button>
             <button id="validateOrchestrationFlow" type="button" class="ghost" title="Check flow for errors">Check flow</button>
             <button id="runOrchestrationFlowDry" type="button" class="ghost" title="Simulate without side effects">Test</button>
@@ -166,12 +172,12 @@
           <div class="flow-studio-inspector-head">
             <h4 id="orchestrationInspectorTitle">Flow settings</h4>
             <div class="flow-inspector-head-actions">
-              <button id="orchestrationDataMappingInspector" type="button" class="flow-btn-icon ghost flow-data-map-btn-head" title="Data mapping for this step" aria-label="Data mapping reference">⇄</button>
+              <button id="orchestrationDataMappingInspector" type="button" class="flow-btn-icon ghost flow-data-map-btn-head" title="Variable mapping for this step" aria-label="Variable mapping guide">⇄</button>
               <button id="orchestrationInspectorClose" type="button" class="flow-btn-icon ghost" title="Back to flow settings" hidden aria-label="Close node settings">←</button>
             </div>
           </div>
           <p id="orchestrationInspectorHint" class="flow-inspector-hint">Configure how this flow runs and who can approve it.</p>
-          <div id="orchestrationDataMappingPanel" class="flow-data-mapping-panel" hidden role="dialog" aria-label="Data mapping reference"></div>
+          <div id="orchestrationDataMappingPanel" class="flow-data-mapping-panel" hidden role="dialog" aria-label="Variable mapping guide"></div>
           <div id="orchestrationInspectorPanel" class="flow-studio-inspector-body"></div>
         </aside>
       </div>
@@ -219,16 +225,63 @@
         <h4>Run history</h4>
         <button id="loadOrchestrationRunsFull" class="ghost" type="button">Refresh</button>
       </div>
-      <p class="card-lead">Execution history across saved workflows.</p>
+      <p class="card-lead">Execution history across saved workflows. Open a run to inspect the step timeline or pivot to Observability.</p>
+      <div class="flow-history-filters">
+        <label>Flow
+          <select id="orchestrationHistoryFlowFilter" aria-label="Filter runs by flow">
+            <option value="">All flows</option>
+          </select>
+        </label>
+        <label>Environment
+          <select id="orchestrationHistoryEnvFilter" aria-label="Filter runs by environment">
+            <option value="">All environments</option>
+            <option value="dev">Development</option>
+            <option value="staging">Staging</option>
+            <option value="prod">Production</option>
+          </select>
+        </label>
+      </div>
       <div class="table-wrap flow-table-scroll">
         <table class="flow-data-table">
           <thead>
-            <tr><th>Run ID</th><th>Status</th><th>Trace</th><th>Started</th><th>Finished</th><th></th></tr>
+            <tr><th>Run ID</th><th>Flow</th><th>Status</th><th>Trace</th><th>Started</th><th>Finished</th><th></th></tr>
           </thead>
           <tbody id="orchestrationRunsTable"></tbody>
         </table>
       </div>
       <div id="orchestrationRunDetailHistory" class="flow-run-detail flow-run-detail-history" aria-live="polite"></div>
+    </article>
+  </div>
+
+  <div data-console-panel="audit" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Flow audit trail</h4>
+        <button id="loadOrchestrationAudit" class="ghost" type="button">Refresh</button>
+      </div>
+      <p class="card-lead">Create, validate, approve, and run events for orchestration workflows. Filter by flow when reviewing a specific workflow.</p>
+      <div class="flow-history-filters">
+        <label>Flow
+          <select id="orchestrationAuditFlowFilter" aria-label="Filter audit by flow">
+            <option value="">All flows</option>
+          </select>
+        </label>
+        <label>Outcome
+          <select id="orchestrationAuditOutcomeFilter" aria-label="Filter audit by outcome">
+            <option value="">Any</option>
+            <option value="allow">allow</option>
+            <option value="deny">deny</option>
+          </select>
+        </label>
+      </div>
+      <div class="table-wrap flow-table-scroll">
+        <table class="flow-data-table">
+          <thead>
+            <tr><th>Time</th><th>Action</th><th>Flow</th><th>Actor</th><th>Run / trace</th><th>Outcome</th></tr>
+          </thead>
+          <tbody id="orchestrationAuditTable"></tbody>
+        </table>
+      </div>
     </article>
   </div>
 
@@ -285,6 +338,110 @@
       </div>
     </article>
 
+    <article class="card flow-iga-due-cert-card">
+      <div class="card-head">
+        <h4>Due certification queue</h4>
+        <button id="loadOrchestrationDueCertQueue" class="ghost" type="button">Refresh</button>
+      </div>
+      <p class="card-lead">Production runs require a current access policy certification. Recertify workflows when attestation is missing or expired.</p>
+      <form id="orchestrationDueCertFilters" class="flow-approval-filters" aria-label="Due certification filters">
+        <label>Environment
+          <select name="environment" id="orchestrationDueCertEnvFilter" aria-label="Filter due certifications by environment">
+            <option value="">All environments</option>
+            <option value="prod">Production only</option>
+            <option value="staging">Staging only</option>
+            <option value="dev">Development only</option>
+          </select>
+        </label>
+        <label>Reason
+          <select name="reason" id="orchestrationDueCertReasonFilter" aria-label="Filter due certifications by reason">
+            <option value="">All reasons</option>
+            <option value="never_certified">Never certified</option>
+            <option value="expired">Expired</option>
+          </select>
+        </label>
+        <button id="orchestrationDueCertPendingOnly" type="button" class="ghost flow-approval-quick-filter">Production due only</button>
+      </form>
+      <p id="orchestrationDueCertSummary" class="flow-table-count mono" aria-live="polite"></p>
+      <div class="table-wrap flow-table-scroll">
+        <table class="flow-data-table">
+          <caption class="sr-only">Flows due for access policy recertification</caption>
+          <thead>
+            <tr><th>Flow</th><th>Environment</th><th>Reason</th><th>Due / interval</th><th></th></tr>
+          </thead>
+          <tbody id="orchestrationDueCertQueueTable"></tbody>
+        </table>
+      </div>
+      <form id="orchestrationCertifyQueueForm" class="form-grid flow-certify-queue-form" hidden aria-label="Certify access policy from queue">
+        <input type="hidden" name="flow_id" />
+        <input type="hidden" name="environment" />
+        <p id="orchestrationCertifyQueueHint" class="card-lead">Select a flow from the queue to certify its access policy.</p>
+        <label class="wide-field">Attestation notes<textarea name="attestation_notes" rows="2" placeholder="Confirm owners, runners, and approvers are still correct"></textarea></label>
+        <div id="orchestrationCertifyQueueDualFields" class="flow-approval-dual-fields wide-field" hidden>
+          <p class="flow-approval-dual-note">Production certification requires a Platform Admin co-approver (unless you are Super Admin or Master Admin).</p>
+          <label>Co-approver role<input name="approver_role" value="Platform Admin" autocomplete="off" /></label>
+          <label>Co-approver ID<input name="approver_id" placeholder="platform-admin-1" autocomplete="off" /></label>
+        </div>
+        <button type="submit" class="primary">Certify access policy</button>
+      </form>
+      <div id="orchestrationDueCertFeedback" class="flow-status-toast is-empty" role="status" aria-live="polite"></div>
+    </article>
+
+    <article class="card flow-iga-jit-card">
+      <div class="card-head">
+        <h4>JIT access requests</h4>
+        <button id="loadOrchestrationJitQueue" class="ghost" type="button">Refresh</button>
+      </div>
+      <p class="card-lead">Review time-bound access exceptions when operators were denied run, approve, or manage actions.</p>
+      <form id="orchestrationJitQueueFilters" class="flow-approval-filters" aria-label="JIT access request filters">
+        <label>Status
+          <select name="status" id="orchestrationJitStatusFilter" aria-label="Filter JIT requests by status">
+            <option value="requested" selected>Pending approval</option>
+            <option value="approved">Approved</option>
+            <option value="denied">Denied</option>
+            <option value="">All statuses</option>
+          </select>
+        </label>
+        <label>Environment
+          <select name="environment" id="orchestrationJitEnvFilter" aria-label="Filter JIT requests by environment">
+            <option value="">All environments</option>
+            <option value="prod">Production only</option>
+            <option value="staging">Staging only</option>
+            <option value="dev">Development only</option>
+          </select>
+        </label>
+        <label>Flow ID<input name="flow_id" id="orchestrationJitFlowFilter" placeholder="Optional flow filter" autocomplete="off" /></label>
+      </form>
+      <p id="orchestrationJitQueueSummary" class="flow-table-count mono" aria-live="polite"></p>
+      <div class="table-wrap flow-table-scroll">
+        <table class="flow-data-table">
+          <caption class="sr-only">Just-in-time orchestration access requests</caption>
+          <thead>
+            <tr><th>Request</th><th>Flow</th><th>Requester</th><th>Action</th><th>Env</th><th>Status</th><th>Duration</th><th></th></tr>
+          </thead>
+          <tbody id="orchestrationJitQueueTable"></tbody>
+        </table>
+      </div>
+      <form id="orchestrationJitReviewForm" class="form-grid flow-jit-review-form" hidden aria-label="Review JIT access request">
+        <input type="hidden" name="request_id" />
+        <input type="hidden" name="environment" />
+        <p id="orchestrationJitReviewHint" class="card-lead">Select a pending request to approve or deny.</p>
+        <label>Decision
+          <select name="decision" aria-label="JIT access decision">
+            <option value="approve">Approve — grant time-bound access</option>
+            <option value="deny">Deny — keep policy enforcement</option>
+          </select>
+        </label>
+        <div id="orchestrationJitReviewDualFields" class="flow-approval-dual-fields wide-field" hidden>
+          <p class="flow-approval-dual-note">Production JIT approval requires a Platform Admin co-approver (unless you are Super Admin or Master Admin).</p>
+          <label>Co-approver role<input name="approver_role" value="Platform Admin" autocomplete="off" /></label>
+          <label>Co-approver ID<input name="approver_id" placeholder="platform-admin-1" autocomplete="off" /></label>
+        </div>
+        <button type="submit" class="primary">Submit JIT decision</button>
+      </form>
+      <div id="orchestrationJitQueueFeedback" class="flow-status-toast is-empty" role="status" aria-live="polite"></div>
+    </article>
+
     <article class="card flow-approval-review-card">
       <div class="card-head"><h4>Review decision</h4></div>
       <p id="orchestrationApprovalReviewHint" class="card-lead">Select a flow from the queue to approve or reject it.</p>
@@ -297,6 +454,12 @@
           </select>
         </label>
         <label>Ticket reference (optional)<input name="approval_ticket_ref" placeholder="e.g. CHANGE-1234" autocomplete="off" /></label>
+        <label id="orchestrationApprovalStageLabel" class="wide-field" hidden>Approval stage
+          <select name="stage_id" aria-label="Approval stage">
+            <option value="">— select stage —</option>
+          </select>
+        </label>
+        <div id="orchestrationStagedApprovalProgress" class="flow-staged-approval-progress wide-field" hidden aria-live="polite"></div>
         <div id="orchestrationApprovalDualFields" class="flow-approval-dual-fields wide-field" hidden>
           <p class="flow-approval-dual-note">Production sign-off requires a Platform Admin co-approver (unless you are Super Admin or Master Admin).</p>
           <label>Co-approver role<input name="approver_role" value="Platform Admin" autocomplete="off" /></label>
@@ -306,14 +469,128 @@
       </form>
       <p class="flow-approval-audit-note">Ticket references are recorded in the audit trail when you submit a decision.</p>
       <div id="orchestrationApprovalFeedback" class="flow-status-toast is-empty" role="status" aria-live="polite"></div>
+      <div id="orchestrationJitAccessPanel" class="flow-jit-access-panel" hidden>
+        <div class="card-head"><h4>Request JIT access</h4></div>
+        <p class="card-lead">When run is denied by policy, request time-bound access with justification.</p>
+        <form id="orchestrationJitAccessForm" class="form-grid">
+          <label>Action<select name="requested_action"><option value="run">Run</option><option value="approve">Approve</option><option value="manage">Manage</option></select></label>
+          <label>Duration (minutes)<input name="requested_duration_minutes" type="number" min="5" max="480" value="60" /></label>
+          <label class="wide-field">Justification<textarea name="justification" rows="2" placeholder="Why is temporary access needed?" required></textarea></label>
+          <button type="submit" class="primary">Submit JIT request</button>
+        </form>
+        <div id="orchestrationJitAccessFeedback" class="flow-status-toast is-empty" role="status" aria-live="polite"></div>
+      </div>
     </article>
   </div>
 
   <div data-console-panel="security" class="runtime-console-panel" hidden>
     <article class="card">
       <div class="card-head"><h4>Security overview</h4></div>
-      <p class="card-lead">Policies that protect production runs. Your admin configures allowlists in Runtime Config.</p>
+      <p class="card-lead">Platform policies plus per-flow access: who may design, run, schedule, and approve this workflow. IGA controls cover SoD, certification, staged approvals, JIT access, and entitlement linkage.</p>
+      <div id="orchestrationIgaPosturePanel" class="flow-iga-posture-panel" aria-live="polite"></div>
+      <p class="flow-iga-help">Full due-certification and JIT approver queues live on the <strong>Approvals</strong> tab.</p>
+      <div id="orchestrationIgaQueuesPanel" class="flow-iga-queues-panel" aria-live="polite"></div>
       <div id="orchestrationSecurityPanel" class="flow-security-grid" aria-live="polite"></div>
+    </article>
+    <article class="card flow-access-policy-card">
+      <div class="card-head">
+        <h4>Flow access policy</h4>
+        <div class="flow-access-policy-actions">
+          <button id="previewOrchestrationAccessPolicy" class="ghost" type="button">Preview resolved</button>
+          <button id="saveOrchestrationAccessPolicy" class="ghost" type="button">Save access policy</button>
+        </div>
+      </div>
+      <p class="card-lead">Assign users, directory groups, and teams. Use <code>resolve_from</code> in approver clauses for database or HTTP JSON dynamic scopes — load connections via <code>GET /orchestration/data-connections</code>.</p>
+      <div id="orchestrationDataConnectionsHint" class="flow-data-connections-hint" aria-live="polite"></div>
+      <article id="orchestrationDataConnectionTestPanel" class="card flow-data-connection-test-card">
+        <div class="card-head">
+          <h5>Data connection test query</h5>
+          <button id="testOrchestrationDataConnection" class="ghost" type="button">Run test query</button>
+        </div>
+        <form id="orchestrationDataConnectionTestForm" class="form-grid compact" aria-label="Orchestration data connection test query">
+          <label>
+            Connection
+            <select name="connection_id" id="orchestrationDataConnectionSelect" aria-label="Data connection">
+              <option value="platform">platform (built-in)</option>
+            </select>
+          </label>
+          <label>Preview limit<input name="preview_limit" type="number" min="1" max="50" step="1" value="10" /></label>
+          <label class="wide-field">
+            SQL (read-only)
+            <textarea name="sql" id="orchestrationDataConnectionSql" rows="4" placeholder="SELECT flow_id, flow_name FROM orchestration_flow_definitions LIMIT 5"></textarea>
+          </label>
+          <label class="wide-field">
+            Parameters (JSON)
+            <textarea name="parameters_json" id="orchestrationDataConnectionParameters" rows="3" placeholder='{"flow_id": "flow_..."}'></textarea>
+          </label>
+        </form>
+        <p id="orchestrationDataConnectionTestResult" class="mono flow-iga-muted" aria-live="polite"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Data connection test query preview rows</caption>
+            <thead id="orchestrationDataConnectionTestHead">
+              <tr><th>Column</th><th>Value</th></tr>
+            </thead>
+            <tbody id="orchestrationDataConnectionTestTable"></tbody>
+          </table>
+        </div>
+      </article>
+      <div id="orchestrationAccessPolicyPreview" class="flow-access-policy-preview" hidden></div>
+      <form id="orchestrationAccessPolicyForm" class="flow-access-policy-form" aria-label="Flow access policy">
+        <fieldset class="flow-access-fieldset">
+          <legend>Owners (create / edit / delete)</legend>
+          <label>Users <input name="owners_users" placeholder="user-1, user-2" autocomplete="off" /></label>
+          <label>Groups <input name="owners_groups" placeholder="flow-designers" autocomplete="off" /></label>
+          <label>Teams <input name="owners_teams" placeholder="platform-ops" autocomplete="off" /></label>
+          <label>Match <select name="owners_match"><option value="any">any listed</option><option value="all">all listed types</option></select></label>
+        </fieldset>
+        <fieldset class="flow-access-fieldset">
+          <legend>Runners (execute)</legend>
+          <label>Users <input name="runners_users" autocomplete="off" /></label>
+          <label>Groups <input name="runners_groups" autocomplete="off" /></label>
+          <label>Teams <input name="runners_teams" autocomplete="off" /></label>
+          <label>Match <select name="runners_match"><option value="any">any listed</option><option value="all">all listed types</option></select></label>
+        </fieldset>
+        <fieldset class="flow-access-fieldset">
+          <legend>Schedulers (schedule trigger)</legend>
+          <label>Users <input name="schedulers_users" autocomplete="off" /></label>
+          <label>Groups <input name="schedulers_groups" autocomplete="off" /></label>
+          <label>Teams <input name="schedulers_teams" autocomplete="off" /></label>
+          <label>Match <select name="schedulers_match"><option value="any">any listed</option><option value="all">all listed types</option></select></label>
+        </fieldset>
+        <fieldset class="flow-access-fieldset">
+          <legend>Approvers</legend>
+          <label>Mode
+            <select name="approvers_mode">
+              <option value="simple">Simple (clauses)</option>
+              <option value="staged">Staged (multi-level)</option>
+            </select>
+          </label>
+          <label>Combination <select name="approvers_match"><option value="any">any clause</option><option value="all">all clauses</option></select></label>
+          <label class="wide-field">Clauses (JSON array, simple mode)
+            <textarea name="approvers_clauses" rows="4" placeholder='[{"groups":["security-approvers"]},{"teams":["oncall"]}]'></textarea>
+          </label>
+          <label class="wide-field">Stages (JSON array, staged mode)
+            <textarea name="approvers_stages" rows="5" placeholder='[{"stage_id":"security","label":"Security review","match":"any","clauses":[{"groups":["security-approvers"]}]}]'></textarea>
+          </label>
+        </fieldset>
+        <fieldset class="flow-access-fieldset flow-iga-fieldset">
+          <legend>IGA (Identity Governance)</legend>
+          <p class="flow-iga-help">SoD rules default on in Production. Certification interval controls access-policy recertification due dates.</p>
+          <label><input type="checkbox" name="iga_sod_prevent_self_approval" checked /> Prevent self-approval</label>
+          <label><input type="checkbox" name="iga_sod_prevent_creator_as_approver" checked /> Prevent creator as approver</label>
+          <label><input type="checkbox" name="iga_sod_prevent_runner_as_approver_prod" checked /> Prevent runners approving prod</label>
+          <label><input type="checkbox" name="iga_sod_prevent_owner_as_sole_approver" checked /> Prevent owner as sole approver (prod)</label>
+          <label><input type="checkbox" name="iga_sod_require_dual_approval_prod" checked /> Require dual approval for prod approve</label>
+          <label>Recertify interval (days)<input name="iga_recertify_interval_days" type="number" min="1" max="365" value="90" /></label>
+          <label class="wide-field">Gateway entitlement ID (optional)
+            <input name="iga_entitlement_id" placeholder="ent-… or pick below" autocomplete="off" list="orchestrationEntitlementPicker" />
+            <datalist id="orchestrationEntitlementPicker"></datalist>
+          </label>
+          <button id="certifyOrchestrationAccessPolicy" type="button" class="ghost">Certify access policy</button>
+        </fieldset>
+      </form>
+      <div id="orchestrationAccessPolicyFeedback" class="flow-status-toast is-empty" role="status" aria-live="polite"></div>
     </article>
   </div>
 </section>

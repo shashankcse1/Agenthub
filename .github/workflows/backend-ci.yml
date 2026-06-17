@@ -35,12 +35,15 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      CI_POSTGRES_PASSWORD: ci-postgres-${{ github.run_id }}-${{ github.run_attempt }}
+
     services:
       postgres:
         image: postgres:16
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ env.CI_POSTGRES_PASSWORD }}
           POSTGRES_DB: postgres
         ports:
           - 5432:5432
@@ -51,7 +54,7 @@ jobs:
           --health-retries 5
 
     env:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/agenthub
+      DATABASE_URL: postgresql+psycopg://postgres:${{ env.CI_POSTGRES_PASSWORD }}@localhost:5432/agenthub
 
     defaults:
       run:
@@ -84,8 +87,8 @@ jobs:
 
       - name: Ensure test database exists
         run: |
-          PGPASSWORD=postgres psql -h localhost -U postgres -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'agenthub'" | grep -q 1 || \
-          PGPASSWORD=postgres psql -h localhost -U postgres -d postgres -c "CREATE DATABASE agenthub"
+          PGPASSWORD="$CI_POSTGRES_PASSWORD" psql -h localhost -U postgres -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'agenthub'" | grep -q 1 || \
+          PGPASSWORD="$CI_POSTGRES_PASSWORD" psql -h localhost -U postgres -d postgres -c "CREATE DATABASE agenthub"
 
       - name: Run migrations
         run: python -m alembic upgrade head
@@ -164,6 +167,24 @@ jobs:
             ${STRICT_FLAG}
           LATEST_BUNDLE="$(ls -td artifacts/release-evidence/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}_staging_* | head -n 1)"
           echo "RELEASE_BUNDLE_PATH=$LATEST_BUNDLE" >> "$GITHUB_ENV"
+
+      - name: Validate risk closure artifacts in release bundle
+        if: always()
+        run: |
+          if [[ -z "${RELEASE_BUNDLE_PATH:-}" || ! -d "${RELEASE_BUNDLE_PATH}" ]]; then
+            echo "Release bundle path missing: ${RELEASE_BUNDLE_PATH:-unset}"
+            exit 1
+          fi
+          test -f "${RELEASE_BUNDLE_PATH}/metadata/risk_closure_dashboard.txt"
+          test -f "${RELEASE_BUNDLE_PATH}/metadata/risk_closure_dashboard.json"
+          test -f "${RELEASE_BUNDLE_PATH}/metadata/release_decision_record.md"
+          test -f "${RELEASE_BUNDLE_PATH}/metadata/pending_closure_report.txt"
+          test -f "${RELEASE_BUNDLE_PATH}/metadata/pending_closure_report.json"
+          grep -q 'Overdue closure items count:' "${RELEASE_BUNDLE_PATH}/metadata/risk_closure_dashboard.txt"
+          grep -q '"overdue":' "${RELEASE_BUNDLE_PATH}/metadata/risk_closure_dashboard.json"
+          grep -q '^# Release Decision Record' "${RELEASE_BUNDLE_PATH}/metadata/release_decision_record.md"
+          grep -q '^Pending Closure Report' "${RELEASE_BUNDLE_PATH}/metadata/pending_closure_report.txt"
+          grep -q '"signoffs":' "${RELEASE_BUNDLE_PATH}/metadata/pending_closure_report.json"
 
       - name: Upload release evidence bundle
         if: always()

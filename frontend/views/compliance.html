@@ -1,245 +1,338 @@
-<section id="compliance" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Compliance Coverage</h3>
-              <div class="inline-actions">
-                <button id="loadComplianceControls" class="ghost" type="button">Load Controls</button>
-                <button id="loadComplianceCoverage" class="ghost" type="button">Load Coverage</button>
-                <button id="loadComplianceFreshness" class="ghost" type="button">Load Freshness</button>
-              </div>
-            </div>
-            <div class="card-grid compact">
-              <div class="chip">Controls: <span id="complianceControlCount">--</span></div>
-              <div class="chip">Passing: <span id="compliancePassingCount">--</span></div>
-              <div class="chip">Stale: <span id="complianceStaleCount">--</span></div>
-              <div class="chip">Missing: <span id="complianceMissingCount">--</span></div>
-            </div>
-            <p id="complianceSummary" class="mono"></p>
-            <ul id="complianceCoveragePaths" class="mono compliance-list"></ul>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Compliance route coverage drill-down</caption>
-                <thead>
-                  <tr><th>Path</th><th>Methods</th><th>Control IDs</th><th>Covered</th></tr>
-                </thead>
-                <tbody id="complianceCoverageItemsTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Compliance control status and evidence counts</caption>
-                <thead>
-                  <tr><th>Control</th><th>Title</th><th>Status</th><th>Evidence</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="complianceControlsTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Compliance evidence freshness by control</caption>
-                <thead>
-                  <tr><th>Control</th><th>Status</th><th>Evidence</th><th>Last Evidence</th><th>Age (h)</th></tr>
-                </thead>
-                <tbody id="complianceFreshnessTable"></tbody>
-              </table>
-            </div>
-          </article>
+<section id="compliance" class="view runtime-config-view">
+  <article class="card runtime-config-hero">
+    <div class="card-head">
+      <h3>Compliance Console</h3>
+      <button id="refreshComplianceConsole" class="ghost" type="button">Refresh All</button>
+    </div>
+    <p class="card-lead">
+      Govern <strong>control coverage</strong>, <strong>evidence bundles</strong>, <strong>retention policies</strong>, and <strong>legal holds</strong> for audit-ready compliance posture.
+      Map controls to requirements, generate forensics bundles, and enforce data retention with jurisdiction-aware holds.
+    </p>
+    <p id="complianceConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading compliance inventory…</p>
+    <div class="view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Compliance
+          <input class="view-page-search-input" data-view-search-input type="search" placeholder="Filter coverage, evidence, and retention tables" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Compliance console sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="coverage">Coverage</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="evidence">Evidence</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="retention">Retention</button>
+    </div>
+  </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Control Mappings and Evidence</h3>
-              <div class="inline-actions">
-                <button id="loadComplianceMappings" class="ghost" type="button">Load Mappings</button>
-                <button id="loadComplianceEvidence" class="ghost" type="button">Load Evidence</button>
-                <button id="loadComplianceEvidenceBundle" class="ghost" type="button">Load Bundle</button>
-              </div>
-            </div>
-            <form id="complianceMappingForm" class="form-grid">
-              <label>Control ID<input name="control_id" required value="CTRL-AUDIT-IMMUTABLE" /></label>
-              <label>Control Family<input name="control_family" required value="audit_governance" /></label>
-              <label class="wide-field">Requirement Text<input name="requirement_text" required value="Immutable audit logs with trace lineage." /></label>
-              <label class="wide-field">Applicable Components<input name="applicable_components" value='["audit", "observability"]' /></label>
-              <label class="wide-field">Required Evidence Types<input name="required_evidence_types" value='["audit_events", "trace_events"]' /></label>
-              <label>
-                Automation Status
-                <select name="automation_status">
-                  <option value="manual">manual</option>
-                  <option value="semi_automated">semi_automated</option>
-                  <option value="automated" selected>automated</option>
-                </select>
-              </label>
-              <label>Owner Team<input name="owner_team" required value="platform-security" /></label>
-              <label>Review Frequency<input name="review_frequency" value="monthly" /></label>
-              <div class="inline-row">
-                <button type="submit" class="primary">Save Mapping</button>
-                <button id="resetComplianceMappingForm" type="button" class="ghost">Reset</button>
-              </div>
-            </form>
-            <p id="complianceMappingResult" class="mono"></p>
-            <form id="complianceEvidenceForm" class="form-grid">
-              <label>
-                Control
-                <select id="complianceEvidenceControlId" name="control_id"></select>
-              </label>
-              <label>Source Type<input name="source_type" value="audit_events" /></label>
-              <label>Source ID<input name="source_id" value="latest" /></label>
-              <label>Bundle Since Hours<input name="bundle_since_hours" type="number" min="1" max="720" step="1" value="24" /></label>
-              <label>Bundle Decision Outcome<input name="bundle_decision_outcome" placeholder="allow|deny|warn" /></label>
-              <label>Bundle Action Prefix<input name="bundle_action_type_prefix" placeholder="compliance." /></label>
-              <label>Bundle Tenant ID<select name="bundle_tenant_id" data-tenant-select data-tenant-optional><option value="">All tenants</option></select></label>
-              <label>Bundle Environment<input name="bundle_environment" placeholder="dev|staging|prod" /></label>
-              <label>Bundle Source Type Filter<input name="bundle_source_type" placeholder="audit_events" /></label>
-              <label>Bundle Source ID Prefix<input name="bundle_source_id_prefix" placeholder="latest" /></label>
-              <label>Bundle Event Limit<input name="bundle_limit_events" type="number" min="1" max="200" step="1" value="20" /></label>
-              <label>Bundle Artifact Limit<input name="bundle_limit_artifacts" type="number" min="1" max="200" step="1" value="20" /></label>
-              <div class="inline-actions">
-                <button id="complianceBundlePresetProd" type="button" class="ghost">Preset: Prod Forensics</button>
-                <button id="complianceBundlePresetTenant" type="button" class="ghost">Preset: Tenant Focus</button>
-                <button id="complianceBundleResetFilters" type="button" class="ghost">Reset Bundle Filters</button>
-              </div>
-              <div class="inline-row">
-                <button type="submit" class="primary">Generate Evidence</button>
-                <button id="refreshComplianceEvidence" type="button" class="ghost">Refresh Selected</button>
-                <button id="copyComplianceBundleSummary" type="button" class="ghost">Copy Summary</button>
-                <button id="exportComplianceBundle" type="button" class="ghost">Export Bundle JSON</button>
-              </div>
-            </form>
-            <p id="complianceEvidenceResult" class="mono"></p>
-            <p id="complianceBundleScopeSummary" class="mono"></p>
-            <label class="inline-check" for="complianceRowActionAutoRefresh">
-              <input id="complianceRowActionAutoRefresh" type="checkbox" />
-              Auto-refresh bundle after row actions
-            </label>
-            <label class="inline-check" for="complianceExportIncludeContext">
-              <input id="complianceExportIncludeContext" type="checkbox" checked />
-              Include investigation context in export
-            </label>
-            <details id="complianceInvestigateDrawer" class="schema-preview compliance-investigate-drawer">
-              <summary>CISO Investigation Context</summary>
-              <p class="mono" id="complianceInvestigateSummary" role="status" aria-live="polite">No row selected.</p>
-              <div class="card-grid compact compliance-investigate-grid">
-                <div class="chip">Selected At: <span id="complianceInvestigateSelectedAt">--</span></div>
-                <div class="chip">Source Type: <span id="complianceInvestigateSourceType">--</span></div>
-                <div class="chip">Source ID: <span id="complianceInvestigateSourceId">--</span></div>
-                <div class="chip">Trace ID: <span id="complianceInvestigateTraceId">--</span></div>
-                <div class="chip">Action: <span id="complianceInvestigateActionType">--</span></div>
-                <div class="chip">Resource: <span id="complianceInvestigateResource">--</span></div>
-                <div class="chip">Outcome: <span id="complianceInvestigateDecision">--</span></div>
-                <div class="chip">Integrity: <span id="complianceInvestigateIntegrity">--</span></div>
-                <div class="chip">Artifact URI: <span id="complianceInvestigateArtifactUri">--</span></div>
-              </div>
-              <div class="inline-actions">
-                <button id="complianceInvestigateOpenTrace" type="button" class="ghost">Pivot: Trace</button>
-                <button id="complianceInvestigateOpenLogs" type="button" class="ghost">Pivot: Logs</button>
-                <button id="complianceInvestigateOpenAudit" type="button" class="ghost">Pivot: Audit Feed</button>
-                <button id="complianceInvestigateOpenArtifact" type="button" class="ghost">Open Artifact URI</button>
-                <button id="complianceInvestigateCopy" type="button" class="ghost">Copy Context JSON</button>
-                <button id="complianceInvestigateClear" type="button" class="ghost">Clear Context</button>
-              </div>
-            </details>
-            <div class="chip-row">
-              <div class="chip">Artifacts: <span id="complianceBundleArtifactCount">--</span></div>
-              <div class="chip">Latest Artifact: <span id="complianceBundleLatestArtifact">--</span></div>
-              <div class="chip">Integrity: <span id="complianceBundleIntegrity" class="status-pill idle">--</span></div>
-            </div>
-            <details id="complianceBundleRawDetails" class="schema-preview compliance-bundle-raw">
-              <summary>Raw Bundle JSON</summary>
-              <pre id="complianceEvidenceBundleResult" class="mono"></pre>
-            </details>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Compliance evidence bundle artifacts</caption>
-                <thead>
-                  <tr><th>Evidence ID</th><th>Generated</th><th>Source</th><th>Trace</th><th>Integrity</th><th>Artifact URI</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="complianceBundleArtifactsTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Compliance evidence bundle events</caption>
-                <thead>
-                  <tr><th>Evidence Event</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="complianceBundleEventsTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Compliance control mappings</caption>
-                <thead>
-                  <tr><th>Control</th><th>Family</th><th>Requirement</th><th>Evidence</th><th>Automation</th><th>Owner</th><th>Review</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="complianceMappingsTable"></tbody>
-              </table>
-            </div>
-          </article>
+  <div data-console-panel="overview" class="runtime-console-panel active">
+    <article class="card">
+      <div class="card-head">
+        <h4>How Compliance Fits Together</h4>
+      </div>
+      <div class="runtime-workflow-steps" aria-label="Recommended compliance workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Review coverage</strong>
+          <span>Load controls, route coverage, and evidence freshness to identify gaps and stale artifacts.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Map controls</strong>
+          <span>Define control families, requirements, and required evidence types with owner teams.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Generate evidence</strong>
+          <span>Build forensics bundles with tenant and environment filters for CISO investigation.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>4. Enforce retention</strong>
+          <span>Configure retention policies and place legal holds when investigations require immutability.</span>
+        </div>
+      </div>
+      <div class="chip-row" aria-label="Jump to compliance workspaces">
+        <button type="button" class="chip" data-console-tab-jump="coverage">Coverage Dashboard</button>
+        <button type="button" class="chip" data-console-tab-jump="evidence">Evidence &amp; Mappings</button>
+        <button type="button" class="chip" data-console-tab-jump="retention">Retention &amp; Holds</button>
+      </div>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Retention Policies</h3>
-              <button id="loadRetentionPolicies" class="ghost" type="button">Load Policies</button>
-            </div>
-            <form id="retentionPolicyForm" class="form-grid">
-              <label>Data Class<input name="data_class" required value="audit_events" /></label>
-              <label>Jurisdiction<input name="jurisdiction" required value="global" /></label>
-              <label>Retention Days<input name="retention_days" type="number" min="1" step="1" value="365" /></label>
-              <label>
-                Deletion Mode
-                <select name="deletion_mode">
-                  <option value="soft_delete" selected>soft_delete</option>
-                  <option value="hard_delete">hard_delete</option>
-                  <option value="archive_only">archive_only</option>
-                </select>
-              </label>
-              <label>
-                Legal Hold Supported
-                <select name="legal_hold_supported">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <div class="inline-row">
-                <button type="submit" class="primary">Save Policy</button>
-                <button id="resetRetentionPolicyForm" type="button" class="ghost">Reset</button>
-              </div>
-            </form>
-            <p id="retentionPolicyResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Retention policies</caption>
-                <thead>
-                  <tr><th>Data Class</th><th>Jurisdiction</th><th>Retention</th><th>Deletion Mode</th><th>Hold</th><th>Status</th><th>Updated</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="retentionPoliciesTable"></tbody>
-              </table>
-            </div>
-          </article>
+  <div data-console-panel="coverage" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Compliance Coverage</h3>
+        <div class="inline-actions">
+          <button id="loadComplianceControls" class="ghost" type="button">Load Controls</button>
+          <button id="loadComplianceCoverage" class="ghost" type="button">Load Coverage</button>
+          <button id="loadComplianceFreshness" class="ghost" type="button">Load Freshness</button>
+        </div>
+      </div>
+      <div class="card-grid compact">
+        <div class="chip">Controls: <span id="complianceControlCount">--</span></div>
+        <div class="chip">Passing: <span id="compliancePassingCount">--</span></div>
+        <div class="chip">Stale: <span id="complianceStaleCount">--</span></div>
+        <div class="chip">Missing: <span id="complianceMissingCount">--</span></div>
+      </div>
+      <p id="complianceSummary" class="mono"></p>
+      <ul id="complianceCoveragePaths" class="mono compliance-list"></ul>
+      <article class="card nested-card">
+        <div class="card-head">
+          <h4>API UI Coverage Gaps</h4>
+          <div class="inline-actions">
+            <button id="loadUiCoverageGaps" class="ghost" type="button">Load UI Gaps</button>
+          </div>
+        </div>
+        <p id="uiCoverageSummary" class="mono">Load UI gaps to compare backend APIs against frontend operator workflows.</p>
+        <div class="card-grid compact">
+          <div class="chip">Inventory: <span id="uiCoverageInventoryCount">--</span></div>
+          <div class="chip">Full: <span id="uiCoverageFullCount">--</span></div>
+          <div class="chip">Partial: <span id="uiCoveragePartialCount">--</span></div>
+          <div class="chip">Gap: <span id="uiCoverageGapCount">--</span></div>
+          <div class="chip">Undocumented: <span id="uiCoverageUndocumentedCount">--</span></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Backend APIs without full frontend coverage</caption>
+            <thead>
+              <tr><th>Method</th><th>Route</th><th>UI Coverage</th><th>Frontend Available</th><th>Notes</th></tr>
+            </thead>
+            <tbody id="uiCoverageGapsTable"></tbody>
+          </table>
+        </div>
+      </article>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Compliance route coverage drill-down</caption>
+          <thead>
+            <tr><th>Path</th><th>Methods</th><th>Control IDs</th><th>Covered</th></tr>
+          </thead>
+          <tbody id="complianceCoverageItemsTable"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Compliance control status and evidence counts</caption>
+          <thead>
+            <tr><th>Control</th><th>Title</th><th>Status</th><th>Evidence</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="complianceControlsTable"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Compliance evidence freshness by control</caption>
+          <thead>
+            <tr><th>Control</th><th>Status</th><th>Evidence</th><th>Last Evidence</th><th>Age (h)</th></tr>
+          </thead>
+          <tbody id="complianceFreshnessTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Legal Holds</h3>
-              <button id="loadLegalHolds" class="ghost" type="button">Load Holds</button>
-            </div>
-            <form id="legalHoldForm" class="form-grid">
-              <label>Data Class<input name="data_class" required value="audit_events" /></label>
-              <label>Jurisdiction<input name="jurisdiction" required value="global" /></label>
-              <label class="wide-field">Reason<input name="reason" required value="Compliance review in progress" /></label>
-              <label class="wide-field">Scope Ref<input name="scope_ref" required value="case-001" /></label>
-              <div class="inline-row">
-                <button type="submit" class="primary">Place Hold</button>
-                <button id="resetLegalHoldForm" type="button" class="ghost">Reset</button>
-              </div>
-            </form>
-            <p id="legalHoldResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Legal holds</caption>
-                <thead>
-                  <tr><th>Hold</th><th>Data Class</th><th>Jurisdiction</th><th>Reason</th><th>Scope</th><th>Status</th><th>Placed</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="legalHoldsTable"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+  <div data-console-panel="evidence" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Control Mappings and Evidence</h3>
+        <div class="inline-actions">
+          <button id="loadComplianceMappings" class="ghost" type="button">Load Mappings</button>
+          <button id="loadComplianceEvidence" class="ghost" type="button">Load Evidence</button>
+          <button id="loadComplianceEvidenceBundle" class="ghost" type="button">Load Bundle</button>
+        </div>
+      </div>
+      <form id="complianceMappingForm" class="form-grid">
+        <label>Control ID<input name="control_id" required value="CTRL-AUDIT-IMMUTABLE" /></label>
+        <label>Control Family<input name="control_family" required value="audit_governance" /></label>
+        <label class="wide-field">Requirement Text<input name="requirement_text" required value="Immutable audit logs with trace lineage." /></label>
+        <label class="wide-field">Applicable Components<input name="applicable_components" value='["audit", "observability"]' /></label>
+        <label class="wide-field">Required Evidence Types<input name="required_evidence_types" value='["audit_events", "trace_events"]' /></label>
+        <label>
+          Automation Status
+          <select name="automation_status">
+            <option value="manual">manual</option>
+            <option value="semi_automated">semi_automated</option>
+            <option value="automated" selected>automated</option>
+          </select>
+        </label>
+        <label>Owner Team<input name="owner_team" required value="platform-security" /></label>
+        <label>Review Frequency<input name="review_frequency" value="monthly" /></label>
+        <div class="inline-row">
+          <button type="submit" class="primary">Save Mapping</button>
+          <button id="resetComplianceMappingForm" type="button" class="ghost">Reset</button>
+        </div>
+      </form>
+      <p id="complianceMappingResult" class="mono"></p>
+      <form id="complianceEvidenceForm" class="form-grid">
+        <label>
+          Control
+          <select id="complianceEvidenceControlId" name="control_id"></select>
+        </label>
+        <label>Source Type<input name="source_type" value="audit_events" /></label>
+        <label>Source ID<input name="source_id" value="latest" /></label>
+        <label>Bundle Since Hours<input name="bundle_since_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Bundle Decision Outcome<input name="bundle_decision_outcome" placeholder="allow|deny|warn" /></label>
+        <label>Bundle Action Prefix<input name="bundle_action_type_prefix" placeholder="compliance." /></label>
+        <label>Bundle Tenant ID<select name="bundle_tenant_id" data-tenant-select data-tenant-optional><option value="">All tenants</option></select></label>
+        <label>Bundle Environment<input name="bundle_environment" placeholder="dev|staging|prod" /></label>
+        <label>Bundle Source Type Filter<input name="bundle_source_type" placeholder="audit_events" /></label>
+        <label>Bundle Source ID Prefix<input name="bundle_source_id_prefix" placeholder="latest" /></label>
+        <label>Bundle Event Limit<input name="bundle_limit_events" type="number" min="1" max="200" step="1" value="20" /></label>
+        <label>Bundle Artifact Limit<input name="bundle_limit_artifacts" type="number" min="1" max="200" step="1" value="20" /></label>
+        <div class="inline-actions">
+          <button id="complianceBundlePresetProd" type="button" class="ghost">Preset: Prod Forensics</button>
+          <button id="complianceBundlePresetTenant" type="button" class="ghost">Preset: Tenant Focus</button>
+          <button id="complianceBundleResetFilters" type="button" class="ghost">Reset Bundle Filters</button>
+        </div>
+        <div class="inline-row">
+          <button type="submit" class="primary">Generate Evidence</button>
+          <button id="refreshComplianceEvidence" type="button" class="ghost">Refresh Selected</button>
+          <button id="copyComplianceBundleSummary" type="button" class="ghost">Copy Summary</button>
+          <button id="exportComplianceBundle" type="button" class="ghost">Export Bundle JSON</button>
+        </div>
+      </form>
+      <p id="complianceEvidenceResult" class="mono"></p>
+      <p id="complianceBundleScopeSummary" class="mono"></p>
+      <label class="inline-check" for="complianceRowActionAutoRefresh">
+        <input id="complianceRowActionAutoRefresh" type="checkbox" />
+        Auto-refresh bundle after row actions
+      </label>
+      <label class="inline-check" for="complianceExportIncludeContext">
+        <input id="complianceExportIncludeContext" type="checkbox" checked />
+        Include investigation context in export
+      </label>
+      <details id="complianceInvestigateDrawer" class="schema-preview compliance-investigate-drawer">
+        <summary>CISO Investigation Context</summary>
+        <p class="mono" id="complianceInvestigateSummary" role="status" aria-live="polite">No row selected.</p>
+        <div class="card-grid compact compliance-investigate-grid">
+          <div class="chip">Selected At: <span id="complianceInvestigateSelectedAt">--</span></div>
+          <div class="chip">Source Type: <span id="complianceInvestigateSourceType">--</span></div>
+          <div class="chip">Source ID: <span id="complianceInvestigateSourceId">--</span></div>
+          <div class="chip">Trace ID: <span id="complianceInvestigateTraceId">--</span></div>
+          <div class="chip">Action: <span id="complianceInvestigateActionType">--</span></div>
+          <div class="chip">Resource: <span id="complianceInvestigateResource">--</span></div>
+          <div class="chip">Outcome: <span id="complianceInvestigateDecision">--</span></div>
+          <div class="chip">Integrity: <span id="complianceInvestigateIntegrity">--</span></div>
+          <div class="chip">Artifact URI: <span id="complianceInvestigateArtifactUri">--</span></div>
+        </div>
+        <div class="inline-actions">
+          <button id="complianceInvestigateOpenTrace" type="button" class="ghost">Pivot: Trace</button>
+          <button id="complianceInvestigateOpenLogs" type="button" class="ghost">Pivot: Logs</button>
+          <button id="complianceInvestigateOpenAudit" type="button" class="ghost">Pivot: Audit Feed</button>
+          <button id="complianceInvestigateOpenArtifact" type="button" class="ghost">Open Artifact URI</button>
+          <button id="complianceInvestigateCopy" type="button" class="ghost">Copy Context JSON</button>
+          <button id="complianceInvestigateClear" type="button" class="ghost">Clear Context</button>
+        </div>
+      </details>
+      <div class="chip-row">
+        <div class="chip">Artifacts: <span id="complianceBundleArtifactCount">--</span></div>
+        <div class="chip">Latest Artifact: <span id="complianceBundleLatestArtifact">--</span></div>
+        <div class="chip">Integrity: <span id="complianceBundleIntegrity" class="status-pill idle">--</span></div>
+      </div>
+      <details id="complianceBundleRawDetails" class="schema-preview compliance-bundle-raw">
+        <summary>Raw Bundle JSON</summary>
+        <pre id="complianceEvidenceBundleResult" class="mono"></pre>
+      </details>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Compliance evidence bundle artifacts</caption>
+          <thead>
+            <tr><th>Evidence ID</th><th>Generated</th><th>Source</th><th>Trace</th><th>Integrity</th><th>Artifact URI</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="complianceBundleArtifactsTable"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Compliance evidence bundle events</caption>
+          <thead>
+            <tr><th>Evidence Event</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="complianceBundleEventsTable"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Compliance control mappings</caption>
+          <thead>
+            <tr><th>Control</th><th>Family</th><th>Requirement</th><th>Evidence</th><th>Automation</th><th>Owner</th><th>Review</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="complianceMappingsTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="retention" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Retention Policies</h3>
+        <button id="loadRetentionPolicies" class="ghost" type="button">Load Policies</button>
+      </div>
+      <form id="retentionPolicyForm" class="form-grid">
+        <label>Data Class<input name="data_class" required value="audit_events" /></label>
+        <label>Jurisdiction<input name="jurisdiction" required value="global" /></label>
+        <label>Retention Days<input name="retention_days" type="number" min="1" step="1" value="365" /></label>
+        <label>
+          Deletion Mode
+          <select name="deletion_mode">
+            <option value="soft_delete" selected>soft_delete</option>
+            <option value="hard_delete">hard_delete</option>
+            <option value="archive_only">archive_only</option>
+          </select>
+        </label>
+        <label>
+          Legal Hold Supported
+          <select name="legal_hold_supported">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <div class="inline-row">
+          <button type="submit" class="primary">Save Policy</button>
+          <button id="resetRetentionPolicyForm" type="button" class="ghost">Reset</button>
+        </div>
+      </form>
+      <p id="retentionPolicyResult" class="mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Retention policies</caption>
+          <thead>
+            <tr><th>Data Class</th><th>Jurisdiction</th><th>Retention</th><th>Deletion Mode</th><th>Hold</th><th>Status</th><th>Updated</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="retentionPoliciesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Legal Holds</h3>
+        <button id="loadLegalHolds" class="ghost" type="button">Load Holds</button>
+      </div>
+      <form id="legalHoldForm" class="form-grid">
+        <label>Data Class<input name="data_class" required value="audit_events" /></label>
+        <label>Jurisdiction<input name="jurisdiction" required value="global" /></label>
+        <label class="wide-field">Reason<input name="reason" required value="Compliance review in progress" /></label>
+        <label class="wide-field">Scope Ref<input name="scope_ref" required value="case-001" /></label>
+        <div class="inline-row">
+          <button type="submit" class="primary">Place Hold</button>
+          <button id="resetLegalHoldForm" type="button" class="ghost">Reset</button>
+        </div>
+      </form>
+      <p id="legalHoldResult" class="mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Legal holds</caption>
+          <thead>
+            <tr><th>Hold</th><th>Data Class</th><th>Jurisdiction</th><th>Reason</th><th>Scope</th><th>Status</th><th>Placed</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="legalHoldsTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

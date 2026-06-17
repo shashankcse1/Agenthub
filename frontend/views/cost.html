@@ -1,344 +1,679 @@
-<section id="cost" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Cost Telemetry</h3>
-              <button id="loadCost" class="ghost">Load</button>
-            </div>
-            <div class="card-grid compact">
-              <div class="chip">Spend (1h): <span id="costHour">--</span></div>
-              <div class="chip">Spend (24h): <span id="costDay">--</span></div>
-              <div class="chip">Events (24h): <span id="costEvents">--</span></div>
-            </div>
-          </article>
+<section id="cost" class="view runtime-config-view cost-console-view">
+  <article class="card runtime-config-hero cost-console-hero">
+    <div class="card-head cost-console-head">
+      <div>
+        <h3>Cost Console</h3>
+        <p class="card-lead cost-console-lead">
+          Monitor spend telemetry, configure model pricing, enforce budget policies, and drill into session-level cost events.
+        </p>
+      </div>
+      <div class="inline-actions cost-console-toolbar">
+        <label class="cost-workspace-label">
+          Workspace
+          <select id="costWorkspaceSelect" aria-label="Jump to cost workspace">
+            <option value="overview">Overview</option>
+            <option value="telemetry">Telemetry</option>
+            <option value="pricing">Pricing &amp; Models</option>
+            <option value="budgets">Budgets &amp; Limits</option>
+            <option value="drilldown">Drilldown</option>
+          </select>
+        </label>
+        <button id="refreshCostConsole" class="ghost" type="button">Refresh All</button>
+      </div>
+    </div>
+    <p id="costConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading cost inventory…</p>
+    <div class="view-page-search-toolbar" data-view-search-toolbar="cost">
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Cost
+          <input id="costConsoleSearch" class="view-page-search-input" data-view-search-input type="search" placeholder="Filter budgets, models, anomalies, and drilldown rows" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button id="searchCostConsole" type="button" class="primary view-page-search-btn">Search</button>
+          <button id="clearCostConsoleSearch" type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p id="costConsoleSearchStatus" class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Cost console sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="telemetry">Telemetry</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="pricing">Pricing</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="budgets">Budgets</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="drilldown">Drilldown</button>
+    </div>
+  </article>
 
-          <article class="card cost-pricing-card">
-            <div class="card-head">
-              <h3>Pricing Configuration</h3>
-              <button id="openRuntimeConfigPricing" class="ghost" type="button">Open Runtime Config</button>
-            </div>
-            <p class="mono cost-pricing-intro">Cost estimation now uses model token pricing and cloud component multipliers. Use these shortcuts to load valid templates into Runtime Configuration Studio.</p>
-            <div class="card-grid compact cost-pricing-grid">
-              <div class="cost-pricing-item">
-                <h4>Model Token Rates</h4>
-                <p>Define default and per-model input/output rates in cents per 1K tokens.</p>
-                <button class="ghost cost-config-shortcut" type="button" data-config-key="cost.model_token_rates_json">Edit Model Pricing</button>
-              </div>
-              <div class="cost-pricing-item">
-                <h4>Cloud Multipliers</h4>
-                <p>Adjust pricing by provider type and endpoint family for infrastructure overhead.</p>
-                <button class="ghost cost-config-shortcut" type="button" data-config-key="cost.cloud_component_multipliers_json">Edit Cloud Multipliers</button>
-              </div>
-              <div class="cost-pricing-item">
-                <h4>Operator Guidance</h4>
-                <p>Save these keys in Runtime Config to update gateway fallback cost estimation without code changes.</p>
-                <button class="ghost cost-config-shortcut" type="button" data-config-key="cost.model_token_rates_json">Load Pricing Template</button>
-              </div>
-              <div class="cost-pricing-item">
-                <h4>Provider Discounts</h4>
-                <p>Configure provider/model percentage discounts for enterprise pricing agreements.</p>
-                <button class="ghost cost-config-shortcut" type="button" data-config-key="cost.provider_discounts_json">Edit Provider Discounts</button>
-              </div>
-            </div>
-          </article>
+  <div data-console-panel="overview" class="runtime-console-panel active">
+    <div class="card-grid compact cost-overview-metrics">
+      <article class="card metric">
+        <h4>Spend (1h)</h4>
+        <p class="metric-value" id="costOverviewHour">--</p>
+      </article>
+      <article class="card metric">
+        <h4>Spend (24h)</h4>
+        <p class="metric-value" id="costOverviewDay">--</p>
+      </article>
+      <article class="card metric">
+        <h4>Events (24h)</h4>
+        <p class="metric-value" id="costOverviewEvents">--</p>
+      </article>
+      <article class="card metric">
+        <h4>Gateway Est.</h4>
+        <p class="metric-value" id="costOverviewGateway">--</p>
+      </article>
+      <article class="card metric">
+        <h4>Budget Policies</h4>
+        <p class="metric-value" id="costOverviewBudgets">--</p>
+      </article>
+      <article class="card metric">
+        <h4>Anomalies</h4>
+        <p class="metric-value" id="costOverviewAnomalies">--</p>
+      </article>
+    </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Pricing Calculator</h3>
-              <div class="inline-actions">
-                <button id="loadCostPricingCatalog" class="ghost" type="button">Load Catalog</button>
-              </div>
-            </div>
-            <form id="costPricingCalculatorForm" class="form-grid">
-              <label>Provider Type<input name="provider_type" value="openai" required /></label>
-              <label>Model Name<input name="model_name" value="gpt-4o-mini" required /></label>
-              <label>Endpoint Family<input name="endpoint_family" value="responses" required /></label>
-              <label>Input Tokens<input name="input_tokens" type="number" min="0" step="1" value="1000" /></label>
-              <label>Output Tokens<input name="output_tokens" type="number" min="0" step="1" value="500" /></label>
-              <label>Custom Input Rate (c/1k)<input name="custom_input_cents_per_1k" type="number" min="0" step="0.0001" placeholder="optional" /></label>
-              <label>Custom Output Rate (c/1k)<input name="custom_output_cents_per_1k" type="number" min="0" step="0.0001" placeholder="optional" /></label>
-              <label>Custom Discount %<input name="custom_provider_discount_percent" type="number" min="0" max="95" step="0.01" placeholder="optional" /></label>
-              <button type="submit" class="primary">Calculate Cost</button>
-            </form>
-            <p id="costPricingCalculatorResult" class="mono"></p>
-            <p id="costPricingCatalogResult" class="mono"></p>
-          </article>
+    <article class="card">
+      <div class="card-head">
+        <h4>How Cost Governance Fits Together</h4>
+      </div>
+      <div class="runtime-workflow-steps" aria-label="Recommended cost governance workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Configure pricing</strong>
+          <span>Set model token rates, cloud multipliers, and provider discounts in runtime config.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Monitor telemetry</strong>
+          <span>Review hourly and daily spend plus gateway analytics for model and endpoint trends.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Enforce budgets</strong>
+          <span>Create budget policies, evaluate limits, and track spend events by scope.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>4. Investigate anomalies</strong>
+          <span>Drill into session and agent cost events when anomalies or soft limits trigger.</span>
+        </div>
+      </div>
+      <div class="chip-row" aria-label="Jump to cost workspaces">
+        <button type="button" class="chip" data-console-tab-jump="telemetry">Spend Telemetry</button>
+        <button type="button" class="chip" data-console-tab-jump="pricing">Pricing &amp; Models</button>
+        <button type="button" class="chip" data-console-tab-jump="budgets">Budget Policies</button>
+        <button type="button" class="chip" data-console-tab-jump="drilldown">Cost Drilldown</button>
+      </div>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Model Intelligence</h3>
-              <div class="inline-actions">
-                <button id="loadCostModelCatalog" class="ghost" type="button">Load Model Catalog</button>
-              </div>
-            </div>
-            <p class="mono">Rank supported models by effective pricing, provider multipliers, discount posture, and context window capacity.</p>
-            <p id="costModelCatalogResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Ranked model catalog</caption>
-                <thead>
-                  <tr><th>Model</th><th>Provider</th><th>Context</th><th>Status</th><th>Avg Cost/1k</th><th>Rank</th></tr>
-                </thead>
-                <tbody id="costModelCatalogTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <article class="card cost-spend-breakdown-card">
+      <div class="card-head">
+        <h4>Spend vs Hours</h4>
+        <div class="inline-actions spend-controls cost-spend-controls">
+          <label class="inline-label" for="costSpendBreakdownDimension">View</label>
+          <select id="costSpendBreakdownDimension" aria-label="Spend breakdown dimension">
+            <option value="all" selected>All</option>
+            <option value="user">User</option>
+            <option value="group">Group</option>
+            <option value="team">Team</option>
+            <option value="request_tag">Request Tag</option>
+          </select>
+          <label class="inline-label" for="costSpendBreakdownRange">Range</label>
+          <select id="costSpendBreakdownRange" aria-label="Spend range">
+            <option value="realtime">Realtime (15m)</option>
+            <option value="1d" selected>1 Day</option>
+            <option value="1w">1 Week</option>
+            <option value="1m">1 Month</option>
+            <option value="1y">1 Year</option>
+            <option value="custom">Adhoc / Custom</option>
+          </select>
+          <label class="inline-label" id="costSpendBreakdownScopeLabel" for="costSpendBreakdownScopeFilter">Filter</label>
+          <input id="costSpendBreakdownScopeFilter" type="text" placeholder="Optional scope filter" aria-label="Spend scope filter" />
+          <div id="costSpendBreakdownCustomRange" class="spend-breakdown-custom-range" hidden>
+            <label class="inline-label" for="costSpendBreakdownStartDate">From</label>
+            <input id="costSpendBreakdownStartDate" type="date" aria-label="Spend start date" />
+            <input id="costSpendBreakdownStartTime" type="time" aria-label="Spend start time" />
+            <label class="inline-label" for="costSpendBreakdownEndDate">To</label>
+            <input id="costSpendBreakdownEndDate" type="date" aria-label="Spend end date" />
+            <input id="costSpendBreakdownEndTime" type="time" aria-label="Spend end time" />
+          </div>
+          <button id="loadCostSpendBreakdown" class="ghost" type="button">Refresh Chart</button>
+        </div>
+        <div class="inline-actions spend-controls cost-comparison-controls">
+          <label class="inline-label" for="costComparisonPeriod">Compare</label>
+          <select id="costComparisonPeriod" aria-label="Comparison period">
+            <option value="daily">Today vs Yesterday</option>
+            <option value="weekly">This Week vs Last Week</option>
+            <option value="monthly" selected>This Month vs Last Month</option>
+            <option value="yearly">This Year vs Last Year</option>
+            <option value="realtime">Realtime vs Prior Window</option>
+          </select>
+          <label class="inline-label" for="costComparisonMode">Mode</label>
+          <select id="costComparisonMode" aria-label="Comparison mode">
+            <option value="prior_period" selected>Full prior period</option>
+            <option value="same_elapsed">Same elapsed time</option>
+          </select>
+          <button id="loadCostComparison" class="ghost" type="button">Refresh Comparison</button>
+        </div>
+      </div>
+      <p id="costSpendBreakdownSummary" class="mono">Loading spend breakdown…</p>
+      <p id="costComparisonSummary" class="mono">Loading period comparison…</p>
+      <div id="costSpendBreakdownChart" class="spend-breakdown-chart" role="img" aria-label="Cost console spend breakdown chart"></div>
+      <ul id="costSpendBreakdownInsights" class="spend-breakdown-insights"></ul>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Spend Tracking</h3>
-            </div>
-            <form id="costSpendTrackForm" class="form-grid">
-              <label>Request ID<input name="request_id" value="manual-request-1" required /></label>
-              <label>Trace ID<input name="trace_id" placeholder="optional trace id" /></label>
-              <label>Request Tag<input name="request_tag" placeholder="billing.batch-01" /></label>
-              <label>Session ID<input name="session_id" value="gateway-session" required /></label>
-              <label>Agent ID<input name="agent_id" value="agent-ui" required /></label>
-              <label>
-                Scope Type
-                <select name="scope_type">
-                  <option value="actor" selected>actor</option>
-                  <option value="user">user</option>
-                  <option value="team">team</option>
-                  <option value="group">group</option>
-                  <option value="owner">owner</option>
-                  <option value="agent">agent</option>
-                  <option value="environment">environment</option>
-                </select>
-              </label>
-              <label>Scope ID<input name="scope_id" value="ui-operator" required /></label>
-              <label>Environment<input name="environment" value="dev" required /></label>
-              <label>Model Name<input name="model_name" value="gpt-4o-mini" required /></label>
-              <label>Endpoint Family<input name="endpoint_family" value="responses" required /></label>
-              <label>Input Tokens<input name="input_tokens" type="number" min="0" step="1" value="1000" /></label>
-              <label>Output Tokens<input name="output_tokens" type="number" min="0" step="1" value="500" /></label>
-              <label>Estimated Cost (cents)<input name="estimated_cost_cents" type="number" min="0" step="1" value="120" /></label>
-              <label>Currency<input name="currency" value="USD" required /></label>
-              <button type="submit" class="ghost">Track Spend Event</button>
-            </form>
-            <p id="costSpendTrackResult" class="mono"></p>
-          </article>
+  <div data-console-panel="telemetry" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Cost Telemetry</h3>
+        <button id="loadCost" class="ghost" type="button">Refresh</button>
+      </div>
+      <div class="card-grid compact">
+        <div class="chip">Spend (1h): <span id="costHour">--</span></div>
+        <div class="chip">Spend (24h): <span id="costDay">--</span></div>
+        <div class="chip">Events (24h): <span id="costEvents">--</span></div>
+      </div>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Gateway Analytics</h3>
-              <button id="loadGatewayAnalytics" class="ghost">Load</button>
-            </div>
-            <form id="gatewayAnalyticsFilters" class="form-grid">
-              <label>
-                Environment
-                <select name="environment">
-                  <option value="">all</option>
-                  <option value="dev">dev</option>
-                  <option value="stage">stage</option>
-                  <option value="prod" selected>prod</option>
-                </select>
-              </label>
-              <label>Hours<input name="hours" type="number" min="1" max="168" step="1" value="24" /></label>
-              <button type="submit" class="ghost">Apply Filters</button>
-            </form>
-            <p id="gatewayAnalyticsResult" class="mono"></p>
-            <div class="card-grid compact">
-              <div class="chip">Events: <span id="gatewayEvents">--</span></div>
-              <div class="chip">Requests: <span id="gatewayRequests">--</span></div>
-              <div class="chip">Estimated Cost: <span id="gatewayCost">--</span></div>
-            </div>
-            <div class="card-grid compact">
-              <div class="chip">Avg Input Tokens: <span id="gatewayAvgInput">--</span></div>
-              <div class="chip">Avg Output Tokens: <span id="gatewayAvgOutput">--</span></div>
-              <div class="chip">Window (hours): <span id="gatewayWindowHours">--</span></div>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Top gateway models by event volume and cost</caption>
-                <thead>
-                  <tr><th>Model</th><th>Events</th><th>Cost (cents)</th></tr>
-                </thead>
-                <tbody id="gatewayTopModelsTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Top gateway endpoint families by event volume and cost</caption>
-                <thead>
-                  <tr><th>Endpoint Family</th><th>Events</th><th>Cost (cents)</th></tr>
-                </thead>
-                <tbody id="gatewayTopEndpointTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Gateway Analytics</h3>
+        <button id="loadGatewayAnalytics" class="ghost" type="button">Refresh</button>
+      </div>
+      <form id="gatewayAnalyticsFilters" class="form-grid compact">
+        <label>
+          Environment
+          <select name="environment">
+            <option value="">all environments</option>
+            <option value="dev">dev</option>
+            <option value="stage">stage</option>
+            <option value="prod" selected>prod</option>
+          </select>
+        </label>
+        <label>
+          Window (hours)
+          <select name="hours">
+            <option value="1">1 hour</option>
+            <option value="6">6 hours</option>
+            <option value="24" selected>24 hours</option>
+            <option value="72">72 hours</option>
+            <option value="168">7 days</option>
+          </select>
+        </label>
+        <button type="submit" class="primary">Apply Filters</button>
+      </form>
+      <p id="gatewayAnalyticsResult" class="runtime-feedback mono"></p>
+      <div class="card-grid compact">
+        <div class="chip">Events: <span id="gatewayEvents">--</span></div>
+        <div class="chip">Requests: <span id="gatewayRequests">--</span></div>
+        <div class="chip">Estimated Cost: <span id="gatewayCost">--</span></div>
+      </div>
+      <div class="card-grid compact">
+        <div class="chip">Avg Input Tokens: <span id="gatewayAvgInput">--</span></div>
+        <div class="chip">Avg Output Tokens: <span id="gatewayAvgOutput">--</span></div>
+        <div class="chip">Window: <span id="gatewayWindowHours">--</span></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Top gateway models by event volume and cost</caption>
+          <thead>
+            <tr><th>Model</th><th>Events</th><th>Cost (cents)</th></tr>
+          </thead>
+          <tbody id="gatewayTopModelsTable"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Top gateway endpoint families by event volume and cost</caption>
+          <thead>
+            <tr><th>Endpoint Family</th><th>Events</th><th>Cost (cents)</th></tr>
+          </thead>
+          <tbody id="gatewayTopEndpointTable"></tbody>
+        </table>
+      </div>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Budget Policies</h3>
-              <div class="inline-actions">
-                <button id="loadCostBudgets" class="ghost" type="button">Load Budgets</button>
-                <button id="loadCostAnomalies" class="ghost" type="button">Load Anomalies</button>
-              </div>
-            </div>
-            <form id="costBudgetForm" class="form-grid">
-              <label>Policy ID (for update)<input name="budget_policy_id" placeholder="budget-policy-id" /></label>
-              <label>
-                Scope Type
-                <select name="scope_type">
-                  <option value="actor" selected>actor</option>
-                  <option value="user">user</option>
-                  <option value="owner">owner</option>
-                  <option value="agent">agent</option>
-                  <option value="team">team</option>
-                  <option value="group">group</option>
-                  <option value="environment">environment</option>
-                </select>
-              </label>
-              <label>Scope ID<input name="scope_id" required value="ui-operator" list="costBudgetScopeIdList" /></label>
-              <datalist id="costBudgetScopeIdList"></datalist>
-              <label>Budget (cents)<input name="budget_amount_cents" type="number" min="1" step="1" value="5000" /></label>
-              <label>
-                Window
-                <select name="window_type">
-                  <option value="hourly">hourly</option>
-                  <option value="daily" selected>daily</option>
-                  <option value="weekly">weekly</option>
-                  <option value="monthly">monthly</option>
-                </select>
-              </label>
-              <label>Soft Limit %<input name="soft_limit_percent" type="number" min="1" max="100" step="0.1" value="75" /></label>
-              <label>Hard Limit %<input name="hard_limit_percent" type="number" min="1" max="100" step="0.1" value="95" /></label>
-              <label>
-                Soft Action
-                <select name="action_on_soft_limit">
-                  <option value="notify" selected>notify</option>
-                  <option value="throttle">throttle</option>
-                </select>
-              </label>
-              <label>
-                Hard Action
-                <select name="action_on_hard_limit">
-                  <option value="block" selected>block</option>
-                  <option value="throttle">throttle</option>
-                </select>
-              </label>
-              <label>Reset Timezone<input name="reset_timezone" value="UTC" placeholder="UTC" /></label>
-              <label>Reset Hour Local<input name="reset_hour_local" type="number" min="0" max="23" step="1" value="0" /></label>
-              <label>Temporary Increase (cents)<input name="temporary_increase_cents" type="number" min="0" step="1" value="0" /></label>
-              <label>Temporary Increase Expires<input name="temporary_increase_expires_at" type="datetime-local" /></label>
-              <label>
-                Soft Alert Enabled
-                <select name="soft_alert_enabled">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label>Rate Limit TPM<input name="rate_limit_tpm" type="number" min="1" step="1" placeholder="12000" /></label>
-              <label>Rate Limit RPM<input name="rate_limit_rpm" type="number" min="1" step="1" placeholder="120" /></label>
-              <label>Session Iteration Cap<input name="session_iteration_cap" type="number" min="1" step="1" placeholder="20" /></label>
-              <label>Session Budget (cents)<input name="session_budget_cents" type="number" min="1" step="1" placeholder="1500" /></label>
-              <div class="inline-row">
-                <button type="submit" class="primary">Save Budget Policy</button>
-                <button id="resetCostBudgetForm" type="button" class="ghost">Reset</button>
-              </div>
-            </form>
-            <p id="costBudgetResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Created budget policies</caption>
-                <thead>
-                  <tr><th>Policy ID</th><th>Scope</th><th>Budget</th><th>Window</th><th>Limits</th><th>Controls</th><th>Status</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="costBudgetTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Cost anomalies</caption>
-                <thead>
-                  <tr><th>Anomaly</th><th>Type</th><th>Severity</th><th>Scope</th><th>Observed</th><th>Threshold</th><th>Detected</th></tr>
-                </thead>
-                <tbody id="costAnomaliesTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <article id="costTimeseriesPanel" class="card cost-timeseries-card">
+      <div class="card-head">
+        <h4>Spend timeseries</h4>
+        <button id="loadCostTimeseries" class="ghost" type="button">Load</button>
+      </div>
+      <form id="costTimeseriesForm" class="form-grid compact">
+        <label>
+          Dimension
+          <select name="dimension" id="costTimeseriesDimension" aria-label="Cost timeseries dimension">
+            <option value="all" selected>All</option>
+            <option value="user">User</option>
+            <option value="team">Team</option>
+            <option value="group">Group</option>
+            <option value="request_tag">Request tag</option>
+          </select>
+        </label>
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Scope filter<input name="scope_filter" placeholder="optional label filter" /></label>
+      </form>
+      <p id="costTimeseriesSummary" class="mono" aria-live="polite">Load hourly spend timeseries for the selected window.</p>
+      <div id="costTimeseriesChart" class="spend-breakdown-chart" role="img" aria-label="Cost telemetry hourly spend chart"></div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cost timeseries hourly buckets</caption>
+          <thead>
+            <tr><th>Hour</th><th>Spend (cents)</th><th>Events</th></tr>
+          </thead>
+          <tbody id="costTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Policy Evaluation</h3>
-            </div>
-            <form id="costPolicyEvalForm" class="form-grid">
-              <label>
-                Scope Type
-                <select name="scope_type">
-                  <option value="actor" selected>actor</option>
-                  <option value="user">user</option>
-                  <option value="owner">owner</option>
-                  <option value="agent">agent</option>
-                  <option value="team">team</option>
-                  <option value="group">group</option>
-                  <option value="environment">environment</option>
-                </select>
-              </label>
-              <label>Scope ID<input name="scope_id" required value="ui-operator" list="costPolicyEvalScopeIdList" /></label>
-              <datalist id="costPolicyEvalScopeIdList"></datalist>
-              <label>
-                Window
-                <select name="window_type">
-                  <option value="hourly">hourly</option>
-                  <option value="daily" selected>daily</option>
-                  <option value="weekly">weekly</option>
-                  <option value="monthly">monthly</option>
-                </select>
-              </label>
-              <button type="submit" class="primary">Evaluate Budget Policy</button>
-            </form>
-            <p id="costPolicyEvalResult" class="mono"></p>
-            <form id="costLimitEvalForm" class="form-grid">
-              <label>Actor ID<input name="actor_id" value="ui-operator" /></label>
-              <label>Team IDs JSON<input name="team_ids" value='["team-platform"]' /></label>
-              <label>Group IDs JSON<input name="group_ids" value='["grp-platform"]' /></label>
-              <label>Agent IDs JSON<input name="agent_ids" value='["agent-ui"]' /></label>
-              <label>
-                Window
-                <select name="window_type">
-                  <option value="hourly">hourly</option>
-                  <option value="daily" selected>daily</option>
-                  <option value="weekly">weekly</option>
-                  <option value="monthly">monthly</option>
-                </select>
-              </label>
-              <label>Projected Additional Cost (cents)<input name="projected_additional_cost_cents" type="number" min="0" step="1" value="120" /></label>
-              <button type="submit" class="ghost">Evaluate Aggregated Limits</button>
-            </form>
-            <p id="costLimitEvalResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Aggregated limit decisions</caption>
-                <thead>
-                  <tr><th>Scope</th><th>Policy</th><th>Spend</th><th>Budget</th><th>Effective Budget</th><th>Utilization</th><th>Decision</th><th>Action</th><th>Soft Alert</th></tr>
-                </thead>
-                <tbody id="costLimitTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <article class="card cost-scope-breakdown-card">
+      <div class="card-head">
+        <h4>Scope breakdown</h4>
+        <button id="loadCostScopeBreakdown" class="ghost" type="button">Load</button>
+      </div>
+      <form id="costScopeBreakdownForm" class="form-grid compact">
+        <label>
+          Dimension
+          <select name="dimension" id="costScopeBreakdownDimension" aria-label="Cost breakdown dimension">
+            <option value="all" selected>All</option>
+            <option value="user">User</option>
+            <option value="team">Team</option>
+            <option value="group">Group</option>
+            <option value="request_tag">Request tag</option>
+          </select>
+        </label>
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="50" step="1" value="8" /></label>
+      </form>
+      <p id="costScopeBreakdownSummary" class="mono" aria-live="polite">Load scope breakdown to see spend by label.</p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cost scope breakdown by label</caption>
+          <thead>
+            <tr><th>Label</th><th>Spend (cents)</th><th>Events</th></tr>
+          </thead>
+          <tbody id="costScopeBreakdownTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Cost Drilldown</h3>
-            </div>
-            <form id="costDrilldownForm" class="form-grid">
-              <label>Session ID<input name="session_id" value="gateway-session" /></label>
-              <label>Agent ID<input name="agent_id" value="agent-ui" /></label>
-              <div class="inline-row">
-                <button id="loadCostSessionDrilldown" type="button" class="ghost">Load Session Cost</button>
-                <button id="loadCostAgentDrilldown" type="button" class="ghost">Load Agent Cost</button>
-              </div>
-            </form>
-            <p id="costDrilldownResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Cost event drilldown</caption>
-                <thead>
-                  <tr><th>Time</th><th>Request</th><th>Tag</th><th>Trace</th><th>Model</th><th>Endpoint</th><th>Input</th><th>Output</th><th>Cost (cents)</th></tr>
-                </thead>
-                <tbody id="costDrilldownTable"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+  <div data-console-panel="pricing" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Pricing Workspace</h3>
+        <label class="cost-subsection-label">
+          Section
+          <select id="costPricingSectionSelect" aria-label="Pricing workspace section">
+            <option value="config">Configuration Shortcuts</option>
+            <option value="calculator">Pricing Calculator</option>
+            <option value="models">Model Intelligence</option>
+          </select>
+        </label>
+      </div>
+    </article>
+
+    <div data-cost-pricing-section="config" class="cost-pricing-section">
+      <article class="card cost-pricing-card">
+        <div class="card-head">
+          <h3>Pricing Configuration</h3>
+          <button id="openRuntimeConfigPricing" class="ghost" type="button">Open Runtime Config</button>
+        </div>
+        <p class="mono cost-pricing-intro">Cost estimation uses model token pricing and cloud component multipliers. Use shortcuts to load valid templates into Runtime Configuration Studio.</p>
+        <div class="card-grid compact cost-pricing-grid">
+          <div class="cost-pricing-item">
+            <h4>Model Token Rates</h4>
+            <p>Define default and per-model input/output rates in cents per 1K tokens.</p>
+            <button class="ghost cost-config-shortcut" type="button" data-config-key="cost.model_token_rates_json">Edit Model Pricing</button>
+          </div>
+          <div class="cost-pricing-item">
+            <h4>Cloud Multipliers</h4>
+            <p>Adjust pricing by provider type and endpoint family for infrastructure overhead.</p>
+            <button class="ghost cost-config-shortcut" type="button" data-config-key="cost.cloud_component_multipliers_json">Edit Cloud Multipliers</button>
+          </div>
+          <div class="cost-pricing-item">
+            <h4>Operator Guidance</h4>
+            <p>Save these keys in Runtime Config to update gateway fallback cost estimation without code changes.</p>
+            <button class="ghost cost-config-shortcut" type="button" data-config-key="cost.model_token_rates_json">Load Pricing Template</button>
+          </div>
+          <div class="cost-pricing-item">
+            <h4>Provider Discounts</h4>
+            <p>Configure provider/model percentage discounts for enterprise pricing agreements.</p>
+            <button class="ghost cost-config-shortcut" type="button" data-config-key="cost.provider_discounts_json">Edit Provider Discounts</button>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <div data-cost-pricing-section="calculator" class="cost-pricing-section" hidden>
+      <article class="card">
+        <div class="card-head">
+          <h3>Pricing Calculator</h3>
+          <div class="inline-actions">
+            <button id="loadCostPricingCatalog" class="ghost" type="button">Load Catalog</button>
+            <button id="populateCostCalculatorFromCatalog" class="ghost" type="button">Use Catalog Defaults</button>
+          </div>
+        </div>
+        <form id="costPricingCalculatorForm" class="form-grid compact">
+          <label>
+            Provider Type
+            <select name="provider_type" id="costCalculatorProviderSelect" required>
+              <option value="openai">openai</option>
+            </select>
+          </label>
+          <label>
+            Model Name
+            <select name="model_name" id="costCalculatorModelSelect" required>
+              <option value="gpt-4o-mini">gpt-4o-mini</option>
+            </select>
+          </label>
+          <label>
+            Endpoint Family
+            <select name="endpoint_family" id="costCalculatorEndpointSelect" required>
+              <option value="responses" selected>responses</option>
+              <option value="chat">chat</option>
+              <option value="completions">completions</option>
+              <option value="embeddings">embeddings</option>
+            </select>
+          </label>
+          <label>Input Tokens<input name="input_tokens" type="number" min="0" step="1" value="1000" /></label>
+          <label>Output Tokens<input name="output_tokens" type="number" min="0" step="1" value="500" /></label>
+          <label>Custom Input Rate (c/1k)<input name="custom_input_cents_per_1k" type="number" min="0" step="0.0001" placeholder="optional" /></label>
+          <label>Custom Output Rate (c/1k)<input name="custom_output_cents_per_1k" type="number" min="0" step="0.0001" placeholder="optional" /></label>
+          <label>Custom Discount %<input name="custom_provider_discount_percent" type="number" min="0" max="95" step="0.01" placeholder="optional" /></label>
+          <button type="submit" class="primary">Calculate Cost</button>
+        </form>
+        <p id="costPricingCalculatorResult" class="runtime-feedback mono"></p>
+        <p id="costPricingCatalogResult" class="runtime-feedback mono"></p>
+      </article>
+    </div>
+
+    <div data-cost-pricing-section="models" class="cost-pricing-section" hidden>
+      <article class="card">
+        <div class="card-head">
+          <h3>Model Intelligence</h3>
+          <button id="loadCostModelCatalog" class="ghost" type="button">Load Model Catalog</button>
+        </div>
+        <p class="field-help">Rank supported models by effective pricing, provider multipliers, discount posture, and context window capacity.</p>
+        <p id="costModelCatalogResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Ranked model catalog</caption>
+            <thead>
+              <tr><th>Model</th><th>Provider</th><th>Context</th><th>Status</th><th>Avg Cost/1k</th><th>Rank</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="costModelCatalogTable"></tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+  </div>
+
+  <div data-console-panel="budgets" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Budget Workspace</h3>
+        <label class="cost-subsection-label">
+          Section
+          <select id="costBudgetSectionSelect" aria-label="Budget workspace section">
+            <option value="track">Spend Tracking</option>
+            <option value="policies">Budget Policies</option>
+            <option value="evaluate">Policy Evaluation</option>
+          </select>
+        </label>
+      </div>
+    </article>
+
+    <div data-cost-budget-section="track" class="cost-budget-section">
+      <article class="card">
+        <div class="card-head">
+          <h3>Spend Tracking</h3>
+        </div>
+        <form id="costSpendTrackForm" class="form-grid compact">
+          <label>Request ID<input name="request_id" value="manual-request-1" required /></label>
+          <label>Trace ID<input name="trace_id" placeholder="optional trace id" /></label>
+          <label>Request Tag<input name="request_tag" placeholder="billing.batch-01" /></label>
+          <label>Session ID<input name="session_id" value="gateway-session" required list="costRecentSessionList" /></label>
+          <datalist id="costRecentSessionList"></datalist>
+          <label>Agent ID<input name="agent_id" value="agent-ui" required list="costRecentAgentList" /></label>
+          <datalist id="costRecentAgentList"></datalist>
+          <label>
+            Scope Type
+            <select name="scope_type">
+              <option value="actor" selected>actor</option>
+              <option value="user">user</option>
+              <option value="team">team</option>
+              <option value="group">group</option>
+              <option value="owner">owner</option>
+              <option value="agent">agent</option>
+              <option value="environment">environment</option>
+            </select>
+          </label>
+          <label>Scope ID<input name="scope_id" value="ui-operator" required list="costSpendScopeIdList" /></label>
+          <datalist id="costSpendScopeIdList"></datalist>
+          <label>
+            Environment
+            <select name="environment">
+              <option value="dev" selected>dev</option>
+              <option value="stage">stage</option>
+              <option value="prod">prod</option>
+            </select>
+          </label>
+          <label>
+            Model Name
+            <select name="model_name" id="costSpendTrackModelSelect">
+              <option value="gpt-4o-mini">gpt-4o-mini</option>
+            </select>
+          </label>
+          <label>
+            Endpoint Family
+            <select name="endpoint_family">
+              <option value="responses" selected>responses</option>
+              <option value="chat">chat</option>
+              <option value="completions">completions</option>
+            </select>
+          </label>
+          <label>Input Tokens<input name="input_tokens" type="number" min="0" step="1" value="1000" /></label>
+          <label>Output Tokens<input name="output_tokens" type="number" min="0" step="1" value="500" /></label>
+          <label>Estimated Cost (cents)<input name="estimated_cost_cents" type="number" min="0" step="1" value="120" /></label>
+          <label>Currency<input name="currency" value="USD" required /></label>
+          <button type="submit" class="primary">Track Spend Event</button>
+        </form>
+        <p id="costSpendTrackResult" class="runtime-feedback mono"></p>
+      </article>
+    </div>
+
+    <div data-cost-budget-section="policies" class="cost-budget-section" hidden>
+      <article class="card">
+        <div class="card-head">
+          <h3>Budget Policies</h3>
+          <div class="inline-actions">
+            <button id="loadCostBudgets" class="ghost" type="button">Load Budgets</button>
+            <button id="loadCostAnomalies" class="ghost" type="button">Load Anomalies</button>
+          </div>
+        </div>
+        <form id="costBudgetForm" class="form-grid compact">
+          <label>Policy ID (for update)<input name="budget_policy_id" placeholder="budget-policy-id" /></label>
+          <label>
+            Scope Type
+            <select name="scope_type">
+              <option value="actor" selected>actor</option>
+              <option value="user">user</option>
+              <option value="owner">owner</option>
+              <option value="agent">agent</option>
+              <option value="team">team</option>
+              <option value="group">group</option>
+              <option value="environment">environment</option>
+            </select>
+          </label>
+          <label>Scope ID<input name="scope_id" required value="ui-operator" list="costBudgetScopeIdList" /></label>
+          <datalist id="costBudgetScopeIdList"></datalist>
+          <label>Budget (cents)<input name="budget_amount_cents" type="number" min="1" step="1" value="5000" /></label>
+          <label>
+            Window
+            <select name="window_type">
+              <option value="realtime">realtime</option>
+              <option value="daily" selected>daily</option>
+              <option value="adhoc">adhoc</option>
+              <option value="weekly">weekly</option>
+              <option value="monthly">monthly</option>
+              <option value="yearly">yearly</option>
+            </select>
+          </label>
+          <label>Soft Limit %<input name="soft_limit_percent" type="number" min="1" max="100" step="0.1" value="75" /></label>
+          <label>Hard Limit %<input name="hard_limit_percent" type="number" min="1" max="100" step="0.1" value="95" /></label>
+          <label>
+            Soft Action
+            <select name="action_on_soft_limit">
+              <option value="notify" selected>notify</option>
+              <option value="throttle">throttle</option>
+            </select>
+          </label>
+          <label>
+            Hard Action
+            <select name="action_on_hard_limit">
+              <option value="block" selected>block</option>
+              <option value="throttle">throttle</option>
+            </select>
+          </label>
+          <label>Reset Timezone<input name="reset_timezone" value="UTC" placeholder="UTC" /></label>
+          <label>Reset Hour Local<input name="reset_hour_local" type="number" min="0" max="23" step="1" value="0" /></label>
+          <label>Temporary Increase (cents)<input name="temporary_increase_cents" type="number" min="0" step="1" value="0" /></label>
+          <label>Temporary Increase Expires<input name="temporary_increase_expires_at" type="datetime-local" /></label>
+          <label>
+            Soft Alert Enabled
+            <select name="soft_alert_enabled">
+              <option value="true" selected>true</option>
+              <option value="false">false</option>
+            </select>
+          </label>
+          <label>Rate Limit TPM<input name="rate_limit_tpm" type="number" min="1" step="1" placeholder="12000" /></label>
+          <label>Rate Limit RPM<input name="rate_limit_rpm" type="number" min="1" step="1" placeholder="120" /></label>
+          <label>Session Iteration Cap<input name="session_iteration_cap" type="number" min="1" step="1" placeholder="20" /></label>
+          <label>Session Budget (cents)<input name="session_budget_cents" type="number" min="1" step="1" placeholder="1500" /></label>
+          <div class="inline-actions wide-field">
+            <button type="submit" class="primary">Save Budget Policy</button>
+            <button id="resetCostBudgetForm" type="button" class="ghost">Reset</button>
+          </div>
+        </form>
+        <p id="costBudgetResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Created budget policies</caption>
+            <thead>
+              <tr><th>Policy ID</th><th>Scope</th><th>Budget</th><th>Window</th><th>Limits</th><th>Controls</th><th>Status</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="costBudgetTable"></tbody>
+          </table>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Cost anomalies</caption>
+            <thead>
+              <tr><th>Anomaly</th><th>Type</th><th>Severity</th><th>Scope</th><th>Observed</th><th>Threshold</th><th>Detected</th></tr>
+            </thead>
+            <tbody id="costAnomaliesTable"></tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+
+    <div data-cost-budget-section="evaluate" class="cost-budget-section" hidden>
+      <article class="card">
+        <div class="card-head">
+          <h3>Policy Evaluation</h3>
+        </div>
+        <form id="costPolicyEvalForm" class="form-grid compact">
+          <label>
+            Scope Type
+            <select name="scope_type">
+              <option value="actor" selected>actor</option>
+              <option value="user">user</option>
+              <option value="owner">owner</option>
+              <option value="agent">agent</option>
+              <option value="team">team</option>
+              <option value="group">group</option>
+              <option value="environment">environment</option>
+            </select>
+          </label>
+          <label>Scope ID<input name="scope_id" required value="ui-operator" list="costPolicyEvalScopeIdList" /></label>
+          <datalist id="costPolicyEvalScopeIdList"></datalist>
+          <label>
+            Window
+            <select name="window_type">
+              <option value="realtime">realtime</option>
+              <option value="daily" selected>daily</option>
+              <option value="adhoc">adhoc</option>
+              <option value="weekly">weekly</option>
+              <option value="monthly">monthly</option>
+              <option value="yearly">yearly</option>
+            </select>
+          </label>
+          <button type="submit" class="primary">Evaluate Budget Policy</button>
+        </form>
+        <p id="costPolicyEvalResult" class="runtime-feedback mono"></p>
+        <form id="costLimitEvalForm" class="form-grid compact">
+          <label>Actor ID<input name="actor_id" value="ui-operator" /></label>
+          <label>Team IDs JSON<input name="team_ids" value='["team-platform"]' /></label>
+          <label>Group IDs JSON<input name="group_ids" value='["grp-platform"]' /></label>
+          <label>Agent IDs JSON<input name="agent_ids" value='["agent-ui"]' /></label>
+          <label>
+            Window
+            <select name="window_type">
+              <option value="realtime">realtime</option>
+              <option value="daily" selected>daily</option>
+              <option value="adhoc">adhoc</option>
+              <option value="weekly">weekly</option>
+              <option value="monthly">monthly</option>
+              <option value="yearly">yearly</option>
+            </select>
+          </label>
+          <label>Projected Additional Cost (cents)<input name="projected_additional_cost_cents" type="number" min="0" step="1" value="120" /></label>
+          <button type="submit" class="ghost">Evaluate Aggregated Limits</button>
+        </form>
+        <p id="costLimitEvalResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Aggregated limit decisions</caption>
+            <thead>
+              <tr><th>Scope</th><th>Policy</th><th>Spend</th><th>Budget</th><th>Effective Budget</th><th>Utilization</th><th>Projected</th><th>Basis</th><th>Decision</th><th>Action</th><th>Soft Alert</th></tr>
+            </thead>
+            <tbody id="costLimitTable"></tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+  </div>
+
+  <div data-console-panel="drilldown" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Cost Drilldown</h3>
+      </div>
+      <form id="costDrilldownForm" class="form-grid compact">
+        <label>
+          Drilldown Type
+          <select name="drilldown_type" id="costDrilldownTypeSelect">
+            <option value="session" selected>Session</option>
+            <option value="agent">Agent</option>
+          </select>
+        </label>
+        <label>Session ID<input name="session_id" value="gateway-session" list="costDrilldownSessionList" /></label>
+        <datalist id="costDrilldownSessionList"></datalist>
+        <label>Agent ID<input name="agent_id" value="agent-ui" list="costDrilldownAgentList" /></label>
+        <datalist id="costDrilldownAgentList"></datalist>
+        <div class="inline-actions wide-field">
+          <button id="loadCostDrilldown" type="button" class="primary">Load Cost Events</button>
+          <button id="loadCostSessionDrilldown" type="button" class="ghost">Session</button>
+          <button id="loadCostAgentDrilldown" type="button" class="ghost">Agent</button>
+        </div>
+      </form>
+      <p id="costDrilldownResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cost event drilldown</caption>
+          <thead>
+            <tr><th>Time</th><th>Request</th><th>Tag</th><th>Trace</th><th>Model</th><th>Endpoint</th><th>Input</th><th>Output</th><th>Cost (cents)</th></tr>
+          </thead>
+          <tbody id="costDrilldownTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

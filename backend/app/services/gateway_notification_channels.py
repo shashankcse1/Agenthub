@@ -239,12 +239,12 @@ def build_notification_channel_context(db: Session, channel_id: str) -> dict:
         "credential_binding_configured": binding_configured,
         "recommended_secret_ref": NOTIFICATION_PROVIDER_SECRET_REFS.get(channel.get("provider_type") or ""),
         "secret_format_hint": NOTIFICATION_PROVIDER_SECRET_FORMAT_HINTS.get(channel.get("provider_type") or ""),
-        "phase_1_runtime": "stub_simulated_only",
+        "phase_1_runtime": "live_delivery_enabled",
         "operator_note": (
             "Store provider secrets in Providers → Database Secret Values at the recommended_secret_ref path, "
             "then create a credential binding (consumer platform/gateway) and reference its binding_id here. "
             "Never put Auth Tokens or API keys in gateway.notification_channels_json or flow JSON. "
-            "Phase 1 orchestration email_send/sms_send nodes simulate delivery only."
+            "Flow Orchestration email_send/sms_send nodes deliver via configured channels when the live executor is enabled."
         ),
         "supported_provider_types": sorted(ALLOWED_NOTIFICATION_PROVIDER_TYPES),
     }

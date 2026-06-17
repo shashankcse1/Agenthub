@@ -3,6 +3,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.conftest import response_error_code, response_error_message
 
 client = TestClient(app)
 
@@ -98,4 +99,5 @@ def test_agent_configs_reject_path_payload_key_mismatch():
         headers=admin_headers,
     )
     assert mismatch.status_code == 422
-    assert mismatch.json()["detail"] == "agent_key in path must match payload"
+    assert response_error_code(mismatch) == "VALIDATION_ERROR"
+    assert "agent_key in path must match payload" in response_error_message(mismatch)

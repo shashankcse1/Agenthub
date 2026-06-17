@@ -63,11 +63,15 @@ PII_KEYS = {
     "approver_id",
     "resource_id",
     "email",
+    "user_login",
     "phone",
     "ssn",
     "subject",
     "secret_ref",
 }
+
+PROMPT_LOG_KEYS = {"user_prompt", "prompt_text", "prompt_preview"}
+PROMPT_LOG_MAX_CHARS = 240
 
 
 def _stable_fingerprint(value: Any) -> str:
@@ -84,11 +88,20 @@ def sanitize_for_log(key: str, value: Any) -> Any:
         return "[REDACTED]"
     if lowered in PII_KEYS:
         return _stable_fingerprint(value)
+    if lowered in PROMPT_LOG_KEYS:
+        text = str(value or "")
+        if len(text) > PROMPT_LOG_MAX_CHARS:
+            return f"{text[:PROMPT_LOG_MAX_CHARS]}...[truncated,{len(text)} chars]"
+        return text
     return value
 
 
 def sanitize_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    sanitized = {k: sanitize_for_log(k, v) for k, v in fields.items()}
+    merged = dict(fields)
+    from app.request_context import inject_actor_log_fields
+
+    inject_actor_log_fields(merged)
+    sanitized = {k: sanitize_for_log(k, v) for k, v in merged.items()}
     if "description" not in {str(k).lower() for k in sanitized.keys()}:
         sanitized["description"] = "auto"
     return sanitized

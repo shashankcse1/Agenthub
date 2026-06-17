@@ -168,6 +168,40 @@ Optional: skip only the gateway pre-call/mirroring smoke layer:
 
 ```bash
 SKIP_GATEWAY_PRECALL_MIRROR_SMOKE=1 ./scripts/smokee2e.sh
+
+Release-governance automation (risk dashboard + pending closure + decision record + guardrails):
+
+```bash
+cd backend
+make risk-closure-dashboard
+make pending-closure-report
+make release-decision-record RELEASE_ID=rel-001 ENV=staging OWNER=ops DECISION=TBD
+make release-risk-guardrails ENV=staging DECISION=TBD DECISION_RECORD=../artifacts/release-decision-rel-001.md
+```
+
+Strict production evidence generation with explicit assertion inputs:
+
+```bash
+cd backend
+RELEASE_DECISION=GO \
+RELEASE_ACCEPTED_RISK_APPROVED=yes \
+RELEASE_CISO_ACK=yes \
+RELEASE_IMPACT_LINE_1='All required review approvals completed' \
+RELEASE_IMPACT_LINE_2='Risk closure posture reviewed in latest dashboard' \
+RELEASE_IMPACT_LINE_3='Residual items tracked with governance controls' \
+make release-evidence-strict RELEASE_ID=rel-001 ENV=production OWNER=ciso-review
+```
+
+When overdue closure items exist for production GO, include approved exception reference:
+
+```bash
+cd backend
+RISK_EXCEPTION_REF=EXC-123 \
+RELEASE_DECISION=GO \
+RELEASE_ACCEPTED_RISK_APPROVED=yes \
+RELEASE_CISO_ACK=yes \
+make release-evidence-strict RELEASE_ID=rel-001 ENV=production OWNER=ciso-review
+```
 ```
 
 ## 7) Troubleshooting Fast Path
@@ -194,6 +228,9 @@ make showstartup
 
 - backend/README.md
 - frontend/README.md
+- backend/docs/governance/release-gate-checklist.md
+- backend/docs/governance/security-risk-closure-plan.md
+- backend/docs/governance/multi-lens-security-architecture-review.md
 - backend/docs/security/security-operations-runbook.md
 - backend/docs/security/day0-password-and-secrets-hardening.md
 - backend/docs/integrations/aws-integration-and-multicloud-model-fallback.md
@@ -404,3 +441,33 @@ curl -s http://127.0.0.1:8000/gateway/mcp/servers \
    -H 'X-Actor-Role: Auditor' \
    -H 'X-Actor-Id: audit-reader' | jq
 ```
+
+## Platform health, banners, and operator feedback
+
+Check API and cache posture:
+
+```bash
+curl -s http://127.0.0.1:8000/health | jq
+curl -s http://127.0.0.1:8000/platform/operational-status | jq
+```
+
+Enable maintenance banner (Runtime Config UI or API):
+
+- `platform.maintenance_mode` = `true`
+- `platform.maintenance_message` = operator-visible text
+
+Tune slow-performance threshold:
+
+- `platform.slow_response_threshold_ms` (default `2000`)
+
+Operator feedback analytics (Auditor+):
+
+```bash
+curl -s 'http://127.0.0.1:8000/platform/feedback/analytics?since_hours=168' \
+   -H 'X-Actor-Role: Auditor' \
+   -H 'X-Actor-Id: audit-reader' | jq
+```
+
+Interactive API docs (Swagger UI): `http://127.0.0.1:8000/docs` — **Platform** and **Governance** tags include feedback persistence, audit notes, and error contracts. OpenAPI JSON: `GET /openapi.json`.
+
+Full runbook: `backend/docs/governance/operational-guide.md`. UI/API map: `backend/docs/governance/api-inventory-and-ui-map.md`.

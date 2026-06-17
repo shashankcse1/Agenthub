@@ -406,6 +406,9 @@ let gatewayOpenAiResponseRows = [];
 let gatewayOpenAiFileRows = [];
 let gatewayOpenAiRealtimeSessionRows = [];
 let gatewayOpenAiRealtimeEventRows = [];
+let gatewayAssistantRows = [];
+let gatewayFineTuningJobRows = [];
+let playgroundRunDrilldownData = null;
 let gatewayConfiguredModelValues = [];
 let gatewaySupportedModelCatalogRows = [];
 let gatewayModelPriorityRankByName = new Map();
@@ -519,6 +522,8 @@ let orchestrationCanvasZoom = 100;
 let orchestrationPolicySnapshot = null;
 let orchestrationRunRows = [];
 let orchestrationApprovalSelectedFlowId = "";
+let orchestrationDueCertRows = [];
+let orchestrationJitRows = [];
 let orchestrationFlowActive = false;
 let orchestrationInsertAtIndex = null;
 let orchestrationInsertBranchIndex = null;
@@ -540,6 +545,8 @@ let orchestrationValidationState = { valid: true, errors: [], warnings: [], byNo
 let orchestrationClientValidationCache = null;
 let orchestrationCollapsedParallelGroups = new Set();
 let orchestrationDefaultRunMode = "serial";
+let orchestrationFocusedParallelBranchIndex = null;
+let orchestrationParallelBranchOffset = {};
 let orchestrationDataMappingOpen = false;
 let orchestrationDataMappingFocusNodeId = null;
 
@@ -648,6 +655,244 @@ function getOrchestrationNodeById(nodeId) {
   return findOrchestrationNodeLocation(nodeId)?.node || null;
 }
 
+function findOrchestrationParallelItemByGroupId(groupId) {
+  const normalized = String(groupId || "").trim();
+  if (!normalized) return null;
+  for (let itemIndex = 0; itemIndex < orchestrationBuilderItems.length; itemIndex += 1) {
+    const item = orchestrationBuilderItems[itemIndex];
+    if (isOrchestrationParallelItem(item) && item.groupId === normalized) {
+      return { itemIndex, item };
+    }
+  }
+  return null;
+}
+
+function canMoveOrchestrationBuilderItem(itemIndex, direction) {
+  if (Number.isNaN(itemIndex) || itemIndex < 0) return false;
+  const nextIndex = itemIndex + direction;
+  return nextIndex >= 0 && nextIndex < orchestrationBuilderItems.length;
+}
+
+function moveOrchestrationBuilderItem(itemIndex, direction) {
+  if (!canMoveOrchestrationBuilderItem(itemIndex, direction)) return;
+  const swapWith = itemIndex + direction;
+  [orchestrationBuilderItems[itemIndex], orchestrationBuilderItems[swapWith]] = [
+    orchestrationBuilderItems[swapWith],
+    orchestrationBuilderItems[itemIndex],
+  ];
+  assignOrchestrationNodePositions();
+  renderOrchestrationStudio();
+  setOrchestrationFeedback(
+    direction < 0 ? "Moved block up in the flow." : "Moved block down in the flow.",
+    "orchestrationBuilderFeedback",
+    "success",
+  );
+}
+
+function scrollOrchestrationSelectionIntoView() {
+  const selectedId = orchestrationSelectedNodeId;
+  if (!selectedId) return;
+  const escaped =
+    typeof CSS !== "undefined" && CSS.escape ? CSS.escape(selectedId) : selectedId.replace(/"/g, '\\"');
+  const target = qs(`#orchestrationCanvasLane [data-node-id="${escaped}"]`);
+  target?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+}
+
+function scrollOrchestrationInspectorIntoView() {
+  qs(".flow-studio-inspector")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function scrollParallelBranchIntoView(groupId, branchIndex) {
+  const group = qs(`[data-parallel-group="${groupId}"]`);
+  const branch = group?.querySelector(`[data-parallel-branch="${branchIndex}"]`);
+  const scroller = group?.querySelector(".flow-parallel-branches");
+  if (!branch || !scroller) return;
+  const targetLeft = branch.offsetLeft - scroller.offsetLeft - 8;
+  scroller.scrollTo({ left: Math.max(0, targetLeft), behavior: "smooth" });
+  window.setTimeout(() => syncParallelBranchScrollUi(scroller.closest(".flow-parallel-branches-wrap")), 280);
+}
+
+function getParallelBranchOffset(groupId, branchCount = 0) {
+  const raw = orchestrationParallelBranchOffset[groupId];
+  const maxIndex = Math.max(0, branchCount - 1);
+  if (raw === undefined || raw === null || Number.isNaN(raw)) return 0;
+  return Math.max(0, Math.min(maxIndex, raw));
+}
+
+function jumpParallelBranch(groupId, branchIndex) {
+  const group = qs(`[data-parallel-group="${groupId}"]`);
+  const branchCount = Number(group?.getAttribute("data-branch-count") || 0);
+  const branches = group ? [...group.querySelectorAll(".flow-parallel-branch")] : [];
+  if (!branches.length) return;
+  const clamped = Math.max(0, Math.min(branches.length - 1, branchIndex));
+  orchestrationParallelBranchOffset[groupId] = clamped;
+  orchestrationFocusedParallelBranchIndex = clamped;
+  if (branchCount >= 3) {
+    renderOrchestrationCanvas();
+    renderOrchestrationInspector();
+    return;
+  }
+  const scroller = group?.querySelector(".flow-parallel-branches");
+  const branch = branches[clamped];
+  if (branch && scroller) {
+    scroller.scrollTo({ left: Math.max(0, branch.offsetLeft - 12), behavior: "smooth" });
+  }
+  syncParallelBranchScrollUi(group?.querySelector(".flow-parallel-branches-wrap"), clamped);
+  window.setTimeout(() => syncParallelBranchScrollUi(group?.querySelector(".flow-parallel-branches-wrap"), clamped), 320);
+}
+
+function scrollParallelBranches(groupId, direction) {
+  const group = qs(`[data-parallel-group="${groupId}"]`);
+  const branchCount = Number(group?.getAttribute("data-branch-count") || 0);
+  const branches = group ? [...group.querySelectorAll(".flow-parallel-branch")] : [];
+  if (!branches.length) return;
+  const nextIndex = getParallelBranchOffset(groupId, branches.length) + direction;
+  jumpParallelBranch(groupId, nextIndex);
+  if (branchCount >= 3) return;
+  const scroller = group?.querySelector(".flow-parallel-branches");
+  const wrap = scroller?.closest(".flow-parallel-branches-wrap");
+  const branch = branches[Math.max(0, Math.min(branches.length - 1, nextIndex))];
+  if (branch && scroller) {
+    scroller.scrollTo({ left: Math.max(0, branch.offsetLeft - 12), behavior: "smooth" });
+  }
+  syncParallelBranchScrollUi(wrap, orchestrationParallelBranchOffset[groupId]);
+  window.setTimeout(() => syncParallelBranchScrollUi(wrap, orchestrationParallelBranchOffset[groupId]), 320);
+}
+
+function syncParallelBranchScrollUi(wrap, visibleIndex) {
+  if (!wrap) return;
+  const scroller = wrap.querySelector(".flow-parallel-branches");
+  if (!scroller) return;
+  const group = wrap.closest(".flow-parallel-group");
+  const groupId = group?.getAttribute("data-parallel-group") || "";
+  const branches = scroller.querySelectorAll(".flow-parallel-branch");
+  const branchCount = branches.length || Number(group?.getAttribute("data-branch-count") || 0);
+  const showArrows = branchCount >= 3;
+  let idx = visibleIndex;
+  if (idx === undefined || idx === null) {
+    idx = getParallelBranchOffset(groupId, branchCount);
+  }
+  const canLeft = idx > 0;
+  const canRight = idx < branchCount - 1;
+  wrap.classList.toggle("show-scroll-arrows", showArrows);
+  wrap.classList.toggle("has-overflow", showArrows);
+  wrap.classList.toggle("can-scroll-left", canLeft);
+  wrap.classList.toggle("can-scroll-right", canRight);
+  group?.querySelectorAll("[data-parallel-scroll]").forEach((btn) => {
+    const dir = btn.getAttribute("data-parallel-scroll");
+    if (dir === "-1") btn.toggleAttribute("disabled", !canLeft);
+    if (dir === "1") btn.toggleAttribute("disabled", !canRight);
+  });
+  group?.querySelectorAll("[data-parallel-branch-jump]").forEach((tab) => {
+    const tabIdx = Number(tab.getAttribute("data-parallel-branch-jump"));
+    const isActive = tabIdx === idx;
+    tab.classList.toggle("is-active", isActive);
+    tab.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  group?.querySelectorAll(".flow-parallel-branch").forEach((branchEl, i) => {
+    const hidden = showArrows && i !== idx;
+    branchEl.classList.toggle("is-branch-tab-hidden", hidden);
+    branchEl.setAttribute("aria-hidden", hidden ? "true" : "false");
+  });
+  const label = group?.querySelector(`[data-parallel-visible-label="${groupId}"]`);
+  if (label) label.textContent = String(idx + 1);
+}
+
+function syncAllParallelBranchScrollUi() {
+  qsa("#orchestrationCanvasLane .flow-parallel-branches-wrap").forEach((wrap) => syncParallelBranchScrollUi(wrap));
+}
+
+function wireParallelBranchScrollListeners() {
+  qsa("#orchestrationCanvasLane .flow-parallel-branches").forEach((scroller) => {
+    scroller.addEventListener(
+      "scroll",
+      () => {
+        const wrap = scroller.closest(".flow-parallel-branches-wrap");
+        const groupId = wrap?.closest(".flow-parallel-group")?.getAttribute("data-parallel-group") || "";
+        const branches = [...scroller.querySelectorAll(".flow-parallel-branch")];
+        let idx = 0;
+        branches.forEach((branch, i) => {
+          if (branch.offsetLeft <= scroller.scrollLeft + 16) idx = i;
+        });
+        orchestrationParallelBranchOffset[groupId] = idx;
+        syncParallelBranchScrollUi(wrap, idx);
+      },
+      { passive: true },
+    );
+  });
+}
+
+function bindParallelBranchScrollEvents() {
+  const lane = qs("#orchestrationCanvasLane");
+  if (!lane || lane.dataset.parallelScrollBound === "true") return;
+  lane.dataset.parallelScrollBound = "true";
+
+  lane.addEventListener(
+    "wheel",
+    (event) => {
+      const scroller = event.target.closest(".flow-parallel-branches");
+      if (!scroller) return;
+      const useVerticalAsHorizontal = event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX);
+      const delta = useVerticalAsHorizontal ? event.deltaY : event.deltaX;
+      if (!useVerticalAsHorizontal && Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+      if (Math.abs(delta) < 1) return;
+      event.preventDefault();
+      scroller.scrollLeft += delta;
+      syncParallelBranchScrollUi(scroller.closest(".flow-parallel-branches-wrap"));
+    },
+    { passive: false },
+  );
+
+  const viewport = qs("#orchestrationCanvasViewport");
+  if (viewport && typeof ResizeObserver !== "undefined") {
+    const resizeObserver = new ResizeObserver(() => syncAllParallelBranchScrollUi());
+    resizeObserver.observe(viewport);
+  }
+}
+
+function selectOrchestrationParallelGroup(groupId, options = {}) {
+  orchestrationSelectedNodeId = `parallel:${groupId}`;
+  if (Object.prototype.hasOwnProperty.call(options, "branchIndex")) {
+    orchestrationFocusedParallelBranchIndex = options.branchIndex;
+  } else if (!options.keepBranchFocus) {
+    orchestrationFocusedParallelBranchIndex = null;
+  }
+  clearOrchestrationInsertState();
+  renderOrchestrationStudio();
+  scrollOrchestrationSelectionIntoView();
+  scrollOrchestrationInspectorIntoView();
+  requestAnimationFrame(() => {
+    if (orchestrationFocusedParallelBranchIndex !== null && orchestrationFocusedParallelBranchIndex !== undefined) {
+      scrollParallelBranchIntoView(groupId, orchestrationFocusedParallelBranchIndex);
+    }
+  });
+}
+
+function swapOrchestrationParallelBranches(itemIndex, branchIndexA, branchIndexB) {
+  const item = orchestrationBuilderItems[itemIndex];
+  if (!isOrchestrationParallelItem(item)) return;
+  if (
+    branchIndexA < 0 ||
+    branchIndexB < 0 ||
+    branchIndexA >= item.branches.length ||
+    branchIndexB >= item.branches.length
+  ) {
+    return;
+  }
+  [item.branches[branchIndexA], item.branches[branchIndexB]] = [
+    item.branches[branchIndexB],
+    item.branches[branchIndexA],
+  ];
+  assignOrchestrationNodePositions();
+  renderOrchestrationStudio();
+  setOrchestrationFeedback("Reordered parallel branches.", "orchestrationBuilderFeedback", "success");
+}
+
+function moveOrchestrationParallelBranchOrder(itemIndex, branchIndex, direction) {
+  swapOrchestrationParallelBranches(itemIndex, branchIndex, branchIndex + direction);
+  orchestrationFocusedParallelBranchIndex = branchIndex + direction;
+}
+
 function listOrchestrationNodesBefore(nodeId) {
   const located = findOrchestrationNodeLocation(nodeId);
   if (!located) return [];
@@ -671,6 +916,18 @@ function listOrchestrationNodesBefore(nodeId) {
   return prior;
 }
 
+function getOrchestrationPriorSteps(currentNodeId) {
+  return listOrchestrationNodesBefore(currentNodeId).map((node, index) => {
+    const visual = getOrchestrationNodeVisual(node.type);
+    const catalog = orchestrationNodeTypes.find((item) => item.type === node.type) || {};
+    return {
+      id: node.id,
+      type: node.type,
+      label: `${index + 1}. ${catalog.label || visual.label}`,
+    };
+  });
+}
+
 function getOrchestrationFallbackNodeTypes() {
   if (ORCH_REG?.getFallbackNodeTypes) return ORCH_REG.getFallbackNodeTypes();
   return [];
@@ -679,6 +936,442 @@ function getOrchestrationFallbackNodeTypes() {
 function getOrchestrationConfigFieldMeta(field) {
   if (ORCH_REG?.getConfigFieldMeta) return ORCH_REG.getConfigFieldMeta(field);
   return { label: field, placeholder: field, wide: false, multiline: false };
+}
+
+function getOrchestrationMappingSections() {
+  if (ORCH_REG?.getMappingSections) return ORCH_REG.getMappingSections();
+  return {};
+}
+
+function getOrchestrationMappingFieldSet() {
+  if (ORCH_REG?.getAllMappingFields) return new Set(ORCH_REG.getAllMappingFields());
+  return new Set([
+    "url",
+    "headers_json",
+    "body_template",
+    "arguments_json",
+    "prompt_template",
+    "input_template",
+    "query",
+    "query_template",
+    "content_template",
+    "to_template",
+    "subject_template",
+    "scope_id",
+  ]);
+}
+
+function getOrchestrationCustomInspectorFields(nodeType) {
+  if (ORCH_REG?.getCustomInspectorFields) return new Set(ORCH_REG.getCustomInspectorFields(nodeType));
+  return new Set();
+}
+
+function isOrchestrationMappingField(fieldName) {
+  if (ORCH_REG?.isMappingField) return ORCH_REG.isMappingField(fieldName);
+  return getOrchestrationMappingFieldSet().has(fieldName);
+}
+
+function getOrchestrationOutputParamHints(nodeType) {
+  if (ORCH_REG?.getOutputParamHints) return ORCH_REG.getOutputParamHints(nodeType);
+  return [];
+}
+
+function getOrchestrationOutputFieldPaths(stepType) {
+  if (ORCH_REG?.getOutputFieldPaths) return ORCH_REG.getOutputFieldPaths(stepType);
+  return ["status", "body", "response", "output", "message", "data", "result"];
+}
+
+function buildOrchestrationVariableReference(nodeId, fieldPath) {
+  if (!fieldPath || fieldPath === "__full__") {
+    return `{{steps['${nodeId}'].output}}`;
+  }
+  return `{{steps['${nodeId}'].output.${fieldPath}}}`;
+}
+
+function getOrchestrationRunContextVariables() {
+  if (ORCH_REG?.getRunContextVariables) return ORCH_REG.getRunContextVariables();
+  return [{ value: "{{input}}", label: "Run input" }];
+}
+
+function renderOrchestrationRunContextPicker(fieldName) {
+  const tokens = getOrchestrationRunContextVariables();
+  if (!tokens.length) return "";
+  const options = tokens.map((item) => `<option value="${safeText(item.value)}">${safeText(item.label)}</option>`).join("");
+  return `
+    <select class="flow-run-context-insert" data-context-for="${safeText(fieldName)}" aria-label="Run context for ${safeText(fieldName)}">
+      <option value="">Run context…</option>
+      ${options}
+    </select>`;
+}
+
+function insertTextAtOrchestrationCursor(input, text) {
+  if (!input) return;
+  if (input === document.activeElement && typeof input.selectionStart === "number") {
+    const start = input.selectionStart;
+    const end = input.selectionEnd ?? start;
+    input.value = input.value.slice(0, start) + text + input.value.slice(end);
+    const pos = start + text.length;
+    input.setSelectionRange(pos, pos);
+  } else {
+    input.value = (input.value || "") + text;
+  }
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.focus();
+}
+
+function insertOrchestrationVariableReference(reference, targetInput) {
+  const active = document.activeElement;
+  const target =
+    targetInput ||
+    (active?.matches?.("[data-inspector-config-field]") ? active : null) ||
+    active?.closest?.("[data-inspector-config-field]");
+  if (target?.matches?.("[data-inspector-config-field]")) {
+    insertTextAtOrchestrationCursor(target, reference);
+    return true;
+  }
+  void copyOrchestrationMappingSnippet(reference);
+  return false;
+}
+
+function applyOrchestrationInspectorFieldValue(node, fieldName, value, { mode = "insert", targetInput = null } = {}) {
+  const panel = qs("#orchestrationInspectorPanel");
+  const target =
+    targetInput ||
+    panel?.querySelector(`[data-inspector-config-field="${fieldName}"]`) ||
+    (document.activeElement?.matches?.("[data-inspector-config-field]")
+      ? document.activeElement
+      : null);
+  if (!target) return false;
+  if (mode === "replace") {
+    target.value = value;
+  } else {
+    insertTextAtOrchestrationCursor(target, value);
+  }
+  if (node?.config && fieldName) {
+    node.config[fieldName] = target.value;
+  }
+  target.dispatchEvent(new Event("input", { bubbles: true }));
+  target.dispatchEvent(new Event("change", { bubbles: true }));
+  refreshOrchestrationValidationCache();
+  renderOrchestrationCanvas();
+  return true;
+}
+
+function renderOrchestrationVariableFieldOptions(stepType, includeCustom = true) {
+  const paths = getOrchestrationOutputFieldPaths(stepType);
+  const options = paths
+    .map((path) => `<option value="${safeText(path)}">${safeText(path)}</option>`)
+    .join("");
+  const fullOutput = `<option value="__full__">Entire step output</option>`;
+  return includeCustom
+    ? `${fullOutput}${options}<option value="__custom__">Custom path…</option>`
+    : `${fullOutput}${options}`;
+}
+
+function renderOrchestrationVariablePicker(currentNodeId, fieldName, { mode = "insert" } = {}) {
+  const prior = getOrchestrationPriorSteps(currentNodeId);
+  if (!prior.length) return "";
+  const stepOptions = prior
+    .map((step) => `<option value="${safeText(step.id)}">${safeText(step.label)}</option>`)
+    .join("");
+  return `
+    <div class="flow-var-picker" data-var-picker-for="${safeText(fieldName)}" data-var-picker-mode="${safeText(mode)}">
+      <select class="flow-var-picker-step" aria-label="Prior step for ${safeText(fieldName)}">
+        <option value="">Insert from step…</option>
+        ${stepOptions}
+      </select>
+      <select class="flow-var-picker-field" disabled aria-label="Output field for ${safeText(fieldName)}">
+        <option value="">Select field…</option>
+      </select>
+    </div>`;
+}
+
+function resetOrchestrationVariablePicker(pickerEl) {
+  const stepSelect = pickerEl?.querySelector(".flow-var-picker-step");
+  const fieldSelect = pickerEl?.querySelector(".flow-var-picker-field");
+  if (stepSelect) stepSelect.value = "";
+  if (fieldSelect) {
+    fieldSelect.innerHTML = '<option value="">Select field…</option>';
+    fieldSelect.disabled = true;
+  }
+}
+
+function bindOrchestrationVariablePickers(scope, node) {
+  const root = scope || qs("#orchestrationInspectorPanel");
+  if (!root) return;
+  root.querySelectorAll(".flow-var-picker[data-var-picker-for]").forEach((pickerEl) => {
+    const fieldName = pickerEl.getAttribute("data-var-picker-for");
+    const stepSelect = pickerEl.querySelector(".flow-var-picker-step");
+    const fieldSelect = pickerEl.querySelector(".flow-var-picker-field");
+    const targetInput = root.querySelector(`[data-inspector-config-field="${fieldName}"]`);
+    if (!stepSelect || !fieldSelect) return;
+
+    stepSelect.addEventListener("change", () => {
+      const stepId = stepSelect.value;
+      fieldSelect.innerHTML = '<option value="">Select field…</option>';
+      fieldSelect.disabled = !stepId;
+      if (!stepId) return;
+      const step = getOrchestrationPriorSteps(node.id).find((item) => item.id === stepId);
+      fieldSelect.innerHTML = `<option value="">Select field…</option>${renderOrchestrationVariableFieldOptions(step?.type || "")}`;
+    });
+
+    fieldSelect.addEventListener("change", () => {
+      const stepId = stepSelect.value;
+      let fieldPath = fieldSelect.value;
+      if (!stepId || !fieldPath) return;
+      if (fieldPath === "__custom__") {
+        fieldPath = window.prompt(
+          "Enter output field path (e.g. data.email or choices[0].message.content):",
+        );
+        if (!fieldPath?.trim()) {
+          fieldSelect.value = "";
+          return;
+        }
+        fieldPath = fieldPath.trim();
+      }
+      const reference = buildOrchestrationVariableReference(stepId, fieldPath);
+      const mode = pickerEl.getAttribute("data-var-picker-mode") || "insert";
+      applyOrchestrationInspectorFieldValue(node, fieldName, reference, { mode, targetInput });
+      resetOrchestrationVariablePicker(pickerEl);
+    });
+  });
+
+  root.querySelectorAll(".flow-scope-id-preset").forEach((select) => {
+    select.addEventListener("change", () => {
+      const field = select.getAttribute("data-preset-for");
+      if (!field) return;
+      applyOrchestrationInspectorFieldValue(node, field, select.value, { mode: "replace" });
+      select.value = "";
+    });
+  });
+
+  root.querySelectorAll(".flow-run-context-insert").forEach((select) => {
+    select.addEventListener("change", () => {
+      const field = select.getAttribute("data-context-for");
+      const token = select.value;
+      if (!field || !token) return;
+      const mode =
+        root.querySelector(`.flow-var-picker[data-var-picker-for="${field}"]`)?.getAttribute("data-var-picker-mode") ||
+        "insert";
+      applyOrchestrationInspectorFieldValue(node, field, token, { mode });
+      select.value = "";
+    });
+  });
+
+  root.querySelectorAll(".flow-template-starter").forEach((select) => {
+    select.addEventListener("change", () => {
+      const field = select.getAttribute("data-starter-for");
+      if (!field || !select.value) return;
+      applyOrchestrationInspectorFieldValue(node, field, resolveOrchestrationTemplateStarter(select.value, node.id), {
+        mode: "replace",
+      });
+      select.value = "";
+    });
+  });
+
+  root.querySelectorAll(".flow-json-path-picker").forEach((select) => {
+    select.addEventListener("change", () => {
+      const field = select.getAttribute("data-json-path-for");
+      if (!field || !select.value) return;
+      applyOrchestrationInspectorFieldValue(node, field, select.value, { mode: "replace" });
+      select.value = "";
+    });
+  });
+
+  root.querySelectorAll(".flow-document-id-history").forEach((select) => {
+    select.addEventListener("change", () => {
+      const field = select.getAttribute("data-document-id-for");
+      if (!field || !select.value) return;
+      applyOrchestrationInspectorFieldValue(node, field, select.value, { mode: "replace" });
+      select.value = "";
+    });
+  });
+
+  root.querySelectorAll(".flow-data-map-var-insert").forEach((select) => {
+    select.addEventListener("change", () => {
+      const stepId = select.getAttribute("data-step-id");
+      let fieldPath = select.value;
+      if (!stepId || !fieldPath) return;
+      if (fieldPath === "__custom__") {
+        fieldPath = window.prompt(
+          "Enter output field path (e.g. data.email or choices[0].message.content):",
+        );
+        if (!fieldPath?.trim()) {
+          select.value = "";
+          return;
+        }
+        fieldPath = fieldPath.trim();
+      }
+      const reference = buildOrchestrationVariableReference(stepId, fieldPath);
+      const active = document.activeElement;
+      const focusedField = active?.matches?.("[data-inspector-config-field]")
+        ? active.getAttribute("data-inspector-config-field")
+        : null;
+      const inserted = focusedField
+        ? applyOrchestrationInspectorFieldValue(node, focusedField, reference, {
+            mode: "insert",
+            targetInput: active,
+          })
+        : insertOrchestrationVariableReference(reference);
+      if (!inserted) {
+        setOrchestrationFeedback(
+          "Copied to clipboard — focus an inspector field to insert at cursor.",
+          "orchestrationBuilderFeedback",
+          "info",
+        );
+      }
+      select.value = "";
+    });
+  });
+}
+
+function renderOrchestrationMappingField(field, node, required = false) {
+  const meta = getOrchestrationConfigFieldMeta(field);
+  let helperText = meta.helperText || "";
+  if (field === "body_template" && (node.type === "email_send" || node.type === "sms_send")) {
+    helperText = "Message body with {{steps['NODE_ID'].output.field}} placeholders from prior steps.";
+  }
+  const value = orchestrationConfigFieldValue(node.config || {}, field, meta);
+  const wideClass = meta.wide ? " wide-field" : "";
+  const label = field === "body_template" && (node.type === "email_send" || node.type === "sms_send")
+    ? "Body (template)"
+    : meta.label;
+  const placeholder =
+    field === "body_template" && (node.type === "email_send" || node.type === "sms_send")
+      ? "Your alert text or {{steps['prior'].output.summary}}"
+      : meta.placeholder || field;
+  const helper = helperText ? `<span class="flow-mapping-field-hint">${safeText(helperText)}</span>` : "";
+  const starter = renderOrchestrationTemplateStarterPicker(node, field);
+  const runContext = renderOrchestrationRunContextPicker(field);
+  const picker = renderOrchestrationVariablePicker(node.id, field);
+  const prior = getOrchestrationPriorSteps(node.id);
+  const documentIdHistory =
+    field === "document_id"
+      ? (() => {
+          const historyOptions = prior
+            .flatMap((step) => {
+              const output = orchestrationHistoryOutputShapes[step.id];
+              if (!output) return [];
+              const paths = listOrchestrationOutputFieldPaths(output).filter((path) => /document|id/i.test(path));
+              return paths.map((path) => ({ stepId: step.id, path }));
+            })
+            .slice(0, 12);
+          if (!historyOptions.length) return "";
+          const options = historyOptions
+            .map(
+              (item) =>
+                `<option value="{{steps['${safeText(item.stepId)}'].output${item.path.replace(/^\$/, "")}}}">History ${safeText(item.path)} (${safeText(item.stepId)})</option>`,
+            )
+            .join("");
+          return `<select class="flow-document-id-history" data-document-id-for="${safeText(field)}" aria-label="Document ID from prior run"><option value="">From last run…</option>${options}</select>`;
+        })()
+      : "";
+  const rows = field === "body_template" || field === "headers_json" || field === "arguments_json" ? 5 : 3;
+  const helperRow =
+    starter || runContext || documentIdHistory
+      ? `<div class="flow-field-helper-row">${starter}${runContext}${documentIdHistory}</div>`
+      : "";
+  if (meta.type === "select" && Array.isArray(meta.options)) {
+    const options = meta.options
+      .map((opt) => {
+        const optVal = String(opt.value ?? "");
+        const selected = optVal === value ? " selected" : "";
+        return `<option value="${escapeOrchestrationFieldAttr(optVal)}"${selected}>${safeText(opt.label || optVal || "Default")}</option>`;
+      })
+      .join("");
+    return `<label class="${wideClass.trim()} flow-mapping-field">
+      <span class="flow-field-label">${safeText(label)}${required ? " *" : ""}</span>
+      ${helper}
+      ${helperRow}
+      ${picker}
+      <select data-inspector-config-field="${field}">${options}</select>
+    </label>`;
+  }
+  if (meta.multiline) {
+    return `<label class="${wideClass.trim()} flow-mapping-field">
+      <span class="flow-field-label">${safeText(label)}${required ? " *" : ""}</span>
+      ${helper}
+      ${helperRow}
+      ${picker}
+      <textarea data-inspector-config-field="${field}" rows="${rows}" placeholder="${escapeOrchestrationFieldAttr(placeholder)}">${escapeOrchestrationFieldAttr(value)}</textarea>
+    </label>`;
+  }
+  return `<label class="${wideClass.trim()} flow-mapping-field">
+    <span class="flow-field-label">${safeText(label)}${required ? " *" : ""}</span>
+    ${helper}
+    ${helperRow}
+    ${picker}
+    <input data-inspector-config-field="${field}" value="${escapeOrchestrationFieldAttr(value)}" placeholder="${escapeOrchestrationFieldAttr(placeholder)}" />
+  </label>`;
+}
+
+function renderOrchestrationMappingInputSections(node, fieldNames, requiredFields = []) {
+  const sections = getOrchestrationMappingSections();
+  const mappingFields = getOrchestrationMappingFieldSet();
+  const present = fieldNames.filter((field) => mappingFields.has(field));
+  if (!present.length) return "";
+  const prior = getOrchestrationPriorSteps(node.id);
+  const priorHint = prior.length
+    ? `<p class="flow-inspector-tip flow-mapping-section-tip">Prior steps available: ${prior.map((s) => safeText(s.label)).join(", ")}. Use the dropdowns above each field to insert variables, or open <button type="button" class="inline-link-button orchestration-open-data-map">Variable map ⇄</button> for copy-ready snippets.</p>`
+    : `<p class="flow-inspector-tip flow-inspector-warn">Add steps above this widget before mapping variables from their output.</p>`;
+  const sectioned = new Set();
+  let markup = Object.values(sections)
+    .map((section) => {
+      const fields = section.fields.filter((field) => present.includes(field));
+      fields.forEach((field) => sectioned.add(field));
+      if (!fields.length) return "";
+      const fieldMarkup = fields
+        .map((field) => renderOrchestrationMappingField(field, node, requiredFields.includes(field)))
+        .join("");
+      return `
+        <fieldset class="flow-inspector-fieldset flow-mapping-section">
+          <legend>${safeText(section.legend)}</legend>
+          <p class="flow-mapping-section-intro">${safeText(section.intro)}</p>
+          <div class="form-grid flow-inspector-form">${fieldMarkup}</div>
+        </fieldset>`;
+    })
+    .join("");
+  const orphanFields = present.filter((field) => !sectioned.has(field));
+  if (orphanFields.length) {
+    markup += `
+      <fieldset class="flow-inspector-fieldset flow-mapping-section">
+        <legend>Variable mapping</legend>
+        <p class="flow-mapping-section-intro">Map prior step output into these fields using templates or the dropdown pickers.</p>
+        <div class="form-grid flow-inspector-form">${orphanFields
+          .map((field) => renderOrchestrationMappingField(field, node, requiredFields.includes(field)))
+          .join("")}</div>
+      </fieldset>`;
+  }
+  return markup + priorHint;
+}
+
+function renderOrchestrationOutputParamsSection(node) {
+  const hints = getOrchestrationOutputParamHints(node.type);
+  const example = getOrchestrationNodeOutputExample(node.type);
+  const outputJson = JSON.stringify(example, null, 2);
+  const nodeRef = `steps['${node.id}'].output`;
+  const hintRows = hints.length
+    ? hints
+        .map(
+          (item) =>
+            `<li><code class="mono">${safeText(`${nodeRef}.${item.path}`)}</code><span>${safeText(item.description)}</span></li>`,
+        )
+        .join("")
+    : `<li><code class="mono">${safeText(nodeRef)}</code><span>Full output object — inspect run history for live shapes</span></li>`;
+  return `
+    <fieldset class="flow-inspector-fieldset flow-mapping-section flow-output-params-section">
+      <legend>Output parameters</legend>
+      <p class="flow-mapping-section-intro">Downstream steps reference this widget's output after it runs. Use the node ID below in templates and JSON paths.</p>
+      <dl class="flow-output-params-meta">
+        <div><dt>Node ID</dt><dd class="mono">${safeText(node.id)}</dd></div>
+        <div><dt>Template reference</dt><dd class="mono">{{${safeText(nodeRef)}}}</dd></div>
+      </dl>
+      <ul class="flow-output-params-list">${hintRows}</ul>
+      <details class="flow-data-map-output-details">
+        <summary>Example output shape (dry run / stub)</summary>
+        <pre class="flow-data-map-code mono">${safeText(outputJson)}</pre>
+      </details>
+    </fieldset>`;
 }
 
 function getOrchestrationCategoryBadge(category) {
@@ -697,8 +1390,54 @@ function parseOrchestrationNodeIdFromError(message) {
   return null;
 }
 
+function orchestrationConfigFieldValue(config, field, meta = {}) {
+  const raw = config?.[field];
+  if (raw === null || raw === undefined || raw === "") {
+    if (meta.default !== undefined) return String(meta.default);
+    return "";
+  }
+  return String(raw);
+}
+
+function escapeOrchestrationFieldAttr(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
+
+function renderOrchestrationConfigFieldControl(field, node, required = false) {
+  const meta = getOrchestrationConfigFieldMeta(field);
+  const value = orchestrationConfigFieldValue(node.config || {}, field, meta);
+  const wideClass = meta.wide ? " wide-field" : "";
+  const requiredMark = required ? " *" : "";
+  const helper = meta.helperText
+    ? `<span class="flow-mapping-field-hint">${safeText(meta.helperText)}</span>`
+    : "";
+
+  if (meta.type === "select" && Array.isArray(meta.options)) {
+    const options = meta.options
+      .map((opt) => {
+        const optVal = String(opt.value ?? "");
+        const selected = optVal === value ? " selected" : "";
+        return `<option value="${escapeOrchestrationFieldAttr(optVal)}"${selected}>${safeText(opt.label || optVal || "Default")}</option>`;
+      })
+      .join("");
+    return `<label class="${wideClass.trim()}">${safeText(meta.label)}${requiredMark}${helper}<select data-inspector-config-field="${field}">${options}</select></label>`;
+  }
+
+  if (meta.multiline) {
+    return `<label class="${wideClass.trim()}">${safeText(meta.label)}${requiredMark}${helper}<textarea data-inspector-config-field="${field}" rows="3" placeholder="${escapeOrchestrationFieldAttr(meta.placeholder || field)}">${escapeOrchestrationFieldAttr(value)}</textarea></label>`;
+  }
+
+  const inputType = meta.inputType ? ` type="${escapeOrchestrationFieldAttr(meta.inputType)}"` : "";
+  return `<label class="${wideClass.trim()}">${safeText(meta.label)}${requiredMark}${helper}<input data-inspector-config-field="${field}" value="${escapeOrchestrationFieldAttr(value)}" placeholder="${escapeOrchestrationFieldAttr(meta.placeholder || field)}"${inputType} /></label>`;
+}
+
 function getOrchestrationDefaultNodeConfig(type) {
   switch (String(type || "").trim()) {
+    case "llm_chat":
+      return { cache_mode: "inherit" };
     case "memory_read":
       return { scope_type: "session", scope_id: "", memory_tier: "short_term" };
     case "memory_write":
@@ -900,16 +1639,32 @@ function resolveOrchestrationJsonPathValue(payload, jsonPath) {
     return { ok: false, error: "JSON path must start with $" };
   }
   let current = payload;
-  const normalized = String(jsonPath)
-    .slice(1)
-    .replace(/\[(\d+)\]/g, ".$1")
-    .split(".")
-    .filter(Boolean);
-  for (const token of normalized) {
-    if (current == null || typeof current !== "object") {
-      return { ok: true, value: undefined };
+  const remainder = String(jsonPath).slice(1).replace(/^\./, "");
+  if (!remainder) {
+    return { ok: true, value: current };
+  }
+  const tokens = remainder.split(/\.(?![^\[]*\])/);
+  for (const token of tokens) {
+    if (!token) continue;
+    let key = token;
+    let index = null;
+    const bracket = token.match(/^([^\[]+)\[(\d+)\]$/);
+    if (bracket) {
+      key = bracket[1];
+      index = Number(bracket[2]);
     }
-    current = current[token];
+    if (key) {
+      if (current == null || typeof current !== "object") {
+        return { ok: true, value: undefined };
+      }
+      current = current[key];
+    }
+    if (index !== null) {
+      if (!Array.isArray(current) || index < 0 || index >= current.length) {
+        return { ok: true, value: undefined };
+      }
+      current = current[index];
+    }
   }
   return { ok: true, value: current };
 }
@@ -7301,7 +8056,8 @@ async function loadPlaygroundRunDetails(runId) {
     return;
   }
   try {
-    const row = await api(`/playground/runs/${encodeURIComponent(trimmedRunId)}`);
+    const detail = await api(`/playground/runs/${encodeURIComponent(trimmedRunId)}/detail`);
+    const row = detail.run || detail;
     playgroundRuns = [row];
     selectedPlaygroundRunId = row.run_id;
     if (form?.elements?.run_id) form.elements.run_id.value = row.run_id;
@@ -7312,13 +8068,145 @@ async function loadPlaygroundRunDetails(runId) {
       modelResponse: memRun?.model_response,
     });
     renderPlaygroundRuns();
-    await loadPlaygroundRunFeedback(row.run_id);
+    await Promise.all([
+      loadPlaygroundRunFeedback(row.run_id),
+      loadPlaygroundRunDrilldown(row.run_id, detail),
+    ]);
     if (result) {
       result.textContent = `Opened run ${row.run_id} for ${row.selected_model} with status ${row.status}.`;
     }
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
   }
+}
+
+function renderPlaygroundDrilldownTabs(data) {
+  const runTarget = qs("#playgroundDrilldownRun");
+  const feedbackTbody = qs("#playgroundDrilldownFeedbackTable");
+  const assessmentTarget = qs("#playgroundDrilldownAssessment");
+  const auditTbody = qs("#playgroundDrilldownAuditTable");
+  const actionsTarget = qs("#playgroundDrilldownActions");
+
+  if (runTarget) {
+    runTarget.textContent = data?.run ? JSON.stringify(data.run, null, 2) : "No run data loaded.";
+  }
+
+  if (feedbackTbody) {
+    const feedbackRows = Array.isArray(data?.feedback) ? data.feedback : [];
+    if (!feedbackRows.length) {
+      setTableMessage(feedbackTbody, 4, "No feedback for this run.");
+    } else {
+      feedbackTbody.textContent = "";
+      feedbackRows.forEach((row) => {
+        const tr = document.createElement("tr");
+        appendTableCell(tr, row.rating);
+        appendTableCell(tr, row.quality_score);
+        appendTableCell(tr, row.comment || "--");
+        appendTableCell(tr, formatComplianceDate(row.created_at));
+        feedbackTbody.appendChild(tr);
+      });
+    }
+  }
+
+  if (assessmentTarget) {
+    assessmentTarget.textContent = data?.latest_assessment
+      ? JSON.stringify(data.latest_assessment, null, 2)
+      : "No assessment loaded.";
+  }
+
+  if (auditTbody) {
+    const auditRows = Array.isArray(data?.audit_events) ? data.audit_events : [];
+    if (!auditRows.length) {
+      setTableMessage(auditTbody, 5, "No audit events linked to this run.");
+    } else {
+      auditTbody.textContent = "";
+      auditRows.forEach((row) => {
+        const tr = document.createElement("tr");
+        appendTableCell(tr, formatComplianceDate(row.timestamp));
+        appendTableCell(tr, row.action_type);
+        appendTableCell(tr, [row.resource_type, row.resource_id].filter(Boolean).join(":"));
+        appendTableCell(tr, row.decision_outcome);
+        appendTableCell(tr, row.trace_id);
+        auditTbody.appendChild(tr);
+      });
+    }
+  }
+
+  if (actionsTarget) {
+    const summary = {
+      run_id: data?.run?.run_id || selectedPlaygroundRunId,
+      route_draft: data?.route_draft || null,
+      quality_escalation: data?.quality_escalation || null,
+    };
+    actionsTarget.textContent = JSON.stringify(summary, null, 2);
+  }
+}
+
+async function loadPlaygroundRunDrilldown(runId, cachedDetail) {
+  const result = qs("#playgroundDrilldownResult");
+  const trimmedRunId = String(runId || selectedPlaygroundRunId || "").trim();
+  if (!trimmedRunId) {
+    if (result) result.textContent = "Select a run to load drill-down.";
+    return null;
+  }
+  try {
+    const data = cachedDetail || await api(`/playground/runs/${encodeURIComponent(trimmedRunId)}/detail`);
+    playgroundRunDrilldownData = data;
+    renderPlaygroundDrilldownTabs(data);
+    if (result) result.textContent = `Drill-down loaded for ${trimmedRunId}.`;
+    return data;
+  } catch (err) {
+    playgroundRunDrilldownData = null;
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    return null;
+  }
+}
+
+async function refreshPlaygroundRunDrilldown() {
+  await loadPlaygroundRunDrilldown(selectedPlaygroundRunId);
+}
+
+async function drilldownAssessPlaygroundRun() {
+  const runId = String(playgroundRunDrilldownData?.run?.run_id || selectedPlaygroundRunId || "").trim();
+  if (!runId) {
+    setComplianceText("#playgroundDrilldownResult", "Select a run first.");
+    return;
+  }
+  const data = await assessPlaygroundRunFeedback({ runId, silent: true });
+  if (data) await refreshPlaygroundRunDrilldown();
+}
+
+function drilldownCreateRouteDraft() {
+  const run = playgroundRunDrilldownData?.run || playgroundRuns.find((row) => row.run_id === selectedPlaygroundRunId);
+  if (!run?.run_id) {
+    setComplianceText("#playgroundDrilldownResult", "Select a run first.");
+    return;
+  }
+  createRouteDraftFromPlaygroundRun(run);
+}
+
+async function drilldownPivotObservability() {
+  const traceId = String(
+    playgroundRunDrilldownData?.audit_events?.[0]?.trace_id
+      || qs("#playgroundFeedbackForm")?.elements?.trace_id?.value
+      || (selectedPlaygroundRunId ? `trace-${selectedPlaygroundRunId}` : ""),
+  ).trim();
+  if (!traceId) {
+    setComplianceText("#playgroundDrilldownResult", "No trace ID available for observability pivot.");
+    return;
+  }
+  switchView("observability");
+  await loadObservabilityTraceById(traceId);
+}
+
+function initPlaygroundDrilldownTabs() {
+  const panel = qs("#playgroundRunDrilldownPanel");
+  if (!panel || typeof UiKit === "undefined" || panel.dataset.drilldownTabsBound === "true") return null;
+  panel.dataset.drilldownTabsBound = "true";
+  return UiKit.bindTabGroup(panel, {
+    tabSelector: "[data-playground-drilldown-tab]",
+    panelSelector: "[data-playground-drilldown-panel]",
+  });
 }
 
 function buildRetryPrompt(promptText) {
@@ -8996,11 +9884,27 @@ async function refreshCursorIntegrationHub(evt) {
     renderGatewayCursorSecretBindingState(data);
     renderCursorIntegrationHubStatus(data);
     await loadGatewayConfiguredModels();
+    void loadGatewayTunnelConfig();
   } catch (err) {
     gatewayCursorTokenConfigured = false;
     renderCursorIntegrationHubStatus({ configured: false, provider_type: "--", masked_hint: "--" });
     const summary = qs("#cursorIntegrationHubSummary");
     if (summary) summary.textContent = `Error loading binding status: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayTunnelConfig() {
+  const panel = qs("#gatewayTunnelConfigPanel");
+  if (!panel) return;
+  try {
+    const config = await api("/gateway/tunnel/config");
+    const snippets = config.snippets || {};
+    panel.innerHTML = `
+      <p><strong>Status:</strong> ${config.enabled ? "Enabled" : "Disabled"} · <strong>Base:</strong> ${safeText(config.openai_compatible_base)}</p>
+      <label>OpenAI Python snippet<textarea readonly rows="4">${safeText(snippets.openai_python || "")}</textarea></label>
+      <label>curl snippet<textarea readonly rows="3">${safeText(snippets.curl_chat || "")}</textarea></label>`;
+  } catch (error) {
+    panel.textContent = `Tunnel config unavailable: ${safeText(error.message)}`;
   }
 }
 
@@ -10630,6 +11534,497 @@ async function closeGatewayOpenAiRealtimeSessionById(sessionId) {
     payloadTarget.textContent = JSON.stringify(data, null, 2);
     result.textContent = `Closed realtime session ${safeText(id)}.`;
     await loadGatewayOpenAiRealtimeSessionById(id);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function renderGatewayAssistantsTable() {
+  const tbody = qs("#gatewayAssistantsTable");
+  if (!tbody) return;
+  if (!gatewayAssistantRows.length) {
+    setTableMessage(tbody, 5, "No assistants found.");
+    return;
+  }
+  tbody.textContent = "";
+  gatewayAssistantRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Click to select assistant ID";
+    tr.addEventListener("click", () => {
+      const threadForm = qs("#gatewayAssistantThreadForm");
+      const deleteForm = qs("#gatewayAssistantDeleteForm");
+      if (threadForm?.elements?.assistant_id) threadForm.elements.assistant_id.value = row.id || "";
+      if (deleteForm?.elements?.assistant_id) deleteForm.elements.assistant_id.value = row.id || "";
+    });
+    appendTableCell(tr, row.id);
+    appendTableCell(tr, row.name);
+    appendTableCell(tr, row.model);
+    appendTableCell(tr, row.environment || "dev");
+    appendTableCell(tr, row.created_at ? new Date(row.created_at * 1000).toISOString() : "--");
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadGatewayAssistants(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayAssistantsResult");
+  const tbody = qs("#gatewayAssistantsTable");
+  if (tbody) setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api("/v1/assistants?limit=50");
+    gatewayAssistantRows = Array.isArray(data?.data) ? data.data : [];
+    renderGatewayAssistantsTable();
+    if (result) result.textContent = `Loaded ${gatewayAssistantRows.length} assistants.`;
+  } catch (err) {
+    gatewayAssistantRows = [];
+    renderGatewayAssistantsTable();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function createGatewayAssistant(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayAssistantCreateForm");
+  const result = qs("#gatewayAssistantsResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  try {
+    const data = await api("/v1/assistants", {
+      method: "POST",
+      body: JSON.stringify({
+        name: String(raw.name || "").trim(),
+        model: String(raw.model || "").trim(),
+        instructions: String(raw.instructions || "").trim(),
+        environment: String(raw.environment || "dev").trim() || "dev",
+      }),
+    });
+    const threadForm = qs("#gatewayAssistantThreadForm");
+    if (threadForm?.elements?.assistant_id) threadForm.elements.assistant_id.value = data.id || "";
+    result.textContent = `Created assistant ${safeText(data.id)} (${safeText(data.name)}).`;
+    await loadGatewayAssistants();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function createGatewayAssistantThread() {
+  const form = qs("#gatewayAssistantThreadForm");
+  const result = qs("#gatewayAssistantsResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const createForm = qs("#gatewayAssistantCreateForm");
+  const environment = String(createForm?.elements?.environment?.value || "dev").trim() || "dev";
+  try {
+    const data = await api("/v1/threads", {
+      method: "POST",
+      body: JSON.stringify({ metadata: { source: "gateway-console" }, environment }),
+    });
+    if (form.elements.thread_id) form.elements.thread_id.value = data.id || "";
+    result.textContent = `Created thread ${safeText(data.id)}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function postGatewayAssistantMessage() {
+  const form = qs("#gatewayAssistantThreadForm");
+  const result = qs("#gatewayAssistantsResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const threadId = String(raw.thread_id || "").trim();
+  const message = String(raw.message || "").trim();
+  if (!threadId) {
+    result.textContent = "Thread ID is required.";
+    return;
+  }
+  if (!message) {
+    result.textContent = "Message is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/threads/${encodeURIComponent(threadId)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ role: "user", content: message }),
+    });
+    result.textContent = `Posted message ${safeText(data.id)} to thread ${safeText(threadId)}.`;
+    if (form.elements.message) form.elements.message.value = "";
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayAssistantThread() {
+  const form = qs("#gatewayAssistantThreadForm");
+  const result = qs("#gatewayAssistantsResult");
+  const payloadTarget = qs("#gatewayPassthroughPayload");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const threadId = String(raw.thread_id || "").trim();
+  const assistantId = String(raw.assistant_id || "").trim();
+  const streamRun = raw.stream === "true" || raw.stream === "on";
+  if (!threadId || !assistantId) {
+    result.textContent = "Assistant ID and Thread ID are required.";
+    return;
+  }
+  const createForm = qs("#gatewayAssistantCreateForm");
+  const environment = String(createForm?.elements?.environment?.value || "dev").trim() || "dev";
+  try {
+    if (streamRun) {
+      const headers = ApiClient.buildHeaders(state, {
+        method: "POST",
+        body: JSON.stringify({
+          assistant_id: assistantId,
+          environment,
+          stream: true,
+        }),
+      });
+      headers["Content-Type"] = "application/json";
+      const response = await fetch(`${state.apiBase}/v1/threads/${encodeURIComponent(threadId)}/runs`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          assistant_id: assistantId,
+          environment,
+          stream: true,
+        }),
+      });
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.detail?.message || errBody.detail || response.statusText);
+      }
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalRun = null;
+      while (reader) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+        parts.forEach((part) => {
+          const line = part.trim();
+          if (!line.startsWith("data:")) return;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === "[DONE]") return;
+          try {
+            const parsed = JSON.parse(payload);
+            if (parsed.object === "thread.run" && parsed.status === "completed") {
+              finalRun = parsed;
+            }
+          } catch (_err) {
+            /* ignore partial chunks */
+          }
+        });
+      }
+      result.textContent = finalRun
+        ? `Streamed run ${safeText(finalRun.id)} completed with status ${safeText(finalRun.status)}.`
+        : "Stream completed.";
+      if (finalRun?.id && form.elements.run_id) form.elements.run_id.value = finalRun.id;
+      if (payloadTarget) payloadTarget.textContent = JSON.stringify(finalRun || { stream: true }, null, 2);
+      return;
+    }
+
+    const data = await api(`/v1/threads/${encodeURIComponent(threadId)}/runs`, {
+      method: "POST",
+      body: JSON.stringify({
+        assistant_id: assistantId,
+        environment,
+      }),
+    });
+    result.textContent = `Run ${safeText(data.id)} completed with status ${safeText(data.status)}.`;
+    if (form.elements.run_id) form.elements.run_id.value = data.id || "";
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function retrieveGatewayAssistantThread() {
+  const form = qs("#gatewayAssistantThreadForm");
+  const result = qs("#gatewayAssistantsResult");
+  const payloadTarget = qs("#gatewayPassthroughPayload");
+  if (!form || !result) return;
+  const threadId = String(form.elements.thread_id?.value || "").trim();
+  if (!threadId) {
+    result.textContent = "Thread ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/threads/${encodeURIComponent(threadId)}`);
+    result.textContent = `Retrieved thread ${safeText(data.id)} (${safeText(data.environment || "dev")}).`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function retrieveGatewayAssistantRun() {
+  const form = qs("#gatewayAssistantThreadForm");
+  const result = qs("#gatewayAssistantsResult");
+  const payloadTarget = qs("#gatewayPassthroughPayload");
+  if (!form || !result) return;
+  const threadId = String(form.elements.thread_id?.value || "").trim();
+  const runId = String(form.elements.run_id?.value || "").trim();
+  if (!threadId || !runId) {
+    result.textContent = "Thread ID and Run ID are required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/threads/${encodeURIComponent(threadId)}/runs/${encodeURIComponent(runId)}`);
+    result.textContent = `Retrieved run ${safeText(data.id)} (${safeText(data.status)}).`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function retrieveGatewayAssistant() {
+  const form = qs("#gatewayAssistantDeleteForm");
+  const result = qs("#gatewayAssistantsResult");
+  const payloadTarget = qs("#gatewayPassthroughPayload");
+  if (!form || !result) return;
+  const assistantId = String(form.elements.assistant_id?.value || "").trim();
+  if (!assistantId) {
+    result.textContent = "Assistant ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/assistants/${encodeURIComponent(assistantId)}`);
+    result.textContent = `Retrieved assistant ${safeText(data.id)} (${safeText(data.environment || "dev")}).`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function retrieveGatewayFineTuningJob() {
+  const form = qs("#gatewayFineTuningOpsForm");
+  const result = qs("#gatewayFineTuningResult");
+  const payloadTarget = qs("#gatewayPassthroughPayload");
+  if (!form || !result) return;
+  const jobId = String(form.elements.job_id?.value || "").trim();
+  if (!jobId) {
+    result.textContent = "Job ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/fine_tuning/jobs/${encodeURIComponent(jobId)}`);
+    const modeLabel = data.live_mode ? "live upstream" : "simulated";
+    const upstream = data.upstream_job_id ? ` · upstream ${safeText(data.upstream_job_id)}` : "";
+    result.textContent = `Retrieved job ${safeText(data.id)} (${safeText(data.status)}, ${safeText(data.environment || "dev")}, ${modeLabel}${upstream}).`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function listGatewayAssistantMessages() {
+  const form = qs("#gatewayAssistantThreadForm");
+  const result = qs("#gatewayAssistantsResult");
+  const payloadTarget = qs("#gatewayPassthroughPayload");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const threadId = String(raw.thread_id || "").trim();
+  if (!threadId) {
+    result.textContent = "Thread ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/threads/${encodeURIComponent(threadId)}/messages`);
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    result.textContent = `Loaded ${rows.length} messages for thread ${safeText(threadId)}.`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function deleteGatewayAssistant() {
+  const form = qs("#gatewayAssistantDeleteForm");
+  const result = qs("#gatewayAssistantsResult");
+  const payloadTarget = qs("#gatewayPassthroughPayload");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const assistantId = String(raw.assistant_id || "").trim();
+  if (!assistantId) {
+    result.textContent = "Assistant ID is required.";
+    return;
+  }
+  const environment = String(
+    gatewayAssistantRows.find((row) => row.id === assistantId)?.environment
+      || qs("#gatewayAssistantCreateForm")?.elements?.environment?.value
+      || "dev",
+  ).trim().toLowerCase();
+  const headers = environment === "prod" ? getGatewayDualApprovalHeaders("#gatewayAssistantDeleteForm") : undefined;
+  try {
+    const data = await api(`/v1/assistants/${encodeURIComponent(assistantId)}`, {
+      method: "DELETE",
+      headers,
+    });
+    result.textContent = `Deleted assistant ${safeText(assistantId)}.`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+    await loadGatewayAssistants();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function renderGatewayFineTuningModeBadge(liveMode) {
+  const badge = qs("#gatewayFineTuningModeBadge");
+  if (!badge) return;
+  if (liveMode === true) {
+    badge.textContent = "Mode: Live upstream";
+    badge.dataset.mode = "live";
+  } else if (liveMode === false) {
+    badge.textContent = "Mode: Simulated";
+    badge.dataset.mode = "simulated";
+  } else {
+    badge.textContent = "Mode: —";
+    badge.dataset.mode = "";
+  }
+}
+
+function renderGatewayFineTuningTable() {
+  const tbody = qs("#gatewayFineTuningTable");
+  if (!tbody) return;
+  if (!gatewayFineTuningJobRows.length) {
+    setTableMessage(tbody, 7, "No fine-tuning jobs found.");
+    return;
+  }
+  tbody.textContent = "";
+  gatewayFineTuningJobRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Click to select job ID";
+    tr.addEventListener("click", () => {
+      const opsForm = qs("#gatewayFineTuningOpsForm");
+      if (opsForm?.elements?.job_id) opsForm.elements.job_id.value = row.id || "";
+    });
+    appendTableCell(tr, row.id);
+    appendTableCell(tr, row.model);
+    appendTableCell(tr, row.status);
+    appendTableCell(tr, row.live_mode ? "Live" : "Simulated");
+    appendTableCell(tr, row.environment || "dev");
+    appendTableCell(tr, row.training_file_id);
+    appendTableCell(tr, row.fine_tuned_model || "--");
+    tbody.appendChild(tr);
+  });
+  const liveRow = gatewayFineTuningJobRows.find((row) => typeof row.live_mode === "boolean");
+  renderGatewayFineTuningModeBadge(liveRow ? liveRow.live_mode : null);
+}
+
+async function loadGatewayFineTuningJobs(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayFineTuningResult");
+  const tbody = qs("#gatewayFineTuningTable");
+  if (tbody) setTableMessage(tbody, 7, "Loading...");
+  try {
+    const data = await api("/v1/fine_tuning/jobs?limit=50");
+    gatewayFineTuningJobRows = Array.isArray(data?.data) ? data.data : [];
+    renderGatewayFineTuningTable();
+    if (result) result.textContent = `Loaded ${gatewayFineTuningJobRows.length} fine-tuning jobs.`;
+  } catch (err) {
+    gatewayFineTuningJobRows = [];
+    renderGatewayFineTuningTable();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function createGatewayFineTuningJob(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayFineTuningCreateForm");
+  const result = qs("#gatewayFineTuningResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  try {
+    const data = await api("/v1/fine_tuning/jobs", {
+      method: "POST",
+      body: JSON.stringify({
+        model: String(raw.model || "").trim(),
+        training_file_id: String(raw.training_file_id || "").trim(),
+        environment: String(raw.environment || "dev").trim() || "dev",
+      }),
+    });
+    const opsForm = qs("#gatewayFineTuningOpsForm");
+    if (opsForm?.elements?.job_id) opsForm.elements.job_id.value = data.id || "";
+    result.textContent = `Created fine-tuning job ${safeText(data.id)} (${safeText(data.status)}, ${data.live_mode ? "live" : "simulated"}).`;
+    renderGatewayFineTuningModeBadge(Boolean(data.live_mode));
+    await loadGatewayFineTuningJobs();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function cancelGatewayFineTuningJob() {
+  const form = qs("#gatewayFineTuningOpsForm");
+  const result = qs("#gatewayFineTuningResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const jobId = String(raw.job_id || "").trim();
+  if (!jobId) {
+    result.textContent = "Job ID is required.";
+    return;
+  }
+  const environment = String(
+    gatewayFineTuningJobRows.find((row) => row.id === jobId)?.environment
+      || qs("#gatewayFineTuningCreateForm")?.elements?.environment?.value
+      || "dev",
+  ).trim().toLowerCase();
+  const headers = environment === "prod" ? getGatewayDualApprovalHeaders("#gatewayFineTuningOpsForm") : undefined;
+  try {
+    const data = await api(`/v1/fine_tuning/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      method: "POST",
+      headers,
+    });
+    result.textContent = `Cancelled job ${safeText(data.id)} (${safeText(data.status)}).`;
+    await loadGatewayFineTuningJobs();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function submitGatewayPassthroughForm(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayPassthroughForm");
+  const result = qs("#gatewayPassthroughResult");
+  const payloadTarget = qs("#gatewayPassthroughPayload");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  let body = null;
+  try {
+    body = parseGatewayJsonInput(raw.body_json, "Body JSON");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+    return;
+  }
+  const environment = String(raw.environment || "dev").trim().toLowerCase() || "dev";
+  const headers = environment === "prod" ? getGatewayDualApprovalHeaders("#gatewayPassthroughForm") : undefined;
+  let outboundHeaders = {};
+  if (String(raw.headers_json || "").trim()) {
+    try {
+      outboundHeaders = parseGatewayJsonInput(raw.headers_json, "Headers JSON");
+    } catch (err) {
+      result.textContent = `Error: ${safeText(err.message)}`;
+      return;
+    }
+  }
+  try {
+    const data = await api("/v1/passthrough", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        provider_id: String(raw.provider_id || "").trim(),
+        method: String(raw.method || "POST").trim() || "POST",
+        path: String(raw.path || "").trim(),
+        headers: outboundHeaders,
+        body,
+        environment,
+      }),
+    });
+    result.textContent = `Passthrough ${safeText(data.status_code)} · trace ${safeText(data.trace_id)}`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
   } catch (err) {
     result.textContent = `Error: ${safeText(err.message)}`;
   }
@@ -13309,9 +14704,15 @@ function initViewConsoleForView(viewName) {
         renderOrchestrationConsoleSummary();
         if (tabName === "studio") void loadOrchestrationConsole();
         if (tabName === "flows") void loadOrchestrationFlows();
-        if (tabName === "runs") void loadFlowRuns();
+        if (tabName === "runs") void loadOrchestrationHistoryRuns();
+        if (tabName === "audit") void loadOrchestrationAuditEvents();
         if (tabName === "approvals") void loadOrchestrationApprovals();
-        if (tabName === "security") renderOrchestrationSecurityPanel();
+        if (tabName === "security") {
+          renderOrchestrationSecurityPanel();
+          const flow = orchestrationFlows.find((item) => item.flow_id === orchestrationSelectedFlowId);
+          if (flow) renderOrchestrationAccessPolicyForm(flow.access_policy_json);
+          void loadOrchestrationIgaQueues();
+        }
       });
       bindConsoleTabJumps("orchestration");
       bindOrchestrationEvents();
@@ -13357,6 +14758,7 @@ function initViewConsoleForView(viewName) {
         if (tabName === "traces") void prepareObservabilityTracesPanel();
         if (tabName === "logs") void prepareObservabilityLogsPanel();
         if (tabName === "schema") void prepareObservabilitySchemaPanel();
+        if (tabName === "siem") void prepareObservabilitySiemPanel();
       });
       bindConsoleTabJumps("observability");
       bindObservabilityWorkspaceSelect();
@@ -13366,7 +14768,10 @@ function initViewConsoleForView(viewName) {
       bindObservabilityAdvancedControls();
       break;
     case "audit":
-      initViewConsoleTabs("audit", renderAuditConsoleSummary);
+      initViewConsoleTabs("audit", (tabName) => {
+        renderAuditConsoleSummary();
+        if (tabName === "events") void loadAudit();
+      });
       bindConsoleTabJumps("audit");
       break;
     case "compliance":
@@ -13456,6 +14861,7 @@ async function switchView(viewName) {
     void loadRoutePolicies();
     void loadKeys();
     void refreshCursorIntegrationHub();
+    void loadGatewayTunnelConfig();
   } else if (viewName === "providers") {
     void loadProviderConsole();
     refreshProvidersTenantSearchUi();
@@ -13611,7 +15017,24 @@ async function loadOverview() {
   await Promise.allSettled([
     loadSpendBreakdown(),
     loadOverviewUiCoverage(),
+    loadOverviewOrchestrationSummary(),
   ]);
+}
+
+async function loadOverviewOrchestrationSummary() {
+  const panel = qs("#overviewOrchestrationSummary");
+  if (!panel) return;
+  try {
+    const summary = await api("/orchestration/summary");
+    panel.innerHTML = `
+      <article class="flow-platform-stat"><strong>${safeText(summary.flow_count ?? 0)}</strong><span>Flows</span></article>
+      <article class="flow-platform-stat"><strong>${safeText(summary.pending_prod_approvals ?? 0)}</strong><span>Prod approvals pending</span></article>
+      <article class="flow-platform-stat"><strong>${safeText(summary.certifications_due ?? 0)}</strong><span>Certifications due</span></article>
+      <article class="flow-platform-stat"><strong>${safeText(summary.active_jit_grants ?? 0)}</strong><span>Active JIT grants</span></article>
+      <article class="flow-platform-stat"><strong>${safeText(summary.runs_awaiting_approval ?? 0)}</strong><span>Runs awaiting approval</span></article>`;
+  } catch (err) {
+    panel.innerHTML = `<p class="mono">Orchestration summary unavailable: ${safeText(err.message)}</p>`;
+  }
 }
 
 async function loadDiscovery() {
@@ -16316,7 +17739,7 @@ async function prepareCostOverviewPanel() {
 }
 
 async function prepareCostTelemetryPanel() {
-  await Promise.all([loadCost(), loadGatewayAnalytics()]);
+  await Promise.all([loadCost(), loadGatewayAnalytics(), loadCostTimeseries(), loadCostScopeBreakdown()]);
   syncCostOverviewMetrics();
   renderCostConsoleSummary();
 }
@@ -18126,6 +19549,15 @@ function spendBreakdownElementIds(scope = "overview") {
       loadButton: "loadCostSpendBreakdown",
     };
   }
+  if (scope === "telemetry") {
+    return {
+      dimension: "costTimeseriesDimension",
+      summary: "costTimeseriesSummary",
+      chart: "costTimeseriesChart",
+      insights: null,
+      loadButton: "loadCostTimeseries",
+    };
+  }
   return {
     dimension: "spendBreakdownDimension",
     range: "spendBreakdownRange",
@@ -18241,7 +19673,7 @@ function renderSpendBreakdownChart(payload, scope = "overview") {
   svg.setAttribute("class", "spend-breakdown-svg");
 
   const gradient = document.createElementNS(svgNs, "linearGradient");
-  gradient.setAttribute("id", scope === "cost" ? "costSpendBreakdownGradient" : "spendBreakdownGradient");
+  gradient.setAttribute("id", scope === "cost" ? "costSpendBreakdownGradient" : scope === "telemetry" ? "costTimeseriesGradient" : "spendBreakdownGradient");
   gradient.setAttribute("x1", "0");
   gradient.setAttribute("y1", "0");
   gradient.setAttribute("x2", "0");
@@ -18292,7 +19724,7 @@ function renderSpendBreakdownChart(payload, scope = "overview") {
     rect.setAttribute("height", String(Math.max(1, barHeight)));
     rect.setAttribute("rx", "2");
     rect.setAttribute("class", "spend-breakdown-bar");
-    rect.setAttribute("fill", scope === "cost" ? "url(#costSpendBreakdownGradient)" : "url(#spendBreakdownGradient)");
+    rect.setAttribute("fill", scope === "cost" ? "url(#costSpendBreakdownGradient)" : scope === "telemetry" ? "url(#costTimeseriesGradient)" : "url(#spendBreakdownGradient)");
     svg.appendChild(rect);
 
     if (idx % labelStep === 0 || idx === pointsToRender.length - 1) {
@@ -21719,13 +23151,50 @@ function formatAuditPromptCell(prompt) {
   return text.length > 96 ? `${text.slice(0, 96)}…` : text;
 }
 
+function formatAuditContextCell(actionContext) {
+  if (!actionContext || typeof actionContext !== "object") return "—";
+  const parts = [];
+  if (actionContext.run_id) parts.push(`run=${String(actionContext.run_id).slice(0, 12)}…`);
+  if (actionContext.trace_id) parts.push(`trace=${String(actionContext.trace_id).slice(0, 16)}`);
+  if (actionContext.dry_run !== undefined) parts.push(`dry_run=${actionContext.dry_run}`);
+  if (actionContext.flow_name && !parts.length) parts.push(String(actionContext.flow_name));
+  if (actionContext.reason) parts.push(String(actionContext.reason));
+  if (actionContext.environment) parts.push(String(actionContext.environment));
+  if (!parts.length) {
+    const keys = Object.keys(actionContext);
+    if (!keys.length) return "—";
+    const preview = JSON.stringify(actionContext);
+    return preview.length > 96 ? `${preview.slice(0, 96)}…` : preview;
+  }
+  return parts.join(" · ");
+}
+
+function buildAuditEventsQuery() {
+  const form = qs("#auditFilterForm");
+  const params = new URLSearchParams();
+  if (form) {
+    const raw = Object.fromEntries(new FormData(form).entries());
+    if (raw.action_type_prefix) params.set("action_type_prefix", String(raw.action_type_prefix).trim());
+    if (raw.resource_type) params.set("resource_type", String(raw.resource_type).trim());
+    if (raw.decision_outcome) params.set("decision_outcome", String(raw.decision_outcome).trim());
+    if (raw.since_hours) params.set("since_hours", String(raw.since_hours).trim());
+    if (raw.limit) params.set("limit", String(raw.limit).trim());
+  }
+  if (!params.has("limit")) params.set("limit", "50");
+  if (!params.has("since_hours")) params.set("since_hours", "168");
+  return params.toString() ? `?${params.toString()}` : "";
+}
+
 async function loadAudit() {
   const tbody = qs("#auditTable");
-  setTableMessage(tbody, 7, "Loading...");
+  setTableMessage(tbody, 9, "Loading...");
   try {
-    const rows = await api("/audit/events?limit=30", { headers: { "X-Actor-Role": "Auditor" } });
+    const rows = await api(`/audit/events${buildAuditEventsQuery()}`, {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
     if (!rows?.length) {
-      setTableMessage(tbody, 7, "No audit events.");
+      setTableMessage(tbody, 9, "No audit events.");
+      renderAuditConsoleSummary();
       return;
     }
 
@@ -21734,15 +23203,18 @@ async function loadAudit() {
       appendTableRow(tbody, [
         row.timestamp,
         row.actor_login || "—",
+        row.actor_role || "—",
         row.actor_id,
         row.action_type,
+        row.action_description || "—",
         `${row.resource_type}/${row.resource_id}`,
-        formatAuditPromptCell(row.user_prompt),
+        formatAuditContextCell(row.action_context),
         row.decision_outcome,
       ]);
     });
+    renderAuditConsoleSummary();
   } catch (err) {
-    setTableMessage(tbody, 7, `Error: ${safeText(err.message)}`);
+    setTableMessage(tbody, 9, `Error: ${safeText(err.message)}`);
   }
 }
 
@@ -22690,6 +24162,34 @@ async function runRouteCanaryRolloutAction(action, evt) {
   }
 }
 
+async function explainAuthAuthorization(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#authExplainForm");
+  const result = qs("#authExplainResult");
+  const details = qs("#authExplainDetails");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+
+  try {
+    const data = await api("/auth/authz/explain", {
+      method: "POST",
+      body: JSON.stringify({
+        actor_role: String(raw.actor_role || "").trim(),
+        actor_id: String(raw.actor_id || "ui-auth-explain").trim() || "ui-auth-explain",
+        action: String(raw.action || "").trim(),
+        resource_type: String(raw.resource_type || "auth_session").trim() || "auth_session",
+        resource_id: String(raw.resource_id || "").trim() || null,
+        mfa_verified: String(raw.mfa_verified || "false").trim().toLowerCase() === "true",
+      }),
+    });
+    result.textContent = `${safeText(data.decision)} · ${safeText(data.decision_trace_id)}`;
+    if (details) details.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+    if (details) details.textContent = "";
+  }
+}
+
 async function explainGatewayAuthorization(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#gatewayAuthzExplainForm");
@@ -23437,12 +24937,9 @@ async function copyComplianceBundleSummary() {
   if (result) result.textContent = copied ? "Copied compliance bundle summary." : "Unable to copy summary.";
 }
 
-function exportComplianceBundle() {
+async function exportComplianceBundle() {
   const result = qs("#complianceEvidenceResult");
-  if (!latestComplianceBundle) {
-    if (result) result.textContent = "Load a bundle before exporting.";
-    return;
-  }
+  const form = qs("#complianceEvidenceForm");
   const includeContext = shouldIncludeComplianceInvestigationContextInExport();
   const selectedContext = includeContext && complianceInvestigateContext
     ? {
@@ -23450,6 +24947,52 @@ function exportComplianceBundle() {
       selectedAt: complianceInvestigateContext.selectedAt || new Date().toISOString(),
     }
     : null;
+
+  if (form) {
+    const raw = Object.fromEntries(new FormData(form).entries());
+    const controlId = String(raw.control_id || selectedComplianceControlId || "").trim();
+    if (controlId) {
+      try {
+        const serverPayload = await api("/compliance/evidence/export", {
+          method: "POST",
+          body: JSON.stringify({
+            control_id: controlId,
+            since_hours: Number.parseInt(String(raw.bundle_since_hours || "24"), 10) || 24,
+            decision_outcome: String(raw.bundle_decision_outcome || "").trim() || null,
+            action_type_prefix: String(raw.bundle_action_type_prefix || "").trim() || null,
+            tenant_id: String(raw.bundle_tenant_id || "").trim() || null,
+            environment: String(raw.bundle_environment || "").trim() || null,
+            source_type: String(raw.bundle_source_type || "").trim() || null,
+            source_id_prefix: String(raw.bundle_source_id_prefix || "").trim() || null,
+            limit_events: Number.parseInt(String(raw.bundle_limit_events || "20"), 10) || 20,
+            limit_artifacts: Number.parseInt(String(raw.bundle_limit_artifacts || "20"), 10) || 20,
+            investigation_context: selectedContext,
+          }),
+        });
+        const blob = new Blob([JSON.stringify(serverPayload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `compliance-export-${serverPayload.export_id || new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        if (result) {
+          result.textContent = `Exported server bundle for ${controlId} (${safeText(serverPayload.export_id)}).`;
+        }
+        return;
+      } catch (err) {
+        if (result) result.textContent = `Server export failed: ${safeText(err.message)}`;
+        return;
+      }
+    }
+  }
+
+  if (!latestComplianceBundle) {
+    if (result) result.textContent = "Load a bundle before exporting.";
+    return;
+  }
   const pivotMetadata = {
     trace_pivot_available: Boolean(String(selectedContext?.traceId || "").trim()),
     logs_pivot_available: Boolean(selectedContext && [
@@ -24184,6 +25727,10 @@ async function loadObservability() {
     loadObservabilitySummary(Number(qs("#observabilitySummaryWindow")?.value || 24)),
     loadObservabilitySchema(),
   ]);
+  const siemPanel = qs('#observability [data-console-panel="siem"]');
+  if (siemPanel && !siemPanel.hidden) {
+    await loadObservabilitySiemRules();
+  }
   renderObservabilityConsoleSummary();
 }
 
@@ -24221,6 +25768,195 @@ async function prepareObservabilityLogsPanel() {
 
 async function prepareObservabilitySchemaPanel() {
   await loadObservabilitySchema();
+}
+
+async function prepareObservabilitySiemPanel() {
+  await loadObservabilitySiemRules();
+}
+
+async function loadObservabilitySiemRules(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const tbody = qs("#observabilitySiemRulesTable");
+  const result = qs("#observabilitySiemRulesResult");
+  if (tbody) setTableMessage(tbody, 7, "Loading...");
+  try {
+    const data = await api("/observability/siem-rules", { headers: { "X-Actor-Role": state.actorRole } });
+    const rules = Array.isArray(data?.rules) ? data.rules : [];
+    if (!tbody) return data;
+    if (!rules.length) {
+      setTableMessage(tbody, 7, "No SIEM rules configured.");
+      if (result) result.textContent = "No SIEM rules in catalog.";
+      return data;
+    }
+    tbody.textContent = "";
+    rules.forEach((row) => {
+      appendTableRow(tbody, [
+        row.rule_id,
+        row.name,
+        row.severity,
+        row.action_type_pattern,
+        Array.isArray(row.decision_outcomes) ? row.decision_outcomes.join(", ") : "—",
+        row.sink_route_key || "—",
+        row.enabled === false ? "false" : "true",
+      ]);
+    });
+    if (result) result.textContent = `Loaded ${rules.length} SIEM rule${rules.length === 1 ? "" : "s"}.`;
+    renderObservabilityConsoleSummary();
+    return data;
+  } catch (err) {
+    if (tbody) setTableMessage(tbody, 7, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    throw err;
+  }
+}
+
+async function exportObservabilitySiemRules(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#observabilitySiemRulesResult");
+  const details = qs("#observabilitySiemExportDetails");
+  const body = qs("#observabilitySiemExportBody");
+  if (result) result.textContent = "Exporting SIEM bundle…";
+  try {
+    const data = await api("/observability/siem-rules/export", {
+      method: "POST",
+      headers: { "X-Actor-Role": state.actorRole },
+    });
+    const json = JSON.stringify(data, null, 2);
+    if (body) body.textContent = json;
+    if (details) details.hidden = false;
+    if (result) {
+      result.textContent = `Exported ${data.rule_count ?? 0} rule${data.rule_count === 1 ? "" : "s"} · ${data.siem_callback_count ?? 0} SIEM callback${data.siem_callback_count === 1 ? "" : "s"}.`;
+    }
+    return data;
+  } catch (err) {
+    if (result) result.textContent = `Export error: ${safeText(err.message)}`;
+    throw err;
+  }
+}
+
+async function evaluateObservabilitySiemRules(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#observabilitySiemEvaluateForm");
+  const tbody = qs("#observabilitySiemEvaluateTable");
+  const result = qs("#observabilitySiemRulesResult");
+  if (tbody) setTableMessage(tbody, 5, "Evaluating…");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams();
+  if (raw.since_hours) params.set("since_hours", String(raw.since_hours).trim());
+  if (raw.limit) params.set("limit", String(raw.limit).trim());
+  if (raw.action_type_prefix) params.set("action_type_prefix", String(raw.action_type_prefix).trim());
+  if (raw.decision_outcome) params.set("decision_outcome", String(raw.decision_outcome).trim());
+  try {
+    const data = await api(`/observability/siem-rules/evaluate?${params.toString()}`, {
+      headers: { "X-Actor-Role": state.actorRole },
+    });
+    const matches = Array.isArray(data?.matches) ? data.matches : [];
+    if (!tbody) return data;
+    if (!matches.length) {
+      setTableMessage(tbody, 5, "No rule matches in evaluated window.");
+    } else {
+      tbody.textContent = "";
+      matches.forEach((row) => {
+        appendTableRow(tbody, [
+          row.audit_event_id,
+          row.action_type,
+          row.decision_outcome,
+          row.trace_id || "—",
+          Array.isArray(row.matched_rule_ids) ? row.matched_rule_ids.join(", ") : "—",
+        ]);
+      });
+    }
+    if (result) {
+      result.textContent = `Evaluated ${data.evaluated_count ?? 0} event${data.evaluated_count === 1 ? "" : "s"} · ${data.matched_count ?? 0} match${data.matched_count === 1 ? "" : "es"}.`;
+    }
+    renderObservabilityConsoleSummary();
+    return data;
+  } catch (err) {
+    if (tbody) setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Evaluate error: ${safeText(err.message)}`;
+    throw err;
+  }
+}
+
+async function loadCostTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costTimeseriesForm");
+  const tbody = qs("#costTimeseriesTable");
+  const summary = qs("#costTimeseriesSummary");
+  if (tbody) setTableMessage(tbody, 3, "Loading...");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams();
+  params.set("dimension", String(raw.dimension || "all").trim() || "all");
+  params.set("window_hours", String(raw.window_hours || 24).trim() || "24");
+  const scopeFilter = String(raw.scope_filter || "").trim();
+  if (scopeFilter) params.set("scope_filter", scopeFilter);
+  try {
+    const data = await api(`/cost/timeseries?${params.toString()}`);
+    const points = Array.isArray(data?.points) ? data.points : [];
+    renderSpendBreakdownChart(data, "telemetry");
+    if (!tbody) return data;
+    if (!points.length) {
+      setTableMessage(tbody, 3, "No hourly spend in selected window.");
+    } else {
+      tbody.textContent = "";
+      points.forEach((row) => {
+        appendTableRow(tbody, [
+          shortHourLabel(row.hour_start || row.timestamp || row.bucket_start),
+          row.spend_cents ?? 0,
+          row.event_count ?? 0,
+        ]);
+      });
+    }
+    if (summary) {
+      const scopeText =
+        data.dimension === "all"
+          ? "all scopes"
+          : `${safeText(data.dimension)}${data.scope_filter ? ` (${safeText(data.scope_filter)})` : ""}`;
+      summary.textContent = `${data.window_hours ?? 24}h timeseries · ${scopeText} · total ${currency(data.total_spend_cents)} · ${data.total_event_count ?? 0} event${data.total_event_count === 1 ? "" : "s"}`;
+    }
+    renderCostConsoleSummary();
+    return data;
+  } catch (err) {
+    renderSpendBreakdownChart({ points: [] }, "telemetry");
+    if (tbody) setTableMessage(tbody, 3, `Error: ${safeText(err.message)}`);
+    if (summary) summary.textContent = `Timeseries error: ${safeText(err.message)}`;
+    throw err;
+  }
+}
+
+async function loadCostScopeBreakdown(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costScopeBreakdownForm");
+  const tbody = qs("#costScopeBreakdownTable");
+  const summary = qs("#costScopeBreakdownSummary");
+  if (tbody) setTableMessage(tbody, 3, "Loading...");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams();
+  params.set("dimension", String(raw.dimension || "all").trim() || "all");
+  params.set("window_hours", String(raw.window_hours || 24).trim() || "24");
+  params.set("limit", String(raw.limit || 8).trim() || "8");
+  try {
+    const data = await api(`/cost/breakdown?${params.toString()}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!tbody) return data;
+    if (!items.length) {
+      setTableMessage(tbody, 3, "No spend in selected window.");
+    } else {
+      tbody.textContent = "";
+      items.forEach((row) => {
+        appendTableRow(tbody, [row.label || "—", row.spend_cents ?? 0, row.event_count ?? 0]);
+      });
+    }
+    if (summary) {
+      summary.textContent = `${data.dimension || "all"} · ${data.window_hours ?? 24}h · total ${currency(data.total_spend_cents)} · ${data.total_event_count ?? 0} event${data.total_event_count === 1 ? "" : "s"}`;
+    }
+    renderCostConsoleSummary();
+    return data;
+  } catch (err) {
+    if (tbody) setTableMessage(tbody, 3, `Error: ${safeText(err.message)}`);
+    if (summary) summary.textContent = `Breakdown error: ${safeText(err.message)}`;
+    throw err;
+  }
 }
 
 async function loadObservabilityTrace(evt) {
@@ -26917,6 +28653,7 @@ function bindEvents() {
   qs("#refreshGatewayConsole")?.addEventListener("click", () => {
     void ensureTenantCatalogReady();
     void loadGatewayConfiguredModels();
+    void loadGatewayTunnelConfig();
   });
   qs("#refreshPlaygroundConsole")?.addEventListener("click", () => renderPlaygroundConsoleSummary());
   qs("#refreshAgenticConsole")?.addEventListener("click", () => {
@@ -27068,6 +28805,7 @@ function bindEvents() {
   qs("#spendBreakdownEndTime")?.addEventListener("change", loadSpendBreakdown);
   qs("#spendBreakdownScopeFilter")?.addEventListener("change", loadSpendBreakdown);
   qs("#loadAudit").addEventListener("click", loadAudit);
+  qs("#auditFilterForm")?.addEventListener("change", () => void loadAudit());
   qs("#loadComplianceControls").addEventListener("click", loadComplianceControls);
   qs("#loadComplianceCoverage").addEventListener("click", loadComplianceCoverage);
   qs("#loadComplianceFreshness").addEventListener("click", loadComplianceFreshness);
@@ -27079,7 +28817,7 @@ function bindEvents() {
   qs("#complianceBundlePresetTenant").addEventListener("click", () => applyComplianceBundlePreset("tenant"));
   qs("#complianceBundleResetFilters").addEventListener("click", resetComplianceBundleFilters);
   qs("#copyComplianceBundleSummary").addEventListener("click", copyComplianceBundleSummary);
-  qs("#exportComplianceBundle").addEventListener("click", exportComplianceBundle);
+  qs("#exportComplianceBundle").addEventListener("click", () => void exportComplianceBundle());
   qs("#complianceInvestigateOpenTrace").addEventListener("click", pivotComplianceInvestigateTrace);
   qs("#complianceInvestigateOpenLogs").addEventListener("click", pivotComplianceInvestigateLogs);
   qs("#complianceInvestigateOpenAudit").addEventListener("click", pivotComplianceInvestigateAudit);
@@ -27122,6 +28860,11 @@ function bindEvents() {
   qs("#playgroundRunHistoryFilters").addEventListener("submit", loadPlaygroundRuns);
   qs("#loadPlaygroundRuns").addEventListener("click", loadPlaygroundRuns);
   qs("#loadSelectedPlaygroundRun").addEventListener("click", () => loadPlaygroundRunDetails());
+  qs("#refreshPlaygroundRunDrilldown")?.addEventListener("click", () => void refreshPlaygroundRunDrilldown());
+  qs("#drilldownAssessPlaygroundRun")?.addEventListener("click", () => void drilldownAssessPlaygroundRun());
+  qs("#drilldownCreateRouteDraft")?.addEventListener("click", drilldownCreateRouteDraft);
+  qs("#drilldownPivotObservability")?.addEventListener("click", () => void drilldownPivotObservability());
+  initPlaygroundDrilldownTabs();
   qs("#playgroundFeedbackForm").addEventListener("submit", savePlaygroundRunFeedback);
   qs("#assessPlaygroundRunFeedback")?.addEventListener("click", () => assessPlaygroundRunFeedback());
   qs("#loadPlaygroundRunFeedback").addEventListener("click", () => loadPlaygroundRunFeedback());
@@ -27257,6 +29000,7 @@ function bindEvents() {
   });
   const refreshCursorHub = qs("#refreshCursorIntegrationHub");
   if (refreshCursorHub) refreshCursorHub.addEventListener("click", refreshCursorIntegrationHub);
+  qs("#refreshGatewayTunnelConfig")?.addEventListener("click", () => void loadGatewayTunnelConfig());
   const openCursorToken = qs("#openCursorTokenPanel");
   if (openCursorToken) openCursorToken.addEventListener("click", openCursorTokenPanel);
   const openCursorModules = qs("#openCursorModulesPanel");
@@ -27361,6 +29105,22 @@ function bindEvents() {
   qs("#loadEndpointCompatibility").addEventListener("click", loadEndpointCompatibility);
   qs("#gatewayTransformForm").addEventListener("submit", runGatewayTransformDebug);
   qs("#gatewayAuthzExplainForm").addEventListener("submit", explainGatewayAuthorization);
+  qs("#authExplainForm")?.addEventListener("submit", explainAuthAuthorization);
+  qs("#loadGatewayAssistants")?.addEventListener("click", () => void loadGatewayAssistants());
+  qs("#gatewayAssistantCreateForm")?.addEventListener("submit", createGatewayAssistant);
+  qs("#createGatewayAssistantThread")?.addEventListener("click", () => void createGatewayAssistantThread());
+  qs("#postGatewayAssistantMessage")?.addEventListener("click", () => void postGatewayAssistantMessage());
+  qs("#listGatewayAssistantMessages")?.addEventListener("click", () => void listGatewayAssistantMessages());
+  qs("#retrieveGatewayAssistant")?.addEventListener("click", () => void retrieveGatewayAssistant());
+  qs("#retrieveGatewayAssistantThread")?.addEventListener("click", () => void retrieveGatewayAssistantThread());
+  qs("#retrieveGatewayAssistantRun")?.addEventListener("click", () => void retrieveGatewayAssistantRun());
+  qs("#deleteGatewayAssistant")?.addEventListener("click", () => void deleteGatewayAssistant());
+  qs("#runGatewayAssistantThread")?.addEventListener("click", () => void runGatewayAssistantThread());
+  qs("#loadGatewayFineTuningJobs")?.addEventListener("click", () => void loadGatewayFineTuningJobs());
+  qs("#gatewayFineTuningCreateForm")?.addEventListener("submit", createGatewayFineTuningJob);
+  qs("#retrieveGatewayFineTuningJob")?.addEventListener("click", () => void retrieveGatewayFineTuningJob());
+  qs("#cancelGatewayFineTuningJob")?.addEventListener("click", () => void cancelGatewayFineTuningJob());
+  qs("#gatewayPassthroughForm")?.addEventListener("submit", submitGatewayPassthroughForm);
   qs("#gatewayDecisionTraceForm").addEventListener("submit", loadGatewayDecisionTrace);
   qs("#loadGatewayMcpServers").addEventListener("click", loadGatewayMcpServers);
   qs("#gatewayMcpToolsForm").addEventListener("submit", loadGatewayMcpTools);
@@ -27418,6 +29178,20 @@ function bindEvents() {
   qs("#enableBasicAuthTemporary").addEventListener("click", enableBasicAuthTemporary);
   qs("#disableBasicAuthTemporary").addEventListener("click", disableBasicAuthTemporary);
   qs("#refreshObservability").addEventListener("click", loadObservability);
+  qs("#loadObservabilitySiemRules")?.addEventListener("click", () => void loadObservabilitySiemRules());
+  qs("#exportObservabilitySiemRules")?.addEventListener("click", () => void exportObservabilitySiemRules());
+  qs("#evaluateObservabilitySiemRules")?.addEventListener("click", () => void evaluateObservabilitySiemRules());
+  qs("#loadCostScopeBreakdown")?.addEventListener("click", () => void loadCostScopeBreakdown());
+  qs("#loadCostTimeseries")?.addEventListener("click", () => void loadCostTimeseries());
+  qs("#costTimeseriesForm")?.addEventListener("submit", (evt) => {
+    evt.preventDefault();
+    void loadCostTimeseries();
+  });
+  qs("#testOrchestrationDataConnection")?.addEventListener("click", () => void testOrchestrationDataConnection());
+  qs("#orchestrationDataConnectionTestForm")?.addEventListener("submit", (evt) => {
+    evt.preventDefault();
+    void testOrchestrationDataConnection();
+  });
   qs("#loadObservabilityTrace").addEventListener("click", loadObservabilityTrace);
   qs("#loadObservabilityLogs").addEventListener("click", loadObservabilityLogs);
   qs("#loadObservabilitySchema").addEventListener("click", loadObservabilitySchema);
@@ -27669,14 +29443,37 @@ function renderOrchestrationPaletteCategoryFilters() {
   });
 }
 
+function parseOrchestrationTriggerConfig(raw) {
+  try {
+    const parsed = JSON.parse(String(raw || "{}"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (_err) {
+    return {};
+  }
+}
+
+function syncOrchestrationScheduleToolbarUi(triggerType = getOrchestrationFlowFormValues()?.trigger_type || "manual") {
+  const wrap = qs("#orchestrationToolbarScheduleWrap");
+  const cronInput = qs("#orchestrationToolbarCron");
+  const isSchedule = String(triggerType || "").trim().toLowerCase() === "schedule";
+  if (wrap) wrap.hidden = !isSchedule;
+  if (cronInput && isSchedule && !cronInput.value.trim()) {
+    cronInput.value = "0 9 * * *";
+  }
+}
+
 function syncOrchestrationToolbarFromForm() {
   const values = getOrchestrationFlowFormValues();
   const nameInput = qs("#orchestrationToolbarFlowName");
   const envSelect = qs("#orchestrationToolbarEnvironment");
   const triggerSelect = qs("#orchestrationToolbarTrigger");
+  const cronInput = qs("#orchestrationToolbarCron");
   if (nameInput) nameInput.value = resolveOrchestrationFlowName(values);
   if (envSelect) envSelect.value = values.environment || "dev";
   if (triggerSelect) triggerSelect.value = values.trigger_type || "manual";
+  const triggerConfig = parseOrchestrationTriggerConfig(values?.trigger_config_json);
+  if (cronInput) cronInput.value = String(triggerConfig.cron_expression || "0 9 * * *");
+  syncOrchestrationScheduleToolbarUi(values.trigger_type || "manual");
   updateOrchestrationBadges(values);
 }
 
@@ -27684,12 +29481,24 @@ function syncOrchestrationFormFromToolbar() {
   const nameInput = qs("#orchestrationToolbarFlowName");
   const envSelect = qs("#orchestrationToolbarEnvironment");
   const triggerSelect = qs("#orchestrationToolbarTrigger");
+  const cronInput = qs("#orchestrationToolbarCron");
   if (nameInput) {
     const trimmed = nameInput.value.trim();
     if (trimmed) setOrchestrationFormFields({ flow_name: trimmed });
   }
   if (envSelect) setOrchestrationFormFields({ environment: envSelect.value });
-  if (triggerSelect) setOrchestrationFormFields({ trigger_type: triggerSelect.value });
+  if (triggerSelect) {
+    const triggerType = triggerSelect.value;
+    setOrchestrationFormFields({ trigger_type: triggerType });
+    syncOrchestrationScheduleToolbarUi(triggerType);
+    if (triggerType === "schedule") {
+      const cron = String(cronInput?.value || "0 9 * * *").trim() || "0 9 * * *";
+      setOrchestrationFormFields({
+        trigger_config_json: JSON.stringify({ cron_expression: cron }),
+      });
+      if (cronInput && !cronInput.value.trim()) cronInput.value = cron;
+    }
+  }
   updateOrchestrationBadges(getOrchestrationFlowFormValues());
 }
 
@@ -27723,6 +29532,68 @@ function renderOrchestrationConsoleSummary() {
   }
   const parallelLabel = parallelGroups ? ` · ${parallelGroups} parallel group${parallelGroups === 1 ? "" : "s"}` : "";
   target.textContent = `${flowLabel} — Start → ${widgets} widget${widgets === 1 ? "" : "s"}${parallelLabel} → End · ${formatOrchestrationEnv(values?.environment)}`;
+  void loadOrchestrationPlatformSummary();
+}
+
+async function loadOrchestrationPlatformSummary() {
+  await loadOrchestrationPlatformSummaryCountsOnly();
+  void loadOrchestrationIgaQueues();
+}
+
+async function loadOrchestrationIgaQueues() {
+  await Promise.all([loadOrchestrationDueCertificationQueue(), loadOrchestrationJitAccessQueue()]);
+}
+
+let orchestrationHistoryOutputShapes = {};
+
+async function loadOrchestrationHistoryOutputShapes(flowId) {
+  if (!flowId) {
+    orchestrationHistoryOutputShapes = {};
+    return;
+  }
+  try {
+    const payload = await api(`/orchestration/flows/${encodeURIComponent(flowId)}/runs?limit=5`);
+    const runs = (Array.isArray(payload.data) ? payload.data : []).filter((row) =>
+      ["completed", "dry_run_completed"].includes(String(row.status || "")),
+    );
+    orchestrationHistoryOutputShapes = {};
+    for (const run of runs) {
+      const detail = await api(
+        `/orchestration/flows/${encodeURIComponent(flowId)}/runs/${encodeURIComponent(run.run_id)}`,
+      );
+      const steps = JSON.parse(detail.step_results_json || "[]");
+      steps.forEach((step) => {
+        const nodeId = step.node_id;
+        if (nodeId && step.output && !orchestrationHistoryOutputShapes[nodeId]) {
+          orchestrationHistoryOutputShapes[nodeId] = step.output;
+        }
+      });
+      if (Object.keys(orchestrationHistoryOutputShapes).length) break;
+    }
+  } catch (_error) {
+    orchestrationHistoryOutputShapes = {};
+  }
+}
+
+function listOrchestrationOutputFieldPaths(value, prefix = "$") {
+  const paths = [];
+  if (value === null || value === undefined) return paths;
+  if (Array.isArray(value)) {
+    value.slice(0, 3).forEach((item, index) => {
+      paths.push(`${prefix}[${index}]`);
+      paths.push(...listOrchestrationOutputFieldPaths(item, `${prefix}[${index}]`));
+    });
+    return paths;
+  }
+  if (typeof value === "object") {
+    Object.keys(value)
+      .slice(0, 12)
+      .forEach((key) => {
+        paths.push(`${prefix}.${key}`);
+        paths.push(...listOrchestrationOutputFieldPaths(value[key], `${prefix}.${key}`));
+      });
+  }
+  return paths;
 }
 
 function renderOrchestrationSecurityPanel() {
@@ -27730,12 +29601,70 @@ function renderOrchestrationSecurityPanel() {
   if (!panel) return;
   const policy = orchestrationPolicySnapshot || {};
   const hosts = Array.isArray(policy.http_allowed_hosts) ? policy.http_allowed_hosts : [];
+  const liveEnabled = String(policy.live_executor_enabled || "false").toLowerCase() === "true";
+  const liveProd = String(policy.live_executor_prod_enabled || "false").toLowerCase() === "true";
   panel.innerHTML = `
+    <article class="flow-security-card"><span class="flow-security-icon">⚡</span><strong>Live executor</strong><p>${liveEnabled ? `Enabled for dev/staging${liveProd ? " and production" : " (production requires prod flag)"}` : "Disabled — dry runs simulate; enable live executor for gateway-backed nodes"}</p></article>
     <article class="flow-security-card"><span class="flow-security-icon">🌐</span><strong>Allowed websites</strong><p>${hosts.length ? hosts.join(", ") : "None configured — external calls are blocked"}</p></article>
     <article class="flow-security-card"><span class="flow-security-icon">📊</span><strong>Step limit</strong><p>Up to ${safeText(policy.max_nodes_per_flow ?? "50")} steps per flow</p></article>
-    <article class="flow-security-card"><span class="flow-security-icon">🔒</span><strong>Production runs</strong><p>${policy.prod_run_requires_approval === false ? "Approval optional" : "Requires approval before running"}</p></article>
+    <article class="flow-security-card"><span class="flow-security-icon">🔒</span><strong>Production runs</strong><p>${policy.prod_run_requires_approval === false ? "Approval optional" : "Requires approval before running"}${policy.prod_run_requires_access_certification === false ? "" : " · access certification required"}</p></article>
+    <article class="flow-security-card"><span class="flow-security-icon">📧</span><strong>Notifications</strong><p>${policy.notify_nodes_remain_simulated === false ? "Email/SMS nodes deliver live when channels and bindings are configured" : "Configure notification channels for live email/SMS delivery"}</p></article>
+    <article class="flow-security-card"><span class="flow-security-icon">✅</span><strong>Human approval</strong><p>${policy.human_approval_live_enabled ? "Live runs pause at approval gates until an authorized approver decides" : "Approval gates available when live executor is enabled"}</p></article>
     <article class="flow-security-card"><span class="flow-security-icon">📁</span><strong>Current flow</strong><p class="mono">${safeText(orchestrationSelectedFlowId || "None selected")}</p></article>
   `;
+  void renderOrchestrationIgaPosturePanel();
+}
+
+async function renderOrchestrationIgaPosturePanel() {
+  const panel = qs("#orchestrationIgaPosturePanel");
+  if (!panel) return;
+  const flowId = orchestrationSelectedFlowId || getOrchestrationFlowFormValues()?.flow_id;
+  if (!flowId) {
+    panel.innerHTML = `<p class="flow-iga-empty">Select a saved flow to view IGA posture (SoD, certification, staged approvals, JIT grants, entitlements).</p>`;
+    return;
+  }
+  try {
+    const posture = await api(`/orchestration/flows/${encodeURIComponent(flowId)}/iga/posture`);
+    const sodRules = posture?.sod?.rules || {};
+    const cert = posture?.certification || {};
+    const staged = posture?.staged_approval || {};
+    const entitlement = posture?.entitlement || {};
+    const sodBadges = Object.entries(sodRules)
+      .map(([key, enabled]) => `<span class="flow-iga-badge ${enabled ? "is-on" : "is-off"}">${safeText(key)}</span>`)
+      .join("");
+    const stageItems = (staged.stages || [])
+      .map((stage) => {
+        const state = (staged.state || {})[stage.stage_id] || {};
+        const status = state.status || "pending";
+        return `<li><strong>${safeText(stage.label || stage.stage_id)}</strong> <span class="flow-pill flow-pill-muted">${safeText(status)}</span></li>`;
+      })
+      .join("");
+    panel.innerHTML = `
+      <div class="flow-iga-posture-grid">
+        <article class="flow-iga-card"><h5>SoD rules</h5><div class="flow-iga-badges">${sodBadges || "—"}</div></article>
+        <article class="flow-iga-card"><h5>Certification</h5><p>${cert.current ? "Current" : cert.never_certified ? "Never certified" : "Expired / due"}${cert.next_due_at ? ` · next due ${safeText(cert.next_due_at)}` : ""}</p></article>
+        <article class="flow-iga-card"><h5>Staged approval</h5>${stageItems ? `<ul class="flow-iga-stage-list">${stageItems}</ul>` : `<p>${safeText(staged.mode || "simple")} mode</p>`}</article>
+        <article class="flow-iga-card"><h5>Entitlement</h5><p>${entitlement.configured ? (entitlement.satisfied ? "Linked & satisfied" : "Linked — not satisfied") : "Not configured"}${entitlement.entitlement_id ? ` · ${safeText(entitlement.entitlement_id)}` : ""}</p></article>
+        <article class="flow-iga-card"><h5>Active JIT grants</h5><p>${(posture.active_jit_grants || []).length} active</p></article>
+      </div>`;
+  } catch (error) {
+    panel.innerHTML = `<p class="flow-iga-empty">IGA posture unavailable: ${safeText(error.message)}</p>`;
+  }
+}
+
+async function loadOrchestrationEntitlementPicker() {
+  const datalist = qs("#orchestrationEntitlementPicker");
+  if (!datalist) return;
+  try {
+    const rows = await api("/gateway/entitlements?limit=200");
+    const items = Array.isArray(rows) ? rows : rows?.data || [];
+    datalist.innerHTML = items
+      .filter((row) => String(row.action || "").startsWith("orchestration."))
+      .map((row) => `<option value="${safeText(row.entitlement_id)}">${safeText(row.action)} · ${safeText(row.environment)}</option>`)
+      .join("");
+  } catch {
+    datalist.innerHTML = "";
+  }
 }
 
 async function loadOrchestrationNodeTypes() {
@@ -27800,6 +29729,297 @@ function hydrateOrchestrationFormFromFlow(flow) {
     status: flow.status || "draft",
     trigger_config_json: flow.trigger_config_json || "{}",
   });
+  renderOrchestrationAccessPolicyForm(flow.access_policy_json);
+}
+
+function parseCsvScopeList(raw) {
+  return String(raw || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function scopeListToCsv(items) {
+  return (Array.isArray(items) ? items : []).join(", ");
+}
+
+function buildScopeSpecFromForm(form, prefix) {
+  return {
+    users: parseCsvScopeList(form.elements[`${prefix}_users`]?.value),
+    groups: parseCsvScopeList(form.elements[`${prefix}_groups`]?.value),
+    teams: parseCsvScopeList(form.elements[`${prefix}_teams`]?.value),
+    match: String(form.elements[`${prefix}_match`]?.value || "any"),
+  };
+}
+
+function buildOrchestrationAccessPolicyFromForm() {
+  const form = qs("#orchestrationAccessPolicyForm");
+  if (!form) return null;
+  let clauses = [];
+  const rawClauses = String(form.elements.approvers_clauses?.value || "").trim();
+  if (rawClauses) {
+    clauses = JSON.parse(rawClauses);
+    if (!Array.isArray(clauses)) throw new Error("approvers_clauses must be a JSON array");
+  }
+  let stages = [];
+  const rawStages = String(form.elements.approvers_stages?.value || "").trim();
+  if (rawStages) {
+    stages = JSON.parse(rawStages);
+    if (!Array.isArray(stages)) throw new Error("approvers_stages must be a JSON array");
+  }
+  const mode = String(form.elements.approvers_mode?.value || "simple").trim();
+  const approvers = {
+    mode,
+    match: String(form.elements.approvers_match?.value || "any"),
+    clauses: mode === "simple" ? clauses : [],
+  };
+  if (mode === "staged") {
+    approvers.require_all_stages = true;
+    approvers.stages = stages;
+  }
+  const iga = {
+    sod: {
+      prevent_self_approval: Boolean(form.elements.iga_sod_prevent_self_approval?.checked),
+      prevent_creator_as_approver: Boolean(form.elements.iga_sod_prevent_creator_as_approver?.checked),
+      prevent_runner_as_approver_prod: Boolean(form.elements.iga_sod_prevent_runner_as_approver_prod?.checked),
+      prevent_owner_as_sole_approver: Boolean(form.elements.iga_sod_prevent_owner_as_sole_approver?.checked),
+      require_dual_approval_prod: Boolean(form.elements.iga_sod_require_dual_approval_prod?.checked),
+    },
+    certification: {
+      recertify_interval_days: Number(form.elements.iga_recertify_interval_days?.value || 90),
+    },
+  };
+  const entitlementId = String(form.elements.iga_entitlement_id?.value || "").trim();
+  if (entitlementId) iga.entitlement_id = entitlementId;
+  return {
+    version: 1,
+    owners: buildScopeSpecFromForm(form, "owners"),
+    runners: buildScopeSpecFromForm(form, "runners"),
+    schedulers: buildScopeSpecFromForm(form, "schedulers"),
+    approvers,
+    iga,
+  };
+}
+
+function renderOrchestrationAccessPolicyForm(rawPolicy) {
+  const form = qs("#orchestrationAccessPolicyForm");
+  if (!form) return;
+  let policy = {};
+  try {
+    policy = rawPolicy ? JSON.parse(rawPolicy) : {};
+  } catch {
+    policy = {};
+  }
+  const fill = (prefix, spec) => {
+    const block = spec && typeof spec === "object" ? spec : {};
+    if (form.elements[`${prefix}_users`]) form.elements[`${prefix}_users`].value = scopeListToCsv(block.users);
+    if (form.elements[`${prefix}_groups`]) form.elements[`${prefix}_groups`].value = scopeListToCsv(block.groups);
+    if (form.elements[`${prefix}_teams`]) form.elements[`${prefix}_teams`].value = scopeListToCsv(block.teams);
+    if (form.elements[`${prefix}_match`]) form.elements[`${prefix}_match`].value = block.match || "any";
+  };
+  fill("owners", policy.owners);
+  fill("runners", policy.runners);
+  fill("schedulers", policy.schedulers);
+  const approvers = policy.approvers && typeof policy.approvers === "object" ? policy.approvers : {};
+  if (form.elements.approvers_mode) form.elements.approvers_mode.value = approvers.mode || "simple";
+  if (form.elements.approvers_match) form.elements.approvers_match.value = approvers.match || "any";
+  if (form.elements.approvers_clauses) {
+    form.elements.approvers_clauses.value = Array.isArray(approvers.clauses)
+      ? JSON.stringify(approvers.clauses, null, 2)
+      : "";
+  }
+  if (form.elements.approvers_stages) {
+    form.elements.approvers_stages.value = Array.isArray(approvers.stages)
+      ? JSON.stringify(approvers.stages, null, 2)
+      : "";
+  }
+  const iga = policy.iga && typeof policy.iga === "object" ? policy.iga : {};
+  const sod = iga.sod && typeof iga.sod === "object" ? iga.sod : {};
+  const certification = iga.certification && typeof iga.certification === "object" ? iga.certification : {};
+  if (form.elements.iga_sod_prevent_self_approval) form.elements.iga_sod_prevent_self_approval.checked = sod.prevent_self_approval !== false;
+  if (form.elements.iga_sod_prevent_creator_as_approver) form.elements.iga_sod_prevent_creator_as_approver.checked = sod.prevent_creator_as_approver !== false;
+  if (form.elements.iga_sod_prevent_runner_as_approver_prod) form.elements.iga_sod_prevent_runner_as_approver_prod.checked = sod.prevent_runner_as_approver_prod !== false;
+  if (form.elements.iga_sod_prevent_owner_as_sole_approver) form.elements.iga_sod_prevent_owner_as_sole_approver.checked = sod.prevent_owner_as_sole_approver !== false;
+  if (form.elements.iga_sod_require_dual_approval_prod) form.elements.iga_sod_require_dual_approval_prod.checked = sod.require_dual_approval_prod !== false;
+  if (form.elements.iga_recertify_interval_days) form.elements.iga_recertify_interval_days.value = certification.recertify_interval_days || 90;
+  if (form.elements.iga_entitlement_id) form.elements.iga_entitlement_id.value = iga.entitlement_id || "";
+  void loadOrchestrationEntitlementPicker();
+  void loadOrchestrationDataConnectionsHint();
+  void renderOrchestrationIgaPosturePanel();
+}
+
+async function loadOrchestrationDataConnectionsHint() {
+  const hint = qs("#orchestrationDataConnectionsHint");
+  const select = qs("#orchestrationDataConnectionSelect");
+  if (!hint && !select) return;
+  try {
+    const payload = await api("/orchestration/data-connections?enabled_only=true");
+    const rows = Array.isArray(payload.data) ? payload.data : [];
+    if (hint) {
+      if (!rows.length) {
+        hint.textContent = "No data connections configured (platform connection always available).";
+      } else {
+        hint.textContent = `Available connections: ${rows.map((row) => row.connection_id).join(", ")}`;
+      }
+    }
+    if (select) {
+      const current = String(select.value || "platform");
+      select.textContent = "";
+      const options = rows.length ? rows : [{ connection_id: "platform", driver: "platform" }];
+      options.forEach((row) => {
+        const option = document.createElement("option");
+        option.value = row.connection_id;
+        option.textContent = `${row.connection_id} (${row.driver || "unknown"})`;
+        select.appendChild(option);
+      });
+      if ([...select.options].some((opt) => opt.value === current)) {
+        select.value = current;
+      }
+    }
+  } catch (error) {
+    if (hint) hint.textContent = `Data connections unavailable: ${error.message}`;
+  }
+}
+
+function renderOrchestrationDataConnectionTestTable(payload) {
+  const head = qs("#orchestrationDataConnectionTestHead");
+  const tbody = qs("#orchestrationDataConnectionTestTable");
+  if (!tbody) return;
+  const columns = Array.isArray(payload?.columns) ? payload.columns : [];
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  if (!rows.length) {
+    if (head) {
+      head.textContent = "";
+      const tr = document.createElement("tr");
+      appendTableCell(tr, "Result");
+      head.appendChild(tr);
+    }
+    setTableMessage(tbody, 1, "No rows returned.");
+    return;
+  }
+  if (head) {
+    head.textContent = "";
+    const tr = document.createElement("tr");
+    columns.forEach((col) => appendTableCell(tr, col));
+    head.appendChild(tr);
+  }
+  tbody.textContent = "";
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    columns.forEach((col) => {
+      const value = row?.[col];
+      appendTableCell(tr, value === null || value === undefined ? "—" : String(value));
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+async function testOrchestrationDataConnection(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#orchestrationDataConnectionTestForm");
+  const result = qs("#orchestrationDataConnectionTestResult");
+  const tbody = qs("#orchestrationDataConnectionTestTable");
+  if (!form) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const connectionId = String(raw.connection_id || "platform").trim() || "platform";
+  const sql = String(raw.sql || "").trim();
+  if (!sql) {
+    if (result) result.textContent = "SQL is required.";
+    return;
+  }
+  let parameters = {};
+  const parametersRaw = String(raw.parameters_json || "").trim();
+  if (parametersRaw) {
+    try {
+      const parsed = JSON.parse(parametersRaw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        if (result) result.textContent = "Parameters must be a JSON object.";
+        return;
+      }
+      parameters = parsed;
+    } catch (error) {
+      if (result) result.textContent = `Invalid parameters JSON: ${error.message}`;
+      return;
+    }
+  }
+  const previewLimit = Number(raw.preview_limit || 10);
+  if (tbody) setTableMessage(tbody, 1, "Running test query...");
+  if (result) result.textContent = "Running read-only test query…";
+  try {
+    const data = await api(`/orchestration/data-connections/${encodeURIComponent(connectionId)}/test-query`, {
+      method: "POST",
+      body: JSON.stringify({
+        sql,
+        parameters,
+        preview_limit: Number.isFinite(previewLimit) ? previewLimit : 10,
+      }),
+    });
+    renderOrchestrationDataConnectionTestTable(data);
+    const truncated = data.truncated ? " (preview truncated)" : "";
+    if (result) {
+      result.textContent = `${connectionId}: ${data.row_count ?? 0} row${data.row_count === 1 ? "" : "s"}${truncated}.`;
+    }
+    setOrchestrationFeedback("Test query completed.", "orchestrationAccessPolicyFeedback", "success");
+  } catch (error) {
+    if (tbody) setTableMessage(tbody, 1, `Error: ${safeText(error.message)}`);
+    if (result) result.textContent = `Test query failed: ${error.message}`;
+    setOrchestrationFeedback(`Test query failed: ${error.message}`, "orchestrationAccessPolicyFeedback", "error");
+  }
+}
+
+async function previewOrchestrationAccessPolicy() {
+  const values = getOrchestrationFlowFormValues();
+  const preview = qs("#orchestrationAccessPolicyPreview");
+  if (!values?.flow_id) {
+    setOrchestrationFeedback("Save the flow before previewing resolved policy.", "orchestrationAccessPolicyFeedback", "warn");
+    return;
+  }
+  if (preview) {
+    preview.hidden = false;
+    preview.innerHTML = `<p>Resolving dynamic scopes…</p>`;
+  }
+  try {
+    const access_policy_json = JSON.stringify(buildOrchestrationAccessPolicyFromForm());
+    const result = await api(`/orchestration/flows/${encodeURIComponent(values.flow_id)}/access-policy/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ access_policy_json }),
+    });
+    const errors = Array.isArray(result.resolve_errors) ? result.resolve_errors : [];
+    if (preview) {
+      preview.innerHTML = `
+        <strong>Resolved access policy</strong>
+        ${errors.length ? `<p class="flow-iga-error">${errors.map((e) => safeText(e)).join("; ")}</p>` : ""}
+        <pre class="mono">${safeText(JSON.stringify(result.resolved_policy, null, 2))}</pre>
+        <p class="flow-iga-muted">Template context: ${safeText(JSON.stringify(result.template_context || {}))}</p>`;
+    }
+    setOrchestrationFeedback(
+      errors.length ? "Preview completed with resolver warnings." : "Resolved policy preview ready.",
+      "orchestrationAccessPolicyFeedback",
+      errors.length ? "warn" : "success",
+    );
+  } catch (error) {
+    if (preview) preview.innerHTML = `<p class="flow-iga-error">${safeText(error.message)}</p>`;
+    setOrchestrationFeedback(`Preview failed: ${error.message}`, "orchestrationAccessPolicyFeedback", "error");
+  }
+}
+
+async function saveOrchestrationAccessPolicy() {
+  const values = getOrchestrationFlowFormValues();
+  if (!values?.flow_id) {
+    setOrchestrationFeedback("Save the flow before updating access policy.", "orchestrationAccessPolicyFeedback", "warn");
+    return;
+  }
+  try {
+    const access_policy_json = JSON.stringify(buildOrchestrationAccessPolicyFromForm());
+    const result = await api(`/orchestration/flows/${encodeURIComponent(values.flow_id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ access_policy_json }),
+    });
+    renderOrchestrationAccessPolicyForm(result.access_policy_json);
+    setOrchestrationFeedback("Access policy saved.", "orchestrationAccessPolicyFeedback", "success");
+  } catch (error) {
+    setOrchestrationFeedback(`Access policy save failed: ${error.message}`, "orchestrationAccessPolicyFeedback", "error");
+  }
 }
 
 function assignOrchestrationNodePositions() {
@@ -28227,6 +30447,115 @@ function getOrchestrationTemplateFields(nodeType) {
   return [];
 }
 
+function getOrchestrationScopeIdPresets() {
+  if (ORCH_REG?.getScopeIdPresets) return ORCH_REG.getScopeIdPresets();
+  return [];
+}
+
+function getOrchestrationTemplateStarters(nodeType, fieldName) {
+  if (ORCH_REG?.getTemplateStarters) return ORCH_REG.getTemplateStarters(nodeType, fieldName);
+  return [];
+}
+
+function resolveOrchestrationTemplateStarter(value, nodeId) {
+  const prior = getOrchestrationPriorSteps(nodeId);
+  const priorId = prior.length ? prior[prior.length - 1].id : "prior-step";
+  return String(value || "").replace(/\{\{PRIOR\}\}/g, priorId);
+}
+
+function renderOrchestrationTemplateStarterPicker(node, fieldName) {
+  const starters = getOrchestrationTemplateStarters(node.type, fieldName);
+  if (!starters.length) return "";
+  const options = starters
+    .map((item) => `<option value="${safeText(item.value)}">${safeText(item.label)}</option>`)
+    .join("");
+  return `
+    <select class="flow-template-starter" data-starter-for="${safeText(fieldName)}" aria-label="Starter template for ${safeText(fieldName)}">
+      <option value="">Starter template…</option>
+      ${options}
+    </select>`;
+}
+
+function renderOrchestrationScopeIdField(node, required = false) {
+  const config = node.config || {};
+  const value = safeText(config.scope_id || "");
+  const presets = getOrchestrationScopeIdPresets();
+  const presetOptions = presets
+    .map((item) => `<option value="${safeText(item.value)}">${safeText(item.label)}</option>`)
+    .join("");
+  const picker = renderOrchestrationVariablePicker(node.id, "scope_id", { mode: "replace" });
+  const runContext = renderOrchestrationRunContextPicker("scope_id");
+  const priorHint = getOrchestrationPriorSteps(node.id).length
+    ? " Or pick a prior step output below."
+    : "";
+  return `
+    <label class="flow-mapping-field flow-scope-id-field">
+      <span class="flow-field-label">Scope ID${required ? " *" : ""}</span>
+      <span class="flow-mapping-field-hint">Memory partition key. Empty on write uses run trace_id; supports {{input}} and step output templates.${priorHint}</span>
+      <div class="flow-scope-id-controls">
+        <select class="flow-scope-id-preset" data-preset-for="scope_id" aria-label="Scope ID preset">
+          <option value="">Quick set scope…</option>
+          ${presetOptions}
+        </select>
+        ${runContext}
+        ${picker}
+      </div>
+      <input data-inspector-config-field="scope_id" value="${value}" placeholder="Run trace (auto), platform, {{input}}, or {{steps['NODE_ID'].output.field}}" />
+    </label>`;
+}
+
+function outputPathToJsonPath(path) {
+  const raw = String(path || "").trim();
+  if (!raw) return "$";
+  return raw.startsWith("$") ? raw : `$.${raw}`;
+}
+
+function getOrchestrationJsonPathOptions(sourceStepType, sourceStepId = "") {
+  const seen = new Set();
+  const options = [];
+  (ORCH_REG?.JSON_PATH_PRESETS || []).forEach((preset) => {
+    if (!seen.has(preset.path)) {
+      seen.add(preset.path);
+      options.push({ path: preset.path, label: preset.label });
+    }
+  });
+  getOrchestrationOutputParamHints(sourceStepType).forEach((hint) => {
+    const path = outputPathToJsonPath(hint.path);
+    if (!seen.has(path)) {
+      seen.add(path);
+      options.push({ path, label: hint.description });
+    }
+  });
+  const historyOutput = sourceStepId ? orchestrationHistoryOutputShapes[sourceStepId] : null;
+  if (historyOutput) {
+    listOrchestrationOutputFieldPaths(historyOutput)
+      .slice(0, 24)
+      .forEach((path) => {
+        if (!seen.has(path)) {
+          seen.add(path);
+          options.push({ path, label: `History ${path}` });
+        }
+      });
+  }
+  return options;
+}
+
+function renderOrchestrationJsonPathPicker(node, fieldName = "json_path") {
+  const sourceId = String(node.config?.source_node_id || "").trim();
+  if (!sourceId) return "";
+  const sourceStep = getOrchestrationPriorSteps(node.id).find((step) => step.id === sourceId);
+  if (!sourceStep) return "";
+  const options = getOrchestrationJsonPathOptions(sourceStep.type, sourceId)
+    .map((item) => `<option value="${safeText(item.path)}">${safeText(item.label)} (${safeText(item.path)})</option>`)
+    .join("");
+  if (!options) return "";
+  return `
+    <select class="flow-json-path-picker" data-json-path-for="${safeText(fieldName)}" aria-label="JSON path preset for ${safeText(fieldName)}">
+      <option value="">Select output field…</option>
+      ${options}
+    </select>`;
+}
+
 async function copyOrchestrationMappingSnippet(text) {
   const value = String(text || "").trim();
   if (!value) return;
@@ -28300,24 +30629,43 @@ function renderOrchestrationDataMappingPanel() {
   const focusLabel = focusNode
     ? getOrchestrationNodeVisual(focusNode.type).label
     : "whole flow";
-  const formatCards = Object.values(formats)
-    .map(
-      (item) => `
+  const primaryCategories = ["url", "jsonBody", "inputParams", "scopeId", "outputParams"];
+  const secondaryCategories = ["jsonPath", "audit"];
+  const renderFormatCard = (item) => `
       <article class="flow-data-map-format-card">
         <h5>${safeText(item.label)}</h5>
         <p>${safeText(item.description)}</p>
+        ${item.where ? `<p class="flow-data-map-where"><strong>Where:</strong> ${safeText(item.where)}</p>` : ""}
         <pre class="flow-data-map-code mono">${safeText(item.syntax)}</pre>
+        ${item.nested ? `<p class="flow-data-map-nested-label">Nested field</p><pre class="flow-data-map-code mono">${safeText(item.nested)}</pre>` : ""}
         ${item.example ? `<button type="button" class="ghost flow-data-map-copy" data-copy-snippet="${safeText(item.example)}">Copy example</button>` : ""}
-      </article>`,
-    )
+      </article>`;
+  const primaryCards = primaryCategories
+    .map((key) => formats[key])
+    .filter(Boolean)
+    .map(renderFormatCard)
+    .join("");
+  const secondaryCards = secondaryCategories
+    .map((key) => formats[key])
+    .filter(Boolean)
+    .map(renderFormatCard)
     .join("");
   const stepRows = priorSteps.length
     ? priorSteps
         .map((step) => {
           const snippets = buildOrchestrationMappingSnippets(step);
           const outputJson = JSON.stringify(snippets.outputExample, null, 2);
+          const outputHints = getOrchestrationOutputParamHints(step.type);
           const fieldsHint = snippets.templateFields.length
-            ? `<span class="flow-data-map-fields">Use in: ${snippets.templateFields.map((f) => safeText(f)).join(", ")}</span>`
+            ? `<span class="flow-data-map-fields">Input fields: ${snippets.templateFields.map((f) => safeText(f)).join(", ")}</span>`
+            : "";
+          const outputHintList = outputHints.length
+            ? `<ul class="flow-output-params-list flow-output-params-list-compact">${outputHints
+                .map(
+                  (item) =>
+                    `<li><code class="mono">${safeText(`steps['${step.id}'].output.${item.path}`)}</code><span>${safeText(item.description)}</span></li>`,
+                )
+                .join("")}</ul>`
             : "";
           return `
           <article class="flow-data-map-step-card">
@@ -28326,20 +30674,27 @@ function renderOrchestrationDataMappingPanel() {
               <code class="mono">${safeText(step.id)}</code>
             </header>
             ${fieldsHint}
+            <div class="flow-var-picker flow-var-picker-compact">
+              <select class="flow-data-map-var-insert" data-step-id="${safeText(step.id)}" aria-label="Quick insert variable from ${safeText(step.label)}">
+                <option value="">Quick insert field…</option>
+                ${renderOrchestrationVariableFieldOptions(step.type)}
+              </select>
+            </div>
             <div class="flow-data-map-snippet-list">
               <div class="flow-data-map-snippet">
-                <span class="flow-data-map-snippet-label">Template</span>
+                <span class="flow-data-map-snippet-label">URL / input template</span>
                 <code class="mono">${safeText(snippets.templateRef)}</code>
                 <button type="button" class="ghost flow-data-map-copy" data-copy-snippet="${safeText(snippets.templateRef)}" title="Copy">⎘</button>
               </div>
               <div class="flow-data-map-snippet">
-                <span class="flow-data-map-snippet-label">JSON path</span>
+                <span class="flow-data-map-snippet-label">JSON path (conditions)</span>
                 <code class="mono">${safeText(snippets.jsonPathExpr)}</code>
                 <button type="button" class="ghost flow-data-map-copy" data-copy-snippet="${safeText(snippets.jsonPathExpr)}" title="Copy">⎘</button>
               </div>
             </div>
+            ${outputHintList}
             <details class="flow-data-map-output-details">
-              <summary>Output shape (example)</summary>
+              <summary>Output parameters (example shape)</summary>
               <pre class="flow-data-map-code mono">${safeText(outputJson)}</pre>
             </details>
           </article>`;
@@ -28349,37 +30704,39 @@ function renderOrchestrationDataMappingPanel() {
   panel.innerHTML = `
     <div class="flow-data-map-head">
       <div>
-        <strong>Data mapping</strong>
-        <p class="flow-data-map-sub">${focusNode ? `References available before <em>${safeText(focusLabel)}</em>` : "All steps in this flow"}</p>
+        <strong>Variable mapping guide</strong>
+        <p class="flow-data-map-sub">${focusNode ? `Map data into <em>${safeText(focusLabel)}</em> from steps that run before it` : "How to pass data between steps in this flow"}</p>
       </div>
       <button type="button" class="ghost flow-data-map-close" id="orchestrationDataMappingClose" aria-label="Close data mapping">×</button>
     </div>
     <section class="flow-data-map-section">
-      <h5>Reference formats</h5>
-      <div class="flow-data-map-format-grid">${formatCards}</div>
+      <h5>Mapping types</h5>
+      <p class="flow-data-map-section-lead">Use the right syntax for each kind of field — URL segments, JSON bodies, step inputs, and downstream output references.</p>
+      <div class="flow-data-map-format-grid">${primaryCards}</div>
     </section>
     <section class="flow-data-map-section">
-      <h5>${focusNode ? "Prior steps you can reference" : "Step outputs"}</h5>
+      <h5>${focusNode ? "Prior steps — copy references" : "Step outputs — copy references"}</h5>
+      <p class="flow-data-map-section-lead">Each card shows the node ID, template snippet for inputs, JSON path for conditions, and example output fields. Use <strong>Quick insert field</strong> to paste into a focused inspector field (or copy when none is focused).</p>
       ${stepRows}
     </section>
-    <p class="flow-inspector-tip flow-inspector-tip-muted">Phase 2 runtime resolves templates and JSON paths against live step output. Test runs store results in Recent runs → Detail.</p>
+    <section class="flow-data-map-section">
+      <h5>Conditions &amp; audit</h5>
+      <div class="flow-data-map-format-grid">${secondaryCards}</div>
+    </section>
+    <p class="flow-inspector-tip flow-inspector-tip-muted">Live runtime resolves templates and JSON paths against prior step output. Dry runs simulate delivery and approval outcomes — inspect History for real shapes.</p>
   `;
   qs("#orchestrationDataMappingClose")?.addEventListener("click", () => toggleOrchestrationDataMapping());
   panel.querySelectorAll(".flow-data-map-copy").forEach((btn) => {
     btn.addEventListener("click", () => copyOrchestrationMappingSnippet(btn.getAttribute("data-copy-snippet")));
   });
-}
-
-function getOrchestrationPriorSteps(currentNodeId) {
-  return listOrchestrationNodesBefore(currentNodeId).map((node, index) => {
-    const visual = getOrchestrationNodeVisual(node.type);
-    const catalog = orchestrationNodeTypes.find((item) => item.type === node.type) || {};
-    return {
-      id: node.id,
-      type: node.type,
-      label: `${index + 1}. ${catalog.label || visual.label}`,
-    };
-  });
+  const focusNodeForPickers = orchestrationDataMappingFocusNodeId
+    ? getOrchestrationNodeById(orchestrationDataMappingFocusNodeId)
+    : null;
+  if (focusNodeForPickers) {
+    bindOrchestrationVariablePickers(panel, focusNodeForPickers);
+  } else {
+    bindOrchestrationVariablePickers(panel, { id: "", config: {} });
+  }
 }
 
 function buildOrchestrationConditionExpression(config) {
@@ -28482,7 +30839,35 @@ function renderOrchestrationHttpRequestInspector(node) {
       `<option value="${safeText(item.value)}" ${item.value === authType ? "selected" : ""}>${safeText(item.label)}</option>`,
   ).join("");
   const hint = ORCHESTRATION_HTTP_AUTH_SECRET_HINTS[authType] || "";
+  const prior = getOrchestrationPriorSteps(node.id);
+  const priorHint = prior.length
+    ? `<p class="flow-inspector-tip flow-mapping-section-tip">Prior steps: ${prior.map((s) => safeText(s.label)).join(", ")}. Use the dropdowns above each field to insert variables, or open <button type="button" class="inline-link-button orchestration-open-data-map">Variable map ⇄</button> for copy-ready snippets.</p>`
+    : `<p class="flow-inspector-tip flow-inspector-warn">Add steps above this widget before mapping variables from their output.</p>`;
+  const methodValue = safeText(config.method || "GET").toUpperCase();
   return `
+    <fieldset class="flow-inspector-fieldset flow-mapping-section">
+      <legend>URL mapping</legend>
+      <p class="flow-mapping-section-intro">Build the outbound URL with static segments and dynamic values from prior steps.</p>
+      <div class="form-grid flow-inspector-form">
+        ${renderOrchestrationMappingField("url", node, true)}
+        <label>HTTP method *
+          <select data-inspector-config-field="method">
+            ${["GET", "POST", "PUT", "PATCH", "DELETE"].map(
+              (value) => `<option value="${value}" ${methodValue === value ? "selected" : ""}>${value}</option>`,
+            ).join("")}
+          </select>
+        </label>
+      </div>
+    </fieldset>
+    <fieldset class="flow-inspector-fieldset flow-mapping-section">
+      <legend>JSON mapping</legend>
+      <p class="flow-mapping-section-intro">Request bodies and JSON headers use template syntax inside valid JSON strings.</p>
+      <div class="form-grid flow-inspector-form">
+        ${renderOrchestrationMappingField("headers_json", node, false)}
+        ${renderOrchestrationMappingField("body_template", node, false)}
+      </div>
+    </fieldset>
+    ${priorHint}
     <fieldset class="flow-inspector-fieldset">
       <legend>Outbound authentication</legend>
       <div class="form-grid flow-inspector-form">
@@ -28597,30 +30982,37 @@ function renderOrchestrationMemoryInspector(node) {
     )
     .join("");
   const contentField = isWrite
-    ? `<label class="wide-field">Content to save *
-          <textarea data-inspector-config-field="content_template" rows="4" placeholder="Text or {{steps['prior-node'].output.field}}">${safeText(config.content_template || "")}</textarea>
-        </label>
-        <label>Memory label (optional)
-          <input data-inspector-config-field="label" value="${safeText(config.label || "")}" placeholder="e.g. audit-snapshot" />
-        </label>`
+    ? renderOrchestrationMappingField("content_template", node, true)
     : `<label>Label filter (optional)
           <input data-inspector-config-field="label_filter" value="${safeText(config.label_filter || "")}" placeholder="Optional label" />
         </label>`;
+  const inputSection = isWrite
+    ? `<fieldset class="flow-inspector-fieldset flow-mapping-section">
+        <legend>Input parameters</legend>
+        <p class="flow-mapping-section-intro">Content to store may include {{steps['NODE_ID'].output.field}} from prior steps.</p>
+        <div class="form-grid flow-inspector-form">${contentField}
+        <label>Memory label (optional)
+          <input data-inspector-config-field="label" value="${safeText(config.label || "")}" placeholder="e.g. audit-snapshot" />
+        </label></div>
+      </fieldset>`
+    : `<div class="form-grid flow-inspector-form">${contentField}</div>`;
   return `
     <fieldset class="flow-inspector-fieldset">
       <legend>${isWrite ? "Save to gateway memory" : "Read gateway memory"}</legend>
-      <div class="form-grid flow-inspector-form">
-        <label>Scope type *
-          <select data-inspector-config-field="scope_type">${scopeOptions}</select>
-        </label>
-        <label>Scope ID *
-          <input data-inspector-config-field="scope_id" value="${safeText(config.scope_id || "")}" placeholder="e.g. session id, agent id, or global key" />
-        </label>
-        <label>Memory tier *
-          <select data-inspector-config-field="memory_tier">${tierOptions}</select>
-        </label>
-        ${contentField}
-      </div>
+      <fieldset class="flow-inspector-fieldset flow-mapping-section">
+        <legend>Scope mapping</legend>
+        <p class="flow-mapping-section-intro">Scope type and ID partition gateway memory. Scope ID accepts static keys, run input, prior step output, or auto trace on write.</p>
+        <div class="form-grid flow-inspector-form">
+          <label>Scope type *
+            <select data-inspector-config-field="scope_type">${scopeOptions}</select>
+          </label>
+          ${renderOrchestrationScopeIdField(node, true)}
+          <label>Memory tier *
+            <select data-inspector-config-field="memory_tier">${tierOptions}</select>
+          </label>
+        </div>
+      </fieldset>
+      ${inputSection}
       <p class="flow-inspector-tip">Use <code>session</code> or <code>conversation</code> for run-scoped context; <code>agent</code> or <code>global</code> for longer retention. Configure limits in Routing & Gateway → Memory & Context.</p>
       <p class="flow-inspector-tip"><a href="#" class="inline-link-button" data-nav-view="routing-gateway">Open Memory & Context</a></p>
     </fieldset>
@@ -28662,20 +31054,22 @@ function renderOrchestrationVectorStoreInspector(node) {
           <input data-inspector-config-field="top_k" type="number" min="1" max="100" value="${safeText(config.top_k || "8")}" placeholder="8" />
         </label>`
     : "";
-  const queryField = isQuery
-    ? `<label class="wide-field">Search query
-          <textarea data-inspector-config-field="query" rows="3" placeholder="Question or keywords…">${safeText(config.query || "")}</textarea>
-        </label>`
+  const queryMarkup = isQuery
+    ? renderOrchestrationMappingField("query", node, true)
     : isRag
-      ? `<label class="wide-field">Query template
-          <textarea data-inspector-config-field="query_template" rows="3" placeholder="RAG question or keywords…">${safeText(config.query_template || "")}</textarea>
-        </label>`
-      : `<label class="wide-field">Content to ingest
-          <textarea data-inspector-config-field="content_template" rows="4" placeholder="Text or template from prior steps…">${safeText(config.content_template || "")}</textarea>
-        </label>
-        <label>Document ID (optional)
+      ? renderOrchestrationMappingField("query_template", node, true)
+      : renderOrchestrationMappingField("content_template", node, true);
+  const documentField = !isQuery && !isRag
+    ? `<label>Document ID (optional)
           <input data-inspector-config-field="document_id" value="${safeText(config.document_id || "")}" placeholder="Auto-generated if empty" />
-        </label>`;
+        </label>`
+    : "";
+  const inputLegend = isQuery ? "Search query" : isRag ? "RAG query template" : "Content to ingest";
+  const inputIntro = isQuery
+    ? "Search text may include {{steps['NODE_ID'].output.field}} from prior steps."
+    : isRag
+      ? "RAG question with optional template values from prior step output."
+      : "Text or JSON to ingest — map prior step output with templates.";
   const legend = isRag ? "RAG query" : "Vector database";
   return `
     <fieldset class="flow-inspector-fieldset">
@@ -28684,9 +31078,14 @@ function renderOrchestrationVectorStoreInspector(node) {
         <label class="wide-field">Vector store
           <select id="orchestrationVectorStoreSelect" data-inspector-config-field="store_id"></select>
         </label>
-        ${queryField}
         ${topKField}
+        ${documentField}
       </div>
+      <fieldset class="flow-inspector-fieldset flow-mapping-section">
+        <legend>${inputLegend}</legend>
+        <p class="flow-mapping-section-intro">${inputIntro}</p>
+        <div class="form-grid flow-inspector-form">${queryMarkup}</div>
+      </fieldset>
       <p class="flow-inspector-tip">Stores are configured in Routing & Gateway → Memory & Context. Do not paste API keys here.</p>
       <p class="flow-inspector-tip"><a href="#" class="inline-link-button" data-nav-view="routing-gateway">Open Routing & Gateway</a> to register Qdrant, Pinecone, pgvector, or MCP bridge stores.</p>
     </fieldset>
@@ -28751,30 +31150,37 @@ async function loadOrchestrationNotificationChannelOptions(selectedValue = "") {
 function renderOrchestrationNotificationChannelInspector(node) {
   const config = node.config || {};
   const isEmail = node.type === "email_send";
-  const subjectField = isEmail
-    ? `<label class="wide-field">Subject (template)
-          <input data-inspector-config-field="subject_template" value="${safeText(config.subject_template || "")}" placeholder="Alert: workflow complete" />
-        </label>`
-    : "";
+  const prior = getOrchestrationPriorSteps(node.id);
+  const priorHint = prior.length
+    ? `<p class="flow-inspector-tip flow-mapping-section-tip">Prior steps: ${prior.map((s) => safeText(s.label)).join(", ")}. Use the dropdowns above each field to insert variables, or open <button type="button" class="inline-link-button orchestration-open-data-map">Variable map ⇄</button> for copy-ready snippets.</p>`
+    : `<p class="flow-inspector-tip flow-inspector-warn">Add steps above this widget before mapping recipient or body from their output.</p>`;
+  const inputFields = isEmail
+    ? ["to_template", "subject_template", "body_template"]
+    : ["to_template", "body_template"];
+  const inputMarkup = inputFields.map((field) => renderOrchestrationMappingField(field, node, true)).join("");
   return `
     <fieldset class="flow-inspector-fieldset">
       <legend>${isEmail ? "Email notification" : "SMS notification"}</legend>
       <div class="form-grid flow-inspector-form">
-        <label class="wide-field">Notification channel
+        <label class="wide-field">Notification channel *
           <select id="orchestrationNotificationChannelSelect" data-inspector-config-field="channel_id"></select>
         </label>
-        <label class="wide-field">Recipient (template)
-          <input data-inspector-config-field="to_template" value="${safeText(config.to_template || "")}" placeholder="ops@example.com or {{steps['prior'].output.email}}" />
-        </label>
-        ${subjectField}
-        <label class="wide-field">Body (template)
-          <textarea data-inspector-config-field="body_template" rows="4" placeholder="Message body or template from prior steps…">${safeText(config.body_template || "")}</textarea>
-        </label>
+      </div>
+    </fieldset>
+    <fieldset class="flow-inspector-fieldset flow-mapping-section">
+      <legend>Input parameters</legend>
+      <p class="flow-mapping-section-intro">Recipient, subject, and body accept static values or {{steps['NODE_ID'].output.field}} from prior steps.</p>
+      <div class="form-grid flow-inspector-form">${inputMarkup}</div>
+    </fieldset>
+    ${priorHint}
+    <fieldset class="flow-inspector-fieldset">
+      <legend>Delivery options</legend>
+      <div class="form-grid flow-inspector-form">
         <label>From override (optional)
           <input data-inspector-config-field="from_override" value="${safeText(config.from_override || "")}" placeholder="Override channel default sender" />
         </label>
       </div>
-      <p class="flow-inspector-tip">Phase 1 runs simulate delivery only. Configure channels in Routing & Gateway — use credential bindings, never inline API keys.</p>
+      <p class="flow-inspector-tip">Live runs deliver via the selected notification channel when the live executor is enabled. Configure channels in Routing & Gateway — use credential bindings, never inline API keys.</p>
       <p class="flow-inspector-tip flow-inspector-warn">Do not paste API keys or tokens in recipient or body templates.</p>
       <p class="flow-inspector-tip"><a href="#" class="inline-link-button" data-nav-view="routing-gateway">Open Routing & Gateway</a> to register SendGrid, Twilio, or webhook channels.</p>
     </fieldset>
@@ -28843,6 +31249,7 @@ function renderOrchestrationConditionInspector(node, stepIndex) {
           </select>
         </label>
         <label>JSON path
+          <div class="flow-field-helper-row">${renderOrchestrationJsonPathPicker(node, "json_path")}</div>
           <input data-inspector-config-field="json_path" value="${safeText(config.json_path || "")}" placeholder="e.g. $.status or $.data.score" list="orchestrationJsonPathExamples" />
         </label>
         <label>Operator
@@ -28856,10 +31263,9 @@ function renderOrchestrationConditionInspector(node, stepIndex) {
         </label>
       </div>
       <datalist id="orchestrationJsonPathExamples">
-        <option value="$.status"></option>
-        <option value="$.data.approved"></option>
-        <option value="$.choices[0].message.content"></option>
-        <option value="$.reviewer.user_id"></option>
+        ${(ORCH_REG?.JSON_PATH_PRESETS || [])
+          .map((preset) => `<option value="${safeText(preset.path)}"></option>`)
+          .join("")}
       </datalist>
       <div class="flow-condition-tester">
         <p class="flow-inspector-tip"><strong>Test with sample payload</strong> — paste JSON from a prior step output to preview path resolution.</p>
@@ -28880,7 +31286,7 @@ function renderOrchestrationConditionInspector(node, stepIndex) {
         </div>
         <output id="orchestrationConditionSampleResult" class="flow-condition-sample-result" aria-live="polite"></output>
       </div>
-      <p class="flow-inspector-tip">At run time (Phase 2), the executor resolves <code>steps['&lt;node_id&gt;'].output</code> from prior HTTP, LLM, or MCP results. Edit Advanced JSON to override the expression directly.</p>
+      <p class="flow-inspector-tip">At run time, the executor resolves <code>steps['&lt;node_id&gt;'].output</code> from prior HTTP, LLM, or MCP results. Edit Advanced JSON to override the expression directly.</p>
     </fieldset>
   `;
 }
@@ -28917,14 +31323,16 @@ function renderOrchestrationHumanApprovalInspector(node, stepIndex) {
             </select>
           </label>
           <label>Approver role JSON path
+            <div class="flow-field-helper-row">${renderOrchestrationJsonPathPicker(node, "approver_role_json_path")}</div>
             <input data-inspector-config-field="approver_role_json_path" value="${safeText(config.approver_role_json_path || "")}" placeholder="e.g. $.reviewer.role" />
           </label>
           <label>Approver ID JSON path
+            <div class="flow-field-helper-row">${renderOrchestrationJsonPathPicker(node, "approver_id_json_path")}</div>
             <input data-inspector-config-field="approver_id_json_path" value="${safeText(config.approver_id_json_path || "")}" placeholder="e.g. $.reviewer.user_id" />
           </label>
         </div>
       </div>
-      <p class="flow-inspector-tip">JSON-path approvers are stored in flow config today; Phase 2 runtime resolves them from prior step output. Static roles use existing dual-approval headers at run time.</p>
+      <p class="flow-inspector-tip">Live runs resolve JSON-path approvers from prior step output. Static roles require a matching approver at decide time; prod flows may require dual approval headers.</p>
     </fieldset>
   `;
 }
@@ -28951,6 +31359,10 @@ function bindOrchestrationConditionInspector(node) {
     compareInput.toggleAttribute("aria-disabled", isExists);
     if (isExists) compareInput.value = "";
     updatePreview();
+  });
+  qs('[data-inspector-config-field="source_node_id"]')?.addEventListener("change", () => {
+    updatePreview();
+    renderOrchestrationInspector();
   });
   qs("#orchestrationConditionPresetSelect")?.addEventListener("change", (event) => {
     const option = event.target.selectedOptions?.[0];
@@ -28994,6 +31406,9 @@ function bindOrchestrationHumanApprovalInspector(node) {
     renderOrchestrationCanvas();
   };
   modeSelect?.addEventListener("change", (event) => applyMode(event.target.value));
+  qs('[data-inspector-config-field="source_node_id"]')?.addEventListener("change", () => {
+    renderOrchestrationInspector();
+  });
   qsa("[data-inspector-config-field]", qs("#orchestrationInspectorPanel")).forEach((input) => {
     input.addEventListener("input", () => {
       syncOrchestrationApproverConfig(node);
@@ -29009,6 +31424,12 @@ function bindOrchestrationHumanApprovalInspector(node) {
 
 function syncOrchestrationBuilderConfigs() {
   flattenOrchestrationNodes().forEach((node) => {
+    if (node.type === "llm_chat") {
+      node.config = node.config || {};
+      if (!String(node.config.cache_mode || "").trim()) {
+        node.config.cache_mode = "inherit";
+      }
+    }
     if (node.type === "condition") syncOrchestrationConditionConfig(node);
     if (node.type === "human_approval") syncOrchestrationApproverConfig(node);
     if (node.type === "http_request") syncOrchestrationHttpAuthConfig(node);
@@ -29214,20 +31635,6 @@ function renderOrchestrationInsertSlot(index, branchIndex = null, branchNodeInde
   `;
 }
 
-function renderOrchestrationParallelBranchControls(itemIndex) {
-  const item = orchestrationBuilderItems[itemIndex];
-  if (!isOrchestrationParallelItem(item)) return "";
-  const canAdd = item.branches.length < ORCHESTRATION_MAX_PARALLEL_BRANCHES;
-  const canRemove = item.branches.length > ORCHESTRATION_MIN_PARALLEL_BRANCHES;
-  return `
-    <div class="flow-parallel-header-actions">
-      ${canAdd ? `<button type="button" class="ghost flow-parallel-add-branch" data-parallel-add-branch="${itemIndex}" title="Add another branch">+ Branch</button>` : ""}
-      ${canRemove ? `<button type="button" class="ghost flow-parallel-remove-branch" data-parallel-remove-branch="${itemIndex}" title="Remove last branch">− Branch</button>` : ""}
-      <button type="button" class="ghost flow-parallel-dissolve" data-parallel-dissolve="${itemIndex}" title="Switch back to serial steps">Switch to serial</button>
-    </div>
-  `;
-}
-
 function setOrchestrationDefaultRunMode(mode, options = {}) {
   orchestrationDefaultRunMode = mode === "parallel" ? "parallel" : "serial";
   if (orchestrationDefaultRunMode === "serial") {
@@ -29268,6 +31675,38 @@ function renderOrchestrationRunModeChooser(atIndex) {
   `;
 }
 
+function renderOrchestrationParallelBranchTabs(item) {
+  if (item.branches.length < 3) return "";
+  const groupId = safeText(item.groupId);
+  const activeIdx = getParallelBranchOffset(groupId, item.branches.length);
+  const tabs = item.branches
+    .map((branch, index) => {
+      const stepCount = branch.length;
+      const isActive = index === activeIdx;
+      return `<button type="button" role="tab" class="flow-parallel-branch-tab${isActive ? " is-active" : ""}" data-parallel-branch-jump="${index}" data-parallel-group="${groupId}" aria-selected="${isActive ? "true" : "false"}">
+        <span class="flow-parallel-branch-tab-num">${index + 1}</span>
+        <span class="flow-parallel-branch-tab-label">Branch ${index + 1}</span>
+        <span class="flow-parallel-branch-tab-meta">${stepCount} step${stepCount === 1 ? "" : "s"}</span>
+      </button>`;
+    })
+    .join("");
+  return `<div class="flow-parallel-branch-tabs" role="tablist" aria-label="Select branch to edit">${tabs}</div>`;
+}
+
+function renderOrchestrationParallelBranchControls(item, itemIndex) {
+  if (!isOrchestrationParallelItem(item)) return "";
+  const canAdd = item.branches.length < ORCHESTRATION_MAX_PARALLEL_BRANCHES;
+  const canRemove = item.branches.length > ORCHESTRATION_MIN_PARALLEL_BRANCHES;
+  return `
+    <div class="flow-parallel-header-actions">
+      <button type="button" class="ghost flow-parallel-details" data-parallel-select="${safeText(item.groupId)}" title="Settings in inspector">Settings</button>
+      ${canAdd ? `<button type="button" class="ghost flow-parallel-add-branch" data-parallel-add-branch="${itemIndex}" title="Add branch">+ Branch</button>` : ""}
+      ${canRemove ? `<button type="button" class="ghost flow-parallel-remove-branch" data-parallel-remove-branch="${itemIndex}" title="Remove last branch">− Branch</button>` : ""}
+      <button type="button" class="ghost flow-parallel-dissolve" data-parallel-dissolve="${itemIndex}" title="Convert back to serial steps">Serial</button>
+    </div>
+  `;
+}
+
 function renderOrchestrationParallelGroup(item, itemIndex) {
   const selected = orchestrationSelectedNodeId === `parallel:${item.groupId}`;
   const collapsed = orchestrationCollapsedParallelGroups.has(item.groupId);
@@ -29275,13 +31714,33 @@ function renderOrchestrationParallelGroup(item, itemIndex) {
   const errorBadge = validationIssues.length
     ? `<span class="flow-node-validation-badge" title="${safeText(validationIssues.join("; "))}">${validationIssues.length}</span>`
     : "";
+  const tabMode = item.branches.length >= 3;
+  const activeTabIndex = tabMode ? getParallelBranchOffset(item.groupId, item.branches.length) : 0;
   const branchHtml = item.branches
     .map((branch, branchIndex) => {
-      let column = `<div class="flow-parallel-branch" data-parallel-branch="${branchIndex}">`;
-      column += `<div class="flow-parallel-branch-label"><span class="flow-parallel-branch-num">${branchIndex + 1}</span> Branch ${branchIndex + 1}</div>`;
+      const branchFocused = orchestrationFocusedParallelBranchIndex === branchIndex && selected;
+      const stepCount = branch.length;
+      const hasSteps = stepCount > 0;
+      const toneClass = ` flow-parallel-branch--tone-${branchIndex % 5}`;
+      const tabHidden = tabMode && branchIndex !== activeTabIndex ? " is-branch-tab-hidden" : "";
+      let column = `<article class="flow-parallel-branch${toneClass}${branchFocused ? " is-branch-focused" : ""}${!hasSteps ? " is-branch-empty" : " has-steps"}${tabHidden}" data-parallel-branch="${branchIndex}" role="tabpanel" aria-hidden="${tabMode && branchIndex !== activeTabIndex ? "true" : "false"}">`;
+      if (!tabMode) {
+        column += `<button type="button" class="flow-parallel-branch-head" data-parallel-branch-focus="${branchIndex}" title="Select branch ${branchIndex + 1}">
+          <span class="flow-parallel-branch-num">${branchIndex + 1}</span>
+          <span class="flow-parallel-branch-head-copy">
+            <span class="flow-parallel-branch-title">Branch ${branchIndex + 1}</span>
+            <span class="flow-parallel-branch-meta">${stepCount} step${stepCount === 1 ? "" : "s"}</span>
+          </span>
+        </button>`;
+      }
+      column += `<div class="flow-parallel-branch-body">`;
       column += renderOrchestrationInsertSlot(itemIndex, branchIndex, 0);
-      if (!branch.length) {
-        column += '<p class="flow-parallel-branch-empty">Click + to add a step to this branch</p>';
+      if (!hasSteps) {
+        column += `<div class="flow-parallel-branch-empty">
+          <span class="flow-parallel-branch-empty-icon" aria-hidden="true">+</span>
+          <strong>Add first step</strong>
+          <span>Click + above or drag a widget here</span>
+        </div>`;
       } else {
         branch.forEach((node, nodeIndex) => {
           column += renderOrchestrationLaneConnector();
@@ -29290,32 +31749,43 @@ function renderOrchestrationParallelGroup(item, itemIndex) {
           column += renderOrchestrationInsertSlot(itemIndex, branchIndex, nodeIndex + 1);
         });
       }
-      column += "</div>";
+      column += `</div></article>`;
       return column;
     })
     .join("");
 
   return `
-    <section class="flow-parallel-group${selected ? " selected" : ""}${collapsed ? " is-collapsed" : ""}${validationIssues.length ? " has-validation-error" : ""}" data-parallel-group="${safeText(item.groupId)}" data-item-index="${itemIndex}" data-node-id="parallel:${safeText(item.groupId)}" data-branch-count="${item.branches.length}">
+    <section class="flow-parallel-group${selected ? " selected" : ""}${collapsed ? " is-collapsed" : ""}${tabMode ? " has-branch-tabs" : ""}${validationIssues.length ? " has-validation-error" : ""}" data-parallel-group="${safeText(item.groupId)}" data-item-index="${itemIndex}" data-node-id="parallel:${safeText(item.groupId)}" data-branch-count="${item.branches.length}">
       <header class="flow-parallel-header">
-        <div class="flow-parallel-header-title">
-          <span class="flow-parallel-header-icon" aria-hidden="true">⑂</span>
-          <div class="flow-parallel-header-copy">
-            <strong>Run in parallel ${errorBadge}</strong>
-            <span class="flow-parallel-header-sub">${item.branches.length} branches · ${collapsed ? "collapsed — click Expand" : "concurrent execution"}</span>
-          </div>
+        <div class="flow-parallel-header-main">
+          <button type="button" class="flow-parallel-header-title" data-parallel-select="${safeText(item.groupId)}" title="Open parallel group settings">
+            <span class="flow-parallel-header-icon" aria-hidden="true">⑂</span>
+            <div class="flow-parallel-header-copy">
+              <strong>Run in parallel ${errorBadge}</strong>
+              <span class="flow-parallel-header-sub">${tabMode ? "Pick a branch tab below — each runs at the same time" : `${item.branches.length} branches run concurrently`}${collapsed ? " · collapsed" : ""}</span>
+            </div>
+          </button>
+          <span class="flow-parallel-header-badge">${item.branches.length} branches</span>
         </div>
-        ${renderOrchestrationParallelBranchControls(itemIndex)}
-        <button type="button" class="ghost flow-parallel-collapse-toggle" data-parallel-collapse="${safeText(item.groupId)}" title="${collapsed ? "Expand parallel group" : "Collapse parallel group"}">${collapsed ? "Expand" : "Collapse"}</button>
+        <div class="flow-parallel-header-toolbar">
+          ${renderOrchestrationParallelBranchControls(item, itemIndex)}
+          <button type="button" class="ghost flow-parallel-collapse-toggle" data-parallel-collapse="${safeText(item.groupId)}" title="${collapsed ? "Expand" : "Collapse"}">${collapsed ? "Expand" : "Collapse"}</button>
+        </div>
       </header>
+      ${renderOrchestrationParallelBranchTabs(item)}
       <div class="flow-parallel-body">
-      <div class="flow-parallel-split-rail" aria-hidden="true"></div>
-      <div class="flow-parallel-branches">${branchHtml}</div>
-      <div class="flow-parallel-split-rail flow-parallel-split-rail-join" aria-hidden="true"></div>
-      <footer class="flow-parallel-join-footer">
-        <span class="flow-parallel-join-icon" aria-hidden="true">⑃</span>
-        <span>Merge — flow continues when every branch completes</span>
-      </footer>
+      <div class="flow-parallel-split-rail" aria-hidden="true"><span class="flow-parallel-rail-label">Fork</span></div>
+      <div class="flow-parallel-branches-wrap${tabMode ? " has-tab-mode" : ""}">
+      <div class="flow-parallel-branches" tabindex="0" role="${tabMode ? "presentation" : "region"}" aria-label="Parallel branches">${branchHtml}</div>
+      </div>
+      <div class="flow-parallel-split-rail flow-parallel-split-rail-join" aria-hidden="true"><span class="flow-parallel-rail-label">Join</span></div>
+      <button type="button" class="flow-parallel-join-footer" data-parallel-select="${safeText(item.groupId)}" title="Open parallel group settings">
+        <span class="flow-parallel-join-main">
+          <span class="flow-parallel-join-icon" aria-hidden="true">⑃</span>
+          <span class="flow-parallel-join-title">Merge when all branches finish</span>
+        </span>
+        <span class="flow-parallel-join-hint">Flow continues after every branch completes</span>
+      </button>
       </div>
     </section>
   `;
@@ -29379,7 +31849,7 @@ function renderOrchestrationStepNode(node, index, context = {}) {
           <strong>${safeText(subtitle)}${errorBadge}</strong>
         </div>
         <button type="button" class="ghost flow-node-delete"${deleteAttrs} title="Remove widget" aria-label="Remove widget">×</button>
-        <button type="button" class="ghost flow-data-map-btn" data-data-map="${safeText(node.id)}" title="Data mapping — how to use this step's output" aria-label="Data mapping for this step">⇄</button>
+        <button type="button" class="ghost flow-data-map-btn" data-data-map="${safeText(node.id)}" title="Variable mapping — URL, JSON, input, and output parameters" aria-label="Variable mapping for this step">⇄</button>
       </div>
       <p class="flow-lane-step-preview">${safeText(preview)}</p>
     </article>
@@ -29443,8 +31913,113 @@ function renderOrchestrationCanvas() {
   lane.innerHTML = html;
   lane.classList.toggle("flow-lane--has-parallel", countOrchestrationParallelGroups() > 0);
   lane.classList.toggle("is-drop-ready", Boolean(orchestrationDragPayload || orchestrationPaletteArmedType));
+  wireParallelBranchScrollListeners();
   applyOrchestrationCanvasZoom();
   renderOrchestrationConsoleSummary();
+  scrollOrchestrationSelectionIntoView();
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      syncAllParallelBranchScrollUi();
+      window.setTimeout(() => syncAllParallelBranchScrollUi(), 120);
+      if (orchestrationSelectedNodeId.startsWith("parallel:")) {
+        const groupId = orchestrationSelectedNodeId.slice("parallel:".length);
+        if (orchestrationFocusedParallelBranchIndex !== null && orchestrationFocusedParallelBranchIndex !== undefined) {
+          scrollParallelBranchIntoView(groupId, orchestrationFocusedParallelBranchIndex);
+        }
+        syncParallelBranchScrollUi(qs(`[data-parallel-group="${groupId}"] .flow-parallel-branches-wrap`));
+      }
+    });
+  });
+}
+
+function renderOrchestrationParallelInspector(item, itemIndex) {
+  const panel = qs("#orchestrationInspectorPanel");
+  const title = qs("#orchestrationInspectorTitle");
+  const hint = qs("#orchestrationInspectorHint");
+  const closeBtn = qs("#orchestrationInspectorClose");
+  if (!panel || !item) return;
+  const focusedBranch = orchestrationFocusedParallelBranchIndex;
+  const branchSummaries = item.branches
+    .map((branch, index) => {
+      const count = branch.length;
+      const labels = branch.map((node) => getOrchestrationNodeVisual(node.type).label).join(", ");
+      const isFocused = focusedBranch === index;
+      return `<li class="${isFocused ? "is-focused" : ""}">
+        <button type="button" class="flow-inspector-parallel-branch-pick" data-parallel-inspector-branch="${index}">
+          <strong>Branch ${index + 1}</strong>
+          <span>${count} step${count === 1 ? "" : "s"}${labels ? `: ${safeText(labels)}` : " (empty — use + to add widgets)"}</span>
+        </button>
+      </li>`;
+    })
+    .join("");
+  const canAdd = item.branches.length < ORCHESTRATION_MAX_PARALLEL_BRANCHES;
+  const canRemove = item.branches.length > ORCHESTRATION_MIN_PARALLEL_BRANCHES;
+  const canMoveBranchLeft =
+    focusedBranch !== null && focusedBranch !== undefined && focusedBranch > 0;
+  const canMoveBranchRight =
+    focusedBranch !== null &&
+    focusedBranch !== undefined &&
+    focusedBranch < item.branches.length - 1;
+  if (title) title.textContent = "Parallel group";
+  if (hint) hint.textContent = "Branches run at the same time; the flow continues after every branch finishes.";
+  if (closeBtn) closeBtn.hidden = false;
+  panel.innerHTML = `
+    <div class="flow-inspector-node-badge flow-inspector-parallel-badge">⑂ Run in parallel</div>
+    <p class="flow-inspector-tip">Click a branch below to focus it on the canvas. Select a widget inside a branch to edit its settings.</p>
+    <ul class="flow-inspector-parallel-branch-list">${branchSummaries}</ul>
+    ${focusedBranch !== null && focusedBranch !== undefined ? `
+    <div class="inline-actions flow-inspector-actions flow-inspector-branch-order">
+      <button type="button" class="ghost" id="orchestrationParallelInspectorBranchLeft" ${canMoveBranchLeft ? "" : "disabled"}>Move branch left</button>
+      <button type="button" class="ghost" id="orchestrationParallelInspectorBranchRight" ${canMoveBranchRight ? "" : "disabled"}>Move branch right</button>
+      <button type="button" class="ghost" id="orchestrationParallelInspectorScrollLeft" title="Scroll canvas to this branch">Scroll to branch</button>
+    </div>` : ""}
+    <dl class="flow-inspector-meta-list">
+      <div><dt>Group ID</dt><dd class="mono">${safeText(item.groupId)}</dd></div>
+      <div><dt>Fork node</dt><dd class="mono">${safeText(item.forkId || "—")}</dd></div>
+      <div><dt>Join node</dt><dd class="mono">${safeText(item.joinId || "—")}</dd></div>
+      <div><dt>Branches</dt><dd>${item.branches.length} concurrent</dd></div>
+    </dl>
+    <div class="inline-actions flow-inspector-actions">
+      <button type="button" class="ghost" id="orchestrationParallelInspectorScrollBranchesLeft" title="Scroll branches left on canvas">‹ Branches</button>
+      <button type="button" class="ghost" id="orchestrationParallelInspectorScrollBranchesRight" title="Scroll branches right on canvas">Branches ›</button>
+    </div>
+    <div class="inline-actions flow-inspector-actions">
+      <button type="button" class="ghost" id="orchestrationParallelInspectorMoveUp" ${canMoveOrchestrationBuilderItem(itemIndex, -1) ? "" : "disabled"}>Move block up</button>
+      <button type="button" class="ghost" id="orchestrationParallelInspectorMoveDown" ${canMoveOrchestrationBuilderItem(itemIndex, 1) ? "" : "disabled"}>Move block down</button>
+      ${canAdd ? `<button type="button" class="ghost" id="orchestrationParallelInspectorAddBranch">+ Branch</button>` : ""}
+      ${canRemove ? `<button type="button" class="ghost" id="orchestrationParallelInspectorRemoveBranch">− Branch</button>` : ""}
+      <button type="button" class="ghost" id="orchestrationParallelInspectorDissolve">Switch to serial</button>
+    </div>
+    <p class="flow-inspector-tip flow-inspector-tip-muted">Move steps between branches: select a widget inside a branch, then use Move left / Move right (or ← → keys). With this parallel group selected, ← → scrolls the branch row.</p>
+  `;
+  qsa("[data-parallel-inspector-branch]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      orchestrationFocusedParallelBranchIndex = Number(btn.getAttribute("data-parallel-inspector-branch"));
+      renderOrchestrationCanvas();
+      renderOrchestrationParallelInspector(item, itemIndex);
+      scrollParallelBranchIntoView(item.groupId, orchestrationFocusedParallelBranchIndex);
+    });
+  });
+  qs("#orchestrationParallelInspectorBranchLeft")?.addEventListener("click", () => {
+    moveOrchestrationParallelBranchOrder(itemIndex, focusedBranch, -1);
+  });
+  qs("#orchestrationParallelInspectorBranchRight")?.addEventListener("click", () => {
+    moveOrchestrationParallelBranchOrder(itemIndex, focusedBranch, 1);
+  });
+  qs("#orchestrationParallelInspectorScrollLeft")?.addEventListener("click", () => {
+    scrollParallelBranchIntoView(item.groupId, focusedBranch);
+  });
+  qs("#orchestrationParallelInspectorScrollBranchesLeft")?.addEventListener("click", () => {
+    scrollParallelBranches(item.groupId, -1);
+  });
+  qs("#orchestrationParallelInspectorScrollBranchesRight")?.addEventListener("click", () => {
+    scrollParallelBranches(item.groupId, 1);
+  });
+  qs("#orchestrationParallelInspectorMoveUp")?.addEventListener("click", () => moveOrchestrationBuilderItem(itemIndex, -1));
+  qs("#orchestrationParallelInspectorMoveDown")?.addEventListener("click", () => moveOrchestrationBuilderItem(itemIndex, 1));
+  qs("#orchestrationParallelInspectorAddBranch")?.addEventListener("click", () => addOrchestrationParallelBranch(itemIndex));
+  qs("#orchestrationParallelInspectorRemoveBranch")?.addEventListener("click", () => removeOrchestrationParallelBranch(itemIndex));
+  qs("#orchestrationParallelInspectorDissolve")?.addEventListener("click", () => dissolveOrchestrationParallelGroup(itemIndex));
 }
 
 function renderOrchestrationInspector() {
@@ -29521,6 +32096,14 @@ function renderOrchestrationInspector() {
     return;
   }
 
+  if (orchestrationSelectedNodeId.startsWith("parallel:")) {
+    const located = findOrchestrationParallelItemByGroupId(orchestrationSelectedNodeId.slice("parallel:".length));
+    if (located) {
+      renderOrchestrationParallelInspector(located.item, located.itemIndex);
+      return;
+    }
+  }
+
   const node = getOrchestrationNodeById(orchestrationSelectedNodeId);
   if (!node) {
     if (title) title.textContent = "Flow settings";
@@ -29556,74 +32139,20 @@ function renderOrchestrationInspector() {
     .join("");
   const requiredFields = catalog.required_config_fields || [];
   const optionalFields = catalog.optional_config_fields || [];
-  const customInspectorFields = new Set([
-    "source_node_id",
-    "json_path",
-    "operator",
-    "compare_value",
-    "approver_source",
-    "approver_role_json_path",
-    "approver_id_json_path",
-  ]);
-  if (node.type === "condition") {
-    customInspectorFields.add("expression");
-  }
-  if (node.type === "human_approval") {
-    customInspectorFields.add("required_role");
-    customInspectorFields.add("approver_source");
-    customInspectorFields.add("source_node_id");
-    customInspectorFields.add("approver_role_json_path");
-    customInspectorFields.add("approver_id_json_path");
-  }
-  if (node.type === "http_request") {
-    customInspectorFields.add("auth_type");
-    customInspectorFields.add("auth_binding_id");
-    customInspectorFields.add("auth_header_name");
-  }
-  if (node.type === "vector_query" || node.type === "vector_ingest" || node.type === "rag_query") {
-    customInspectorFields.add("store_id");
-    if (node.type === "vector_query") {
-      customInspectorFields.add("query");
-      customInspectorFields.add("top_k");
-    } else if (node.type === "rag_query") {
-      customInspectorFields.add("query_template");
-      customInspectorFields.add("top_k");
-    } else {
-      customInspectorFields.add("content_template");
-      customInspectorFields.add("document_id");
-    }
-  }
-  if (node.type === "memory_read" || node.type === "memory_write") {
-    customInspectorFields.add("scope_type");
-    customInspectorFields.add("scope_id");
-    customInspectorFields.add("memory_tier");
-    customInspectorFields.add("label_filter");
-    customInspectorFields.add("content_template");
-    customInspectorFields.add("label");
-  }
-  if (node.type === "email_send" || node.type === "sms_send") {
-    customInspectorFields.add("channel_id");
-    customInspectorFields.add("to_template");
-    customInspectorFields.add("body_template");
-    customInspectorFields.add("from_override");
-    if (node.type === "email_send") {
-      customInspectorFields.add("subject_template");
-    }
-  }
+  const customInspectorFields = getOrchestrationCustomInspectorFields(node.type);
+  const mappingFields = getOrchestrationMappingFieldSet();
   const allFields = [...requiredFields, ...optionalFields.filter((f) => !requiredFields.includes(f))].filter(
-    (field) => !customInspectorFields.has(field),
+    (field) => !customInspectorFields.has(field) && !mappingFields.has(field),
   );
+  const mappingInputFields = [...requiredFields, ...optionalFields.filter((f) => !requiredFields.includes(f))].filter(
+    (field) => mappingFields.has(field) && !customInspectorFields.has(field),
+  );
+  const mappingInputMarkup = mappingInputFields.length
+    ? renderOrchestrationMappingInputSections(node, mappingInputFields, requiredFields)
+    : "";
+  const outputParamsMarkup = renderOrchestrationOutputParamsSection(node);
   const fieldMarkup = allFields
-    .map((field) => {
-      const required = requiredFields.includes(field);
-      const meta = getOrchestrationConfigFieldMeta(field);
-      const value = safeText(node.config?.[field] || "");
-      const wideClass = meta.wide ? " wide-field" : "";
-      if (meta.multiline) {
-        return `<label class="${wideClass.trim()}">${safeText(meta.label)}${required ? " *" : ""}<textarea data-inspector-config-field="${field}" rows="3" placeholder="${safeText(meta.placeholder || field)}">${value}</textarea></label>`;
-      }
-      return `<label class="${wideClass.trim()}">${safeText(meta.label)}${required ? " *" : ""}<input data-inspector-config-field="${field}" value="${value}" placeholder="${safeText(meta.placeholder || field)}" /></label>`;
-    })
+    .map((field) => renderOrchestrationConfigFieldControl(field, node, requiredFields.includes(field)))
     .join("");
   const specializedMarkup =
     node.type === "condition"
@@ -29643,14 +32172,16 @@ function renderOrchestrationInspector() {
     <div class="flow-inspector-node-badge" style="--node-accent:${visual.color}"><span class="flow-inspector-step">Step ${stepIndex}</span> ${safeText(visual.icon)} ${safeText(catalog.label || visual.label)}</div>
     ${visual.help || catalog.description ? `<p class="flow-inspector-tip">${safeText(catalog.description || visual.help)}</p>` : ""}
     ${specializedMarkup}
+    ${mappingInputMarkup}
     <div class="form-grid flow-inspector-form">
       <label>Widget type<select id="orchestrationInspectorNodeType">${typeOptions}</select></label>
-      ${fieldMarkup || (!specializedMarkup ? '<p class="flow-inspector-empty">No extra settings for this widget.</p>' : "")}
+      ${fieldMarkup || (!specializedMarkup && !mappingInputMarkup ? '<p class="flow-inspector-empty">No extra settings for this widget.</p>' : "")}
       <details class="flow-inspector-advanced">
         <summary>Advanced JSON</summary>
         <label class="wide-field"><textarea id="orchestrationInspectorConfigJson" rows="5">${safeText(JSON.stringify(node.config || {}, null, 2))}</textarea></label>
       </details>
     </div>
+    ${outputParamsMarkup}
     <div class="inline-actions flow-inspector-actions">
       <button type="button" class="ghost" id="orchestrationInspectorMoveUp" ${canMoveOrchestrationNode(node.id, -1) ? "" : "disabled"}>Move up</button>
       <button type="button" class="ghost" id="orchestrationInspectorMoveDown" ${canMoveOrchestrationNode(node.id, 1) ? "" : "disabled"}>Move down</button>
@@ -29666,18 +32197,20 @@ function renderOrchestrationInspector() {
   `;
   qs("#orchestrationInspectorNodeType")?.addEventListener("change", (event) => {
     node.type = event.target.value;
-    node.config = {};
+    node.config = getOrchestrationDefaultNodeConfig(event.target.value);
     syncOrchestrationInspectorToNode();
     renderOrchestrationStudio();
   });
   qsa("[data-inspector-config-field]", panel).forEach((input) => {
-    input.addEventListener("input", () => {
+    const syncField = () => {
       const field = input.getAttribute("data-inspector-config-field");
       if (!field) return;
       node.config = node.config || {};
       node.config[field] = input.value;
       renderOrchestrationCanvas();
-    });
+    };
+    input.addEventListener("input", syncField);
+    input.addEventListener("change", syncField);
   });
   qs("#orchestrationInspectorConfigJson")?.addEventListener("change", (event) => {
     try {
@@ -29692,6 +32225,9 @@ function renderOrchestrationInspector() {
   qs("#orchestrationInspectorMoveLeft")?.addEventListener("click", () => moveOrchestrationNodeAcrossBranches(node.id, -1));
   qs("#orchestrationInspectorMoveRight")?.addEventListener("click", () => moveOrchestrationNodeAcrossBranches(node.id, 1));
   qs("#orchestrationInspectorDuplicate")?.addEventListener("click", () => duplicateOrchestrationNode(node.id));
+  qsa(".orchestration-open-data-map", panel).forEach((btn) => {
+    btn.addEventListener("click", () => toggleOrchestrationDataMapping(node.id));
+  });
   if (node.type === "condition") {
     bindOrchestrationConditionInspector(node);
   } else if (node.type === "human_approval") {
@@ -29705,6 +32241,7 @@ function renderOrchestrationInspector() {
   } else if (node.type === "email_send" || node.type === "sms_send") {
     bindOrchestrationNotificationChannelInspector(node);
   }
+  bindOrchestrationVariablePickers(panel, node);
 }
 
 function syncOrchestrationInspectorToNode() {
@@ -30238,7 +32775,10 @@ function parseOrchestrationStepResults(raw) {
 function summarizeOrchestrationRunOutput(output) {
   if (!output || typeof output !== "object") return String(output ?? "");
   if (output.message) return String(output.message).slice(0, 120);
-  if (output.simulated) return "Simulated output (Phase 1 stub)";
+  if (output.simulated) return "Simulated output (dry run)";
+  if (output.delivery_status) return `delivery: ${output.delivery_status}`;
+  if (output.live && output.message) return String(output.message).slice(0, 120);
+  if (output.live && output.match_count !== undefined) return `Live: ${output.match_count} matches`;
   if (output.matched !== undefined) return `matched: ${output.matched}`;
   if (output.status !== undefined) return `status: ${output.status}`;
   if (output.store_id) return `store: ${output.store_id}`;
@@ -30278,7 +32818,7 @@ function renderOrchestrationRunDetail(detail) {
                 <strong>${safeText(label)}</strong>
                 <code class="mono">${safeText(nodeId)}</code>
               </div>
-              <span class="badge ${step.status === "completed" || step.status === "simulated" ? "badge-ok" : ""}">${safeText(step.status || "—")}</span>
+              <span class="badge ${step.status === "completed" || step.status === "simulated" ? "badge-ok" : step.status === "awaiting_approval" ? "badge-warn" : ""}">${safeText(step.status || "—")}</span>
             </header>
             <p class="flow-run-step-summary">${safeText(summary)}</p>
             ${templateHint ? `<p class="flow-run-step-ref-row">Reference: ${templateHint} <button type="button" class="ghost flow-data-map-copy flow-run-copy-ref" data-copy-snippet="{{steps['${safeText(nodeId)}'].output}}">Copy</button></p>` : ""}
@@ -30298,16 +32838,18 @@ function renderOrchestrationRunDetail(detail) {
     <div class="flow-run-detail-head">
       <div>
         <strong>Run ${safeText((detail.run_id || "").slice(0, 12))}…</strong>
-        <span class="badge ${detail.status === "completed" || String(detail.status || "").includes("completed") ? "badge-ok" : ""}">${safeText(detail.status)}</span>
+        <span class="badge ${detail.status === "completed" || String(detail.status || "").includes("completed") ? "badge-ok" : detail.status === "awaiting_approval" ? "badge-warn" : ""}">${safeText(detail.status)}</span>
       </div>
       <div class="flow-run-detail-meta">
         <span>Trace: <code class="mono">${safeText(detail.trace_id || "—")}</code>
           ${detail.trace_id ? `<button type="button" class="ghost flow-data-map-copy" data-copy-snippet="${safeText(detail.trace_id)}">Copy</button>` : ""}
+          ${detail.trace_id ? `<button type="button" class="ghost flow-run-pivot-observability" data-trace-id="${safeText(detail.trace_id)}">View in Observability</button>` : ""}
         </span>
         <span>Started: ${safeText(detail.started_at || "—")}</span>
         ${detail.finished_at ? `<span>Finished: ${safeText(detail.finished_at)}</span>` : ""}
       </div>
       ${detail.error_summary ? `<p class="flow-run-detail-error">${safeText(detail.error_summary)}</p>` : ""}
+      ${detail.status === "awaiting_approval" ? `<section class="flow-run-approval-gates" id="orchestrationRunApprovalGates"><p class="flow-run-detail-empty">Loading approval gates…</p></section>` : ""}
     </div>
     <section class="flow-run-detail-steps">
       <h5>Step timeline (${steps.length})</h5>
@@ -30319,6 +32861,70 @@ function renderOrchestrationRunDetail(detail) {
     </details>
   `;
   bindOrchestrationRunDetailEvents(target);
+  if (detail.status === "awaiting_approval" && detail.flow_id && detail.run_id) {
+    void loadOrchestrationRunApprovalGates(detail.flow_id, detail.run_id);
+  }
+}
+
+async function loadOrchestrationRunApprovalGates(flowId, runId) {
+  const panel = qs("#orchestrationRunApprovalGates");
+  if (!panel) return;
+  try {
+    const payload = await api(
+      `/orchestration/flows/${encodeURIComponent(flowId)}/runs/${encodeURIComponent(runId)}/approval-gates`,
+    );
+    const gates = Array.isArray(payload.data) ? payload.data : [];
+    const pending = gates.filter((gate) => gate.status === "pending");
+    if (!pending.length) {
+      panel.innerHTML = `<p class="flow-run-detail-empty">No pending approval gates.</p>`;
+      return;
+    }
+    panel.innerHTML = `
+      <h5>Pending approval (${pending.length})</h5>
+      ${pending
+        .map(
+          (gate) => `
+        <article class="flow-run-approval-card" data-gate-id="${safeText(gate.gate_id)}">
+          <strong>${safeText(gate.approval_title || "Approval required")}</strong>
+          <p class="mono">${safeText(gate.node_id)} · ${safeText(gate.resolved_approver_role || gate.required_role || "approver")}</p>
+          <div class="flow-run-approval-actions">
+            <button type="button" class="primary flow-run-gate-decide" data-decision="approved" data-gate-id="${safeText(gate.gate_id)}">Approve</button>
+            <button type="button" class="ghost flow-run-gate-decide" data-decision="rejected" data-gate-id="${safeText(gate.gate_id)}">Reject</button>
+          </div>
+        </article>`,
+        )
+        .join("")}
+    `;
+    panel.querySelectorAll(".flow-run-gate-decide").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const gateId = btn.getAttribute("data-gate-id");
+        const decision = btn.getAttribute("data-decision");
+        if (!gateId || !decision) return;
+        const comment =
+          decision === "rejected"
+            ? window.prompt("Optional rejection reason:", "") || undefined
+            : undefined;
+        try {
+          const updated = await api(
+            `/orchestration/flows/${encodeURIComponent(flowId)}/runs/${encodeURIComponent(runId)}/approval-gates/${encodeURIComponent(gateId)}/decide`,
+            { method: "POST", body: JSON.stringify({ decision, comment }) },
+          );
+          renderOrchestrationRunDetail(updated);
+          const historyDetail = qs("#orchestrationRunDetailHistory");
+          if (historyDetail) renderOrchestrationRunDetail(updated);
+          setOrchestrationFeedback(
+            decision === "approved" ? "Run resumed after approval." : "Run rejected at approval gate.",
+            "orchestrationRunDetail",
+            decision === "approved" ? "ok" : "warn",
+          );
+        } catch (error) {
+          setOrchestrationFeedback(`Approval decision failed: ${error.message}`, "orchestrationRunDetail", "error");
+        }
+      });
+    });
+  } catch (error) {
+    panel.innerHTML = `<p class="flow-run-detail-error">Failed to load approval gates: ${safeText(error.message)}</p>`;
+  }
 }
 
 function bindOrchestrationRunDetailEvents(container) {
@@ -30344,6 +32950,17 @@ function bindOrchestrationRunDetailEvents(container) {
       orchestrationDataMappingFocusNodeId = nodeId;
       qs("#orchestration")?.querySelector('[data-console-tab="studio"]')?.click();
       renderOrchestrationStudio();
+    });
+  });
+  container.querySelectorAll(".flow-run-pivot-observability").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const traceId = btn.getAttribute("data-trace-id");
+      if (!traceId) return;
+      switchView("observability");
+      qs('#observability [data-console-tab="traces"]')?.click();
+      const input = qs('#observabilityTraceForm input[name="trace_id"]');
+      if (input) input.value = traceId;
+      void loadObservabilityTrace();
     });
   });
 }
@@ -30386,7 +33003,8 @@ function duplicateOrchestrationNode(nodeId) {
   renderOrchestrationStudio();
 }
 
-function renderOrchestrationRunsTables(rows) {
+function renderOrchestrationRunsTables(rows, options = {}) {
+  const globalHistory = Boolean(options.global);
   orchestrationRunRows = rows;
   const count = qs("#orchestrationExecutionsCount");
   if (count) count.textContent = String(rows.length);
@@ -30396,28 +33014,32 @@ function renderOrchestrationRunsTables(rows) {
     if (!tbody) return;
     tbody.textContent = "";
     if (!rows.length) {
-      setTableMessage(tbody, tbody === compact ? 5 : 5, "No runs yet.");
+      setTableMessage(tbody, tbody === compact ? 5 : 7, globalHistory ? "No runs found." : "No runs yet.");
       resetOrchestrationTablePagination(tbody);
       return;
     }
     rows.forEach((row) => {
       const tr = document.createElement("tr");
+      const flowId = safeText(row.flow_id || "");
+      const flowName = safeText(row.flow_name || row.flow_id || "—");
+      const runId = safeText(row.run_id || "");
       if (tbody === compact) {
         tr.innerHTML = `
           <td class="mono">${safeText(row.run_id?.slice(0, 12) || row.run_id)}</td>
           <td><span class="badge ${row.status === "completed" ? "badge-ok" : ""}">${safeText(row.status)}</span></td>
           <td class="mono">${safeText((row.trace_id || "").slice(0, 16))}</td>
           <td class="mono">${safeText(row.started_at)}</td>
-          <td><button type="button" class="ghost" data-run-detail="${safeText(row.run_id)}">Detail</button></td>
+          <td><button type="button" class="ghost" data-run-detail="${runId}" data-flow-id="${flowId}">Detail</button></td>
         `;
       } else {
         tr.innerHTML = `
-          <td class="mono">${safeText(row.run_id)}</td>
-          <td class="mono">${safeText(row.status)}</td>
+          <td class="mono">${runId}</td>
+          <td>${flowName}</td>
+          <td><span class="badge ${row.status === "completed" || String(row.status || "").includes("completed") ? "badge-ok" : ""}">${safeText(row.status)}</span></td>
           <td class="mono">${safeText(row.trace_id)}</td>
           <td class="mono">${safeText(row.started_at)}</td>
-          <td class="mono">${safeText(row.finished_at)}</td>
-          <td><button type="button" class="ghost" data-run-detail="${safeText(row.run_id)}">Detail</button></td>
+          <td class="mono">${safeText(row.finished_at || "—")}</td>
+          <td><button type="button" class="ghost" data-run-detail="${runId}" data-flow-id="${flowId}">Detail</button></td>
         `;
       }
       tbody.appendChild(tr);
@@ -30425,32 +33047,120 @@ function renderOrchestrationRunsTables(rows) {
     resetOrchestrationTablePagination(tbody);
   });
   qsa("[data-run-detail]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const runId = button.getAttribute("data-run-detail");
-      const flowId = getOrchestrationFlowFormValues()?.flow_id || orchestrationSelectedFlowId;
-      if (!flowId || !runId) return;
-      try {
-        const detail = await api(`/orchestration/flows/${encodeURIComponent(flowId)}/runs/${encodeURIComponent(runId)}`);
-        renderOrchestrationRunDetail(detail);
-        const studioDetail = qs("#orchestrationRunDetail");
-        const historyDetail = qs("#orchestrationRunDetailHistory");
-        if (historyDetail && studioDetail) {
-          historyDetail.innerHTML = studioDetail.innerHTML;
-          bindOrchestrationRunDetailEvents(historyDetail);
-        }
-        qs("#orchestrationExecutionsDrawer")?.removeAttribute("hidden");
-        qs("#orchestrationExecutionsToggle")?.setAttribute("aria-expanded", "true");
-        qs("#orchestrationRunDetail")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-      } catch (error) {
-        renderOrchestrationRunDetail(null);
-        const errHtml = `<p class="flow-run-detail-error">${safeText(error.message)}</p>`;
-        const panel = qs("#orchestrationRunDetail");
-        if (panel) panel.innerHTML = errHtml;
-        const historyPanel = qs("#orchestrationRunDetailHistory");
-        if (historyPanel) historyPanel.innerHTML = errHtml;
-      }
-    });
+    button.addEventListener("click", () => void openOrchestrationRunDetail(button));
   });
+}
+
+async function openOrchestrationRunDetail(button) {
+  const runId = button.getAttribute("data-run-detail");
+  const flowId =
+    button.getAttribute("data-flow-id") ||
+    getOrchestrationFlowFormValues()?.flow_id ||
+    orchestrationSelectedFlowId;
+  if (!flowId || !runId) return;
+  try {
+    const detail = await api(
+      `/orchestration/flows/${encodeURIComponent(flowId)}/runs/${encodeURIComponent(runId)}`,
+    );
+    renderOrchestrationRunDetail(detail);
+    const studioDetail = qs("#orchestrationRunDetail");
+    const historyDetail = qs("#orchestrationRunDetailHistory");
+    if (historyDetail && studioDetail) {
+      historyDetail.innerHTML = studioDetail.innerHTML;
+      bindOrchestrationRunDetailEvents(historyDetail);
+    }
+    qs("#orchestrationExecutionsDrawer")?.removeAttribute("hidden");
+    qs("#orchestrationExecutionsToggle")?.setAttribute("aria-expanded", "true");
+    (historyDetail || qs("#orchestrationRunDetail"))?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  } catch (error) {
+    renderOrchestrationRunDetail(null);
+    const errHtml = `<p class="flow-run-detail-error">${safeText(error.message)}</p>`;
+    const panel = qs("#orchestrationRunDetail");
+    if (panel) panel.innerHTML = errHtml;
+    const historyPanel = qs("#orchestrationRunDetailHistory");
+    if (historyPanel) historyPanel.innerHTML = errHtml;
+  }
+}
+
+function populateOrchestrationFlowFilterSelects() {
+  const historyFilter = qs("#orchestrationHistoryFlowFilter");
+  const auditFilter = qs("#orchestrationAuditFlowFilter");
+  [historyFilter, auditFilter].forEach((select) => {
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">All flows</option>';
+    orchestrationFlows.forEach((flow) => {
+      const option = document.createElement("option");
+      option.value = flow.flow_id;
+      option.textContent = `${flow.flow_name} (${flow.environment})`;
+      select.appendChild(option);
+    });
+    if (current && orchestrationFlows.some((flow) => flow.flow_id === current)) {
+      select.value = current;
+    }
+  });
+}
+
+async function loadOrchestrationHistoryRuns() {
+  populateOrchestrationFlowFilterSelects();
+  const flowFilter = qs("#orchestrationHistoryFlowFilter")?.value || "";
+  const envFilter = qs("#orchestrationHistoryEnvFilter")?.value || "";
+  const params = new URLSearchParams({ limit: "50" });
+  if (flowFilter) params.set("flow_id", flowFilter);
+  if (envFilter) params.set("environment", envFilter);
+  try {
+    const payload = await api(`/orchestration/runs?${params.toString()}`);
+    renderOrchestrationRunsTables(Array.isArray(payload.data) ? payload.data : [], { global: true });
+  } catch (error) {
+    setOrchestrationFeedback(`Failed to load runs: ${error.message}`, "orchestrationRunDetailHistory");
+  }
+}
+
+async function loadOrchestrationAuditEvents() {
+  populateOrchestrationFlowFilterSelects();
+  const tbody = qs("#orchestrationAuditTable");
+  if (!tbody) return;
+  setTableMessage(tbody, 6, "Loading...");
+  const flowFilter = qs("#orchestrationAuditFlowFilter")?.value || "";
+  const outcomeFilter = qs("#orchestrationAuditOutcomeFilter")?.value || "";
+  const params = new URLSearchParams({
+    action_type_prefix: "orchestration.flow",
+    resource_type: "orchestration_flow",
+    since_hours: "168",
+    limit: "100",
+  });
+  if (flowFilter) params.set("resource_id", flowFilter);
+  if (outcomeFilter) params.set("decision_outcome", outcomeFilter);
+  try {
+    const rows = await api(`/audit/events?${params.toString()}`, {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    tbody.textContent = "";
+    if (!rows?.length) {
+      setTableMessage(tbody, 6, "No orchestration audit events.");
+      return;
+    }
+    rows.forEach((row) => {
+      const ctx = row.action_context && typeof row.action_context === "object" ? row.action_context : {};
+      const flowLabel = ctx.flow_name || row.resource_id || "—";
+      const runTrace = [ctx.run_id ? `run ${String(ctx.run_id).slice(0, 12)}…` : null, ctx.trace_id || row.trace_id || null]
+        .filter(Boolean)
+        .join(" · ");
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono">${safeText(row.timestamp)}</td>
+        <td>${safeText(row.action_type)}</td>
+        <td>${safeText(flowLabel)}</td>
+        <td class="mono">${safeText(row.actor_id)}</td>
+        <td class="mono">${safeText(runTrace || "—")}</td>
+        <td><span class="badge ${row.decision_outcome === "allow" ? "badge-ok" : ""}">${safeText(row.decision_outcome)}</span></td>
+      `;
+      tbody.appendChild(tr);
+    });
+    resetOrchestrationTablePagination(tbody);
+  } catch (error) {
+    setTableMessage(tbody, 6, `Error: ${safeText(error.message)}`);
+  }
 }
 
 function renderOrchestrationFlowsTable() {
@@ -30661,6 +33371,45 @@ function syncOrchestrationApprovalReviewForm(flow) {
   const decisionSelect = form.elements.decision;
   if (decisionSelect && flow.approval_status === "rejected") decisionSelect.value = "rejected";
   else if (decisionSelect) decisionSelect.value = "approved";
+  const stageLabel = qs("#orchestrationApprovalStageLabel");
+  const stageSelect = form.elements.stage_id;
+  const progress = qs("#orchestrationStagedApprovalProgress");
+  let policy = {};
+  try {
+    policy = flow.access_policy_json ? JSON.parse(flow.access_policy_json) : {};
+  } catch {
+    policy = {};
+  }
+  const approvers = policy.approvers && typeof policy.approvers === "object" ? policy.approvers : {};
+  const isStaged = String(approvers.mode || "simple") === "staged";
+  if (stageLabel) stageLabel.hidden = !isStaged;
+  if (stageSelect && isStaged) {
+    const stages = Array.isArray(approvers.stages) ? approvers.stages : [];
+    stageSelect.innerHTML = `<option value="">— select stage —</option>${stages
+      .map((stage) => `<option value="${safeText(stage.stage_id)}">${safeText(stage.label || stage.stage_id)}</option>`)
+      .join("")}`;
+  }
+  if (progress) {
+    if (!isStaged) {
+      progress.hidden = true;
+      progress.innerHTML = "";
+    } else {
+      progress.hidden = false;
+      let stageState = {};
+      try {
+        stageState = flow.approval_stage_state_json ? JSON.parse(flow.approval_stage_state_json) : {};
+      } catch {
+        stageState = {};
+      }
+      const stages = Array.isArray(approvers.stages) ? approvers.stages : [];
+      progress.innerHTML = `<div class="flow-staged-progress-bar">${stages
+        .map((stage) => {
+          const status = stageState?.[stage.stage_id]?.status || "pending";
+          return `<span class="flow-staged-step is-${safeText(status)}" title="${safeText(stage.label || stage.stage_id)}">${safeText(stage.label || stage.stage_id)}</span>`;
+        })
+        .join("")}</div>`;
+    }
+  }
 }
 
 function renderOrchestrationApprovalsTable() {
@@ -30740,8 +33489,340 @@ async function loadOrchestrationApprovals() {
     const payload = await api("/orchestration/flows?limit=200");
     orchestrationFlows = Array.isArray(payload.data) ? payload.data : [];
     renderOrchestrationApprovalsPanel();
+    await Promise.all([loadOrchestrationDueCertificationQueue(), loadOrchestrationJitAccessQueue()]);
   } catch (error) {
     setOrchestrationFeedback(`Failed to load approval queue: ${error.message}`, "orchestrationApprovalFeedback", "error");
+  }
+}
+
+function filterOrchestrationDueCertRows() {
+  const envFilter = String(qs("#orchestrationDueCertEnvFilter")?.value || "").trim().toLowerCase();
+  const reasonFilter = String(qs("#orchestrationDueCertReasonFilter")?.value || "").trim().toLowerCase();
+  return orchestrationDueCertRows.filter((row) => {
+    if (envFilter && String(row.environment || "").trim().toLowerCase() !== envFilter) return false;
+    if (reasonFilter && String(row.reason || "").trim().toLowerCase() !== reasonFilter) return false;
+    return true;
+  });
+}
+
+function filterOrchestrationJitRows() {
+  const statusFilter = String(qs("#orchestrationJitStatusFilter")?.value || "").trim().toLowerCase();
+  const envFilter = String(qs("#orchestrationJitEnvFilter")?.value || "").trim().toLowerCase();
+  const flowFilter = String(qs("#orchestrationJitFlowFilter")?.value || "").trim().toLowerCase();
+  return orchestrationJitRows.filter((row) => {
+    if (statusFilter && String(row.status || "").trim().toLowerCase() !== statusFilter) return false;
+    if (envFilter && String(row.environment || "").trim().toLowerCase() !== envFilter) return false;
+    if (flowFilter && !String(row.flow_id || "").toLowerCase().includes(flowFilter)) return false;
+    return true;
+  });
+}
+
+function renderOrchestrationDueCertQueueTable() {
+  const tbody = qs("#orchestrationDueCertQueueTable");
+  const summary = qs("#orchestrationDueCertSummary");
+  const rows = filterOrchestrationDueCertRows();
+  if (summary) {
+    summary.textContent = `${rows.length} flow${rows.length === 1 ? "" : "s"} due for recertification (${orchestrationDueCertRows.length} total).`;
+  }
+  if (!tbody) return;
+  if (!rows.length) {
+    setTableMessage(tbody, 5, "No flows match the selected due-certification filters.");
+    return;
+  }
+  tbody.textContent = "";
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Select to certify access policy";
+    tr.addEventListener("click", () => selectOrchestrationDueCertRow(row));
+    appendTableCell(tr, row.flow_name || row.flow_id);
+    appendTableCell(tr, row.environment || "dev");
+    appendTableCell(tr, row.reason || "due");
+    const dueLabel = row.next_due_at
+      ? `${row.next_due_at} · ${row.recertify_interval_days ?? 90}d interval`
+      : `${row.recertify_interval_days ?? 90}d interval`;
+    appendTableCell(tr, dueLabel);
+    const actionCell = document.createElement("td");
+    const certifyBtn = document.createElement("button");
+    certifyBtn.type = "button";
+    certifyBtn.className = "ghost";
+    certifyBtn.textContent = "Certify";
+    certifyBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      selectOrchestrationDueCertRow(row);
+    });
+    actionCell.appendChild(certifyBtn);
+    tr.appendChild(actionCell);
+    tbody.appendChild(tr);
+  });
+}
+
+function selectOrchestrationDueCertRow(row) {
+  const form = qs("#orchestrationCertifyQueueForm");
+  const hint = qs("#orchestrationCertifyQueueHint");
+  const dualFields = qs("#orchestrationCertifyQueueDualFields");
+  if (!form || !row) return;
+  form.hidden = false;
+  if (form.elements.flow_id) form.elements.flow_id.value = row.flow_id || "";
+  if (form.elements.environment) form.elements.environment.value = row.environment || "dev";
+  const env = String(row.environment || "dev").trim().toLowerCase();
+  const needsDual = env === "prod" && !(typeof actorBypassesProvidersDualApproval === "function" && actorBypassesProvidersDualApproval());
+  if (dualFields) dualFields.hidden = !needsDual;
+  if (hint) {
+    hint.textContent = `Certify access policy for "${row.flow_name || row.flow_id}" (${env}). Reason: ${row.reason || "due"}.`;
+  }
+}
+
+function renderOrchestrationJitQueueTable() {
+  const tbody = qs("#orchestrationJitQueueTable");
+  const summary = qs("#orchestrationJitQueueSummary");
+  const rows = filterOrchestrationJitRows();
+  if (summary) {
+    summary.textContent = `${rows.length} JIT request${rows.length === 1 ? "" : "s"} (${orchestrationJitRows.length} loaded).`;
+  }
+  if (!tbody) return;
+  if (!rows.length) {
+    setTableMessage(tbody, 8, "No JIT access requests match the selected filters.");
+    return;
+  }
+  tbody.textContent = "";
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = row.status === "requested" ? "pointer" : "default";
+    if (row.status === "requested") {
+      tr.title = "Select to review this request";
+      tr.addEventListener("click", () => selectOrchestrationJitRequest(row));
+    }
+    appendTableCell(tr, row.request_id);
+    appendTableCell(tr, row.flow_id);
+    appendTableCell(tr, row.requester_id);
+    appendTableCell(tr, row.requested_action || "run");
+    appendTableCell(tr, row.environment || "dev");
+    appendTableCell(tr, row.status || "requested");
+    appendTableCell(tr, `${row.requested_duration_minutes ?? 60}m`);
+    const actionCell = document.createElement("td");
+    if (row.status === "requested") {
+      const reviewBtn = document.createElement("button");
+      reviewBtn.type = "button";
+      reviewBtn.className = "ghost";
+      reviewBtn.textContent = "Review";
+      reviewBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        selectOrchestrationJitRequest(row);
+      });
+      actionCell.appendChild(reviewBtn);
+    } else {
+      actionCell.textContent = "—";
+    }
+    tr.appendChild(actionCell);
+    tbody.appendChild(tr);
+  });
+}
+
+function selectOrchestrationJitRequest(row) {
+  const form = qs("#orchestrationJitReviewForm");
+  const hint = qs("#orchestrationJitReviewHint");
+  const dualFields = qs("#orchestrationJitReviewDualFields");
+  if (!form || !row) return;
+  form.hidden = false;
+  if (form.elements.request_id) form.elements.request_id.value = row.request_id || "";
+  if (form.elements.environment) form.elements.environment.value = row.environment || "dev";
+  if (form.elements.decision) form.elements.decision.value = "approve";
+  syncOrchestrationJitReviewDualFields(form);
+  if (hint) {
+    hint.textContent = `${row.requester_id} requested ${row.requested_action || "run"} on ${row.flow_id} (${row.environment || "dev"}) for ${row.requested_duration_minutes ?? 60} minutes.`;
+  }
+  if (dualFields) {
+    dualFields.hidden = !shouldShowOrchestrationJitDualApproval(form);
+  }
+}
+
+function shouldShowOrchestrationJitDualApproval(form) {
+  const env = String(form?.elements?.environment?.value || "dev").trim().toLowerCase();
+  const decision = String(form?.elements?.decision?.value || "approve").trim().toLowerCase();
+  if (env !== "prod" || decision !== "approve") return false;
+  return !(typeof actorBypassesProvidersDualApproval === "function" && actorBypassesProvidersDualApproval());
+}
+
+function syncOrchestrationJitReviewDualFields(form = qs("#orchestrationJitReviewForm")) {
+  const dualFields = qs("#orchestrationJitReviewDualFields");
+  if (dualFields) dualFields.hidden = !shouldShowOrchestrationJitDualApproval(form);
+}
+
+async function loadOrchestrationDueCertificationQueue() {
+  const tbody = qs("#orchestrationDueCertQueueTable");
+  const compactPanel = qs("#orchestrationIgaQueuesPanel");
+  if (tbody) setTableMessage(tbody, 5, "Loading due certifications...");
+  try {
+    const payload = await api("/orchestration/access-certifications/due?limit=100");
+    orchestrationDueCertRows = Array.isArray(payload.data) ? payload.data : [];
+    renderOrchestrationDueCertQueueTable();
+    renderOrchestrationIgaQueuesCompact();
+    void loadOrchestrationPlatformSummaryCountsOnly();
+  } catch (error) {
+    if (tbody) setTableMessage(tbody, 5, `Error: ${safeText(error.message)}`);
+    setOrchestrationFeedback(`Due certification queue failed: ${error.message}`, "orchestrationDueCertFeedback", "error");
+    if (compactPanel) compactPanel.textContent = `Due certification queue unavailable: ${error.message}`;
+  }
+}
+
+async function loadOrchestrationJitAccessQueue() {
+  const tbody = qs("#orchestrationJitQueueTable");
+  const statusFilter = String(qs("#orchestrationJitStatusFilter")?.value || "").trim();
+  const flowFilter = String(qs("#orchestrationJitFlowFilter")?.value || "").trim();
+  const params = new URLSearchParams({ limit: "100" });
+  if (statusFilter) params.set("status", statusFilter);
+  if (flowFilter) params.set("flow_id", flowFilter);
+  if (tbody) setTableMessage(tbody, 8, "Loading JIT access requests...");
+  try {
+    const payload = await api(`/orchestration/jit-access-requests?${params.toString()}`);
+    orchestrationJitRows = Array.isArray(payload.data) ? payload.data : [];
+    renderOrchestrationJitQueueTable();
+    renderOrchestrationIgaQueuesCompact();
+    void loadOrchestrationPlatformSummaryCountsOnly();
+  } catch (error) {
+    if (tbody) setTableMessage(tbody, 8, `Error: ${safeText(error.message)}`);
+    setOrchestrationFeedback(`JIT queue failed: ${error.message}`, "orchestrationJitQueueFeedback", "error");
+  }
+}
+
+async function loadOrchestrationPlatformSummaryCountsOnly() {
+  const panel = qs("#orchestrationPlatformSummary");
+  if (!panel) return;
+  try {
+    const summary = await api("/orchestration/summary");
+    panel.innerHTML = `
+      <article class="flow-platform-stat"><strong>${safeText(summary.flow_count ?? 0)}</strong><span>Flows</span></article>
+      <article class="flow-platform-stat"><strong>${safeText(summary.pending_prod_approvals ?? 0)}</strong><span>Prod approvals pending</span></article>
+      <article class="flow-platform-stat"><strong>${safeText(summary.certifications_due ?? 0)}</strong><span>Certifications due</span></article>
+      <article class="flow-platform-stat"><strong>${safeText(summary.active_jit_grants ?? 0)}</strong><span>Active JIT grants</span></article>
+      <article class="flow-platform-stat"><strong>${safeText(summary.runs_awaiting_approval ?? 0)}</strong><span>Runs awaiting approval</span></article>`;
+  } catch (error) {
+    panel.innerHTML = `<p class="flow-iga-empty">Platform summary unavailable: ${safeText(error.message)}</p>`;
+  }
+}
+
+function renderOrchestrationIgaQueuesCompact() {
+  const panel = qs("#orchestrationIgaQueuesPanel");
+  if (!panel) return;
+  const dueRows = filterOrchestrationDueCertRows().slice(0, 5);
+  const jitRows = orchestrationJitRows.filter((row) => row.status === "requested").slice(0, 5);
+  panel.textContent = "";
+  const grid = document.createElement("div");
+  grid.className = "flow-iga-queues-grid";
+
+  const dueSection = document.createElement("section");
+  dueSection.className = "flow-iga-card";
+  const dueTitle = document.createElement("h5");
+  dueTitle.textContent = "Due certification (preview)";
+  dueSection.appendChild(dueTitle);
+  if (!dueRows.length) {
+    const empty = document.createElement("p");
+    empty.className = "flow-iga-empty";
+    empty.textContent = "No flows due for recertification.";
+    dueSection.appendChild(empty);
+  } else {
+    const list = document.createElement("ul");
+    list.className = "flow-iga-stage-list";
+    dueRows.forEach((row) => {
+      const li = document.createElement("li");
+      li.textContent = `${row.flow_name || row.flow_id} · ${row.environment || "dev"} · ${row.reason || "due"}`;
+      list.appendChild(li);
+    });
+    dueSection.appendChild(list);
+  }
+
+  const jitSection = document.createElement("section");
+  jitSection.className = "flow-iga-card";
+  const jitTitle = document.createElement("h5");
+  jitTitle.textContent = "Pending JIT (preview)";
+  jitSection.appendChild(jitTitle);
+  if (!jitRows.length) {
+    const empty = document.createElement("p");
+    empty.className = "flow-iga-empty";
+    empty.textContent = "No pending JIT access requests.";
+    jitSection.appendChild(empty);
+  } else {
+    const list = document.createElement("ul");
+    list.className = "flow-iga-stage-list";
+    jitRows.forEach((row) => {
+      const li = document.createElement("li");
+      li.textContent = `${row.request_id} · ${row.flow_id} · ${row.requester_id}`;
+      list.appendChild(li);
+    });
+    jitSection.appendChild(list);
+  }
+
+  grid.append(dueSection, jitSection);
+  panel.appendChild(grid);
+}
+
+async function submitOrchestrationCertifyFromQueue(evt) {
+  evt?.preventDefault();
+  const form = qs("#orchestrationCertifyQueueForm");
+  if (!form || form.hidden) return;
+  const flowId = String(form.elements.flow_id?.value || "").trim();
+  if (!flowId) {
+    setOrchestrationFeedback("Select a flow from the due certification queue first.", "orchestrationDueCertFeedback", "warn");
+    return;
+  }
+  const environment = String(form.elements.environment?.value || "dev").trim().toLowerCase();
+  const approvalError = validateOrchestrationDualApproval(form, environment);
+  if (approvalError) {
+    setOrchestrationFeedback(approvalError, "orchestrationDueCertFeedback", "error");
+    return;
+  }
+  const notes = String(form.elements.attestation_notes?.value || "").trim() || "Operator attestation from due-certification queue";
+  try {
+    const headers = orchestrationDualApprovalHeaders(environment, form);
+    await api(`/orchestration/flows/${encodeURIComponent(flowId)}/access-policy/certify`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ attestation_notes: notes }),
+    });
+    setOrchestrationFeedback(`Access policy certified for ${flowId}.`, "orchestrationDueCertFeedback", "success");
+    form.hidden = true;
+    await loadOrchestrationDueCertificationQueue();
+    void renderOrchestrationIgaPosturePanel();
+  } catch (error) {
+    setOrchestrationFeedback(`Certify failed: ${error.message}`, "orchestrationDueCertFeedback", "error");
+  }
+}
+
+async function submitOrchestrationJitReview(evt) {
+  evt?.preventDefault();
+  const form = qs("#orchestrationJitReviewForm");
+  if (!form || form.hidden) return;
+  const requestId = String(form.elements.request_id?.value || "").trim();
+  if (!requestId) {
+    setOrchestrationFeedback("Select a pending JIT request first.", "orchestrationJitQueueFeedback", "warn");
+    return;
+  }
+  const environment = String(form.elements.environment?.value || "dev").trim().toLowerCase();
+  const decision = String(form.elements.decision?.value || "approve").trim().toLowerCase();
+  if (decision === "approve") {
+    const approvalError = validateOrchestrationDualApproval(form, environment);
+    if (approvalError) {
+      setOrchestrationFeedback(approvalError, "orchestrationJitQueueFeedback", "error");
+      return;
+    }
+  }
+  try {
+    const headers = decision === "approve" ? orchestrationDualApprovalHeaders(environment, form) : {};
+    const result = await api(`/orchestration/jit-access-requests/${encodeURIComponent(requestId)}/approve`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ decision: decision === "deny" ? "deny" : "approve" }),
+    });
+    setOrchestrationFeedback(
+      `JIT request ${requestId} ${result.status === "denied" ? "denied" : "approved"}.`,
+      "orchestrationJitQueueFeedback",
+      result.status === "denied" ? "warn" : "success",
+    );
+    form.hidden = true;
+    await loadOrchestrationJitAccessQueue();
+  } catch (error) {
+    setOrchestrationFeedback(`JIT decision failed: ${error.message}`, "orchestrationJitQueueFeedback", "error");
   }
 }
 
@@ -30791,6 +33872,8 @@ async function submitOrchestrationApproval(evt) {
   const ticketRef = String(form.elements.approval_ticket_ref?.value || "").trim();
   const body = { decision: decision === "rejected" ? "rejected" : "approved" };
   if (ticketRef) body.approval_ticket_ref = ticketRef;
+  const stageId = String(form.elements.stage_id?.value || "").trim();
+  if (stageId) body.stage_id = stageId;
   try {
     const headers = orchestrationDualApprovalHeaders(environment, form);
     const result = await api(`/orchestration/flows/${encodeURIComponent(flowId)}/approve`, {
@@ -30887,7 +33970,59 @@ async function runFlow(dryRun = false) {
       qs("#orchestrationExecutionsToggle")?.setAttribute("aria-expanded", "true");
     }
   } catch (error) {
-    setOrchestrationFeedback(`Run failed: ${error.message}`);
+    setOrchestrationFeedback(`Run failed: ${error.message}`, "orchestrationBuilderFeedback", "error");
+    const jitPanel = qs("#orchestrationJitAccessPanel");
+    if (jitPanel && /AUTHZ_FLOW_SCOPE_FORBIDDEN|not authorized/i.test(String(error.message || ""))) {
+      jitPanel.hidden = false;
+      setOrchestrationFeedback("Run denied by access policy — you can request JIT access below.", "orchestrationBuilderFeedback", "warn");
+    }
+  }
+}
+
+async function submitOrchestrationJitAccessRequest(evt) {
+  evt?.preventDefault();
+  const form = qs("#orchestrationJitAccessForm");
+  const flowId = getOrchestrationFlowFormValues()?.flow_id || orchestrationSelectedFlowId;
+  if (!form || !flowId) {
+    setOrchestrationFeedback("Save and select a flow first.", "orchestrationJitAccessFeedback", "warn");
+    return;
+  }
+  const body = {
+    requested_action: String(form.elements.requested_action?.value || "run"),
+    requested_duration_minutes: Number(form.elements.requested_duration_minutes?.value || 60),
+    justification: String(form.elements.justification?.value || "").trim(),
+  };
+  try {
+    const result = await api(`/orchestration/flows/${encodeURIComponent(flowId)}/jit-access-requests`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    setOrchestrationFeedback(`JIT request ${result.request_id} submitted — awaiting approver.`, "orchestrationJitAccessFeedback", "success");
+    form.reset();
+    void loadOrchestrationJitAccessQueue();
+  } catch (error) {
+    setOrchestrationFeedback(`JIT request failed: ${error.message}`, "orchestrationJitAccessFeedback", "error");
+  }
+}
+
+async function certifyOrchestrationAccessPolicy() {
+  const values = getOrchestrationFlowFormValues();
+  if (!values?.flow_id) {
+    setOrchestrationFeedback("Save the flow before certifying access policy.", "orchestrationAccessPolicyFeedback", "warn");
+    return;
+  }
+  const notes = String(qs("#orchestrationAccessPolicyForm")?.elements?.iga_recertify_interval_days?.value ? "Policy attestation from Security tab" : "").trim();
+  try {
+    const headers = values.environment === "prod" ? orchestrationDualApprovalHeaders("prod") : {};
+    await api(`/orchestration/flows/${encodeURIComponent(values.flow_id)}/access-policy/certify`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ attestation_notes: notes || "Operator attestation" }),
+    });
+    setOrchestrationFeedback("Access policy certified.", "orchestrationAccessPolicyFeedback", "success");
+    void renderOrchestrationIgaPosturePanel();
+  } catch (error) {
+    setOrchestrationFeedback(`Certify failed: ${error.message}`, "orchestrationAccessPolicyFeedback", "error");
   }
 }
 
@@ -30909,6 +34044,7 @@ async function loadFlowRuns() {
 async function loadOrchestrationConsole() {
   await Promise.all([loadOrchestrationNodeTypes(), loadOrchestrationFlows()]);
   if (orchestrationSelectedFlowId) {
+    await loadOrchestrationHistoryOutputShapes(orchestrationSelectedFlowId);
     const flow = orchestrationFlows.find((item) => item.flow_id === orchestrationSelectedFlowId);
     if (flow) {
       hydrateOrchestrationFormFromFlow(flow);
@@ -30932,8 +34068,26 @@ function bindOrchestrationEvents() {
   qs("#loadOrchestrationFlows")?.addEventListener("click", () => void loadOrchestrationFlows());
   qs("#loadOrchestrationFlowsTable")?.addEventListener("click", () => void loadOrchestrationFlows());
   qs("#loadOrchestrationRuns")?.addEventListener("click", () => void loadFlowRuns());
-  qs("#loadOrchestrationRunsFull")?.addEventListener("click", () => void loadFlowRuns());
+  qs("#loadOrchestrationRunsFull")?.addEventListener("click", () => void loadOrchestrationHistoryRuns());
+  qs("#loadOrchestrationAudit")?.addEventListener("click", () => void loadOrchestrationAuditEvents());
+  qs("#orchestrationHistoryFlowFilter")?.addEventListener("change", () => void loadOrchestrationHistoryRuns());
+  qs("#orchestrationHistoryEnvFilter")?.addEventListener("change", () => void loadOrchestrationHistoryRuns());
+  qs("#orchestrationAuditFlowFilter")?.addEventListener("change", () => void loadOrchestrationAuditEvents());
+  qs("#orchestrationAuditOutcomeFilter")?.addEventListener("change", () => void loadOrchestrationAuditEvents());
   qs("#loadOrchestrationApprovals")?.addEventListener("click", () => void loadOrchestrationApprovals());
+  qs("#loadOrchestrationDueCertQueue")?.addEventListener("click", () => void loadOrchestrationDueCertificationQueue());
+  qs("#loadOrchestrationJitQueue")?.addEventListener("click", () => void loadOrchestrationJitAccessQueue());
+  qs("#orchestrationDueCertFilters")?.addEventListener("change", () => renderOrchestrationDueCertQueueTable());
+  qs("#orchestrationJitQueueFilters")?.addEventListener("change", () => void loadOrchestrationJitAccessQueue());
+  qs("#orchestrationJitFlowFilter")?.addEventListener("change", () => void loadOrchestrationJitAccessQueue());
+  qs("#orchestrationDueCertPendingOnly")?.addEventListener("click", () => {
+    const envFilter = qs("#orchestrationDueCertEnvFilter");
+    if (envFilter) envFilter.value = "prod";
+    renderOrchestrationDueCertQueueTable();
+  });
+  qs("#orchestrationCertifyQueueForm")?.addEventListener("submit", submitOrchestrationCertifyFromQueue);
+  qs("#orchestrationJitReviewForm")?.addEventListener("submit", submitOrchestrationJitReview);
+  qs("#orchestrationJitReviewForm select[name='decision']")?.addEventListener("change", () => syncOrchestrationJitReviewDualFields());
   qs("#orchestrationApprovalForm")?.addEventListener("submit", (evt) => void submitOrchestrationApproval(evt));
   qs("#orchestrationApprovalEnvFilter")?.addEventListener("change", renderOrchestrationApprovalsPanel);
   qs("#orchestrationApprovalStatusFilter")?.addEventListener("change", renderOrchestrationApprovalsPanel);
@@ -30944,6 +34098,10 @@ function bindOrchestrationEvents() {
     if (statusFilter) statusFilter.value = "pending";
     renderOrchestrationApprovalsPanel();
   });
+  qs("#saveOrchestrationAccessPolicy")?.addEventListener("click", () => void saveOrchestrationAccessPolicy());
+  qs("#previewOrchestrationAccessPolicy")?.addEventListener("click", () => void previewOrchestrationAccessPolicy());
+  qs("#certifyOrchestrationAccessPolicy")?.addEventListener("click", () => void certifyOrchestrationAccessPolicy());
+  qs("#orchestrationJitAccessForm")?.addEventListener("submit", (evt) => void submitOrchestrationJitAccessRequest(evt));
   qs("#saveOrchestrationFlow")?.addEventListener("click", () => void saveFlow());
   qs("#validateOrchestrationFlow")?.addEventListener("click", () => void validateFlow());
   qs("#approveOrchestrationFlow")?.addEventListener("click", () => void approveFlow());
@@ -30970,6 +34128,10 @@ function bindOrchestrationEvents() {
       renderOrchestrationCanvas();
       renderOrchestrationInspector();
     }
+  });
+  qs("#orchestrationToolbarCron")?.addEventListener("change", () => {
+    syncOrchestrationFormFromToolbar();
+    renderOrchestrationConsoleSummary();
   });
 
   qs("#orchestrationCanvasEmpty")?.addEventListener("click", (event) => {
@@ -31040,6 +34202,39 @@ function bindOrchestrationEvents() {
   });
 
   qs("#orchestrationCanvasLane")?.addEventListener("click", (event) => {
+    const branchJump = event.target.closest("[data-parallel-branch-jump]");
+    if (branchJump) {
+      const groupId = branchJump.getAttribute("data-parallel-group");
+      const branchIndex = Number(branchJump.getAttribute("data-parallel-branch-jump"));
+      if (groupId && !Number.isNaN(branchIndex)) {
+        jumpParallelBranch(groupId, branchIndex);
+      }
+      return;
+    }
+    const parallelSelect = event.target.closest("[data-parallel-select]");
+    if (parallelSelect) {
+      selectOrchestrationParallelGroup(parallelSelect.getAttribute("data-parallel-select"));
+      return;
+    }
+    const parallelScroll = event.target.closest("[data-parallel-scroll]");
+    if (parallelScroll) {
+      const groupId = parallelScroll.getAttribute("data-parallel-group");
+      const direction = Number(parallelScroll.getAttribute("data-parallel-scroll"));
+      if (groupId && !Number.isNaN(direction)) {
+        scrollParallelBranches(groupId, direction);
+      }
+      return;
+    }
+    const branchFocus = event.target.closest("[data-parallel-branch-focus]");
+    if (branchFocus) {
+      const groupEl = branchFocus.closest("[data-parallel-group]");
+      const groupId = groupEl?.getAttribute("data-parallel-group");
+      const branchIndex = Number(branchFocus.getAttribute("data-parallel-branch-focus"));
+      if (groupId && !Number.isNaN(branchIndex)) {
+        selectOrchestrationParallelGroup(groupId, { branchIndex });
+      }
+      return;
+    }
     const collapseBtn = event.target.closest("[data-parallel-collapse]");
     if (collapseBtn) {
       toggleOrchestrationParallelCollapse(collapseBtn.getAttribute("data-parallel-collapse"));
@@ -31112,10 +34307,24 @@ function bindOrchestrationEvents() {
     }
     const card = event.target.closest("[data-node-id]");
     if (!card) return;
-    orchestrationSelectedNodeId = card.getAttribute("data-node-id");
+    if (
+      event.target.closest(
+        ".flow-insert-btn, .flow-insert-slot, .flow-run-mode-chooser, .flow-parallel-header-actions, .flow-parallel-header-toolbar, .flow-parallel-collapse-toggle, .flow-parallel-branch-tabs, [data-parallel-branch-focus]",
+      )
+    ) {
+      return;
+    }
+    const nodeId = card.getAttribute("data-node-id");
+    if (nodeId.startsWith("parallel:")) {
+      selectOrchestrationParallelGroup(nodeId.slice("parallel:".length));
+      return;
+    }
+    orchestrationFocusedParallelBranchIndex = null;
+    orchestrationSelectedNodeId = nodeId;
     clearOrchestrationInsertState();
     renderOrchestrationCanvas();
     renderOrchestrationInspector();
+    scrollOrchestrationInspectorIntoView();
   });
 
   qs("#orchestrationInspectorClose")?.addEventListener("click", () => {
@@ -31147,6 +34356,7 @@ function bindOrchestrationEvents() {
   });
 
   bindOrchestrationLaneDragDrop();
+  bindParallelBranchScrollEvents();
 
   if (view.dataset.orchKeyboardBound !== "true") {
     view.dataset.orchKeyboardBound = "true";
@@ -31183,6 +34393,17 @@ function bindOrchestrationEvents() {
         }
       }
       if (!inInput && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        if (orchestrationSelectedNodeId.startsWith("parallel:")) {
+          const located = findOrchestrationParallelItemByGroupId(orchestrationSelectedNodeId.slice("parallel:".length));
+          if (located) {
+            const direction = event.key === "ArrowUp" ? -1 : 1;
+            if (canMoveOrchestrationBuilderItem(located.itemIndex, direction)) {
+              event.preventDefault();
+              moveOrchestrationBuilderItem(located.itemIndex, direction);
+            }
+          }
+          return;
+        }
         const node = getOrchestrationNodeById(orchestrationSelectedNodeId);
         if (node) {
           const direction = event.key === "ArrowUp" ? -1 : 1;
@@ -31193,6 +34414,12 @@ function bindOrchestrationEvents() {
         }
       }
       if (!inInput && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        if (orchestrationSelectedNodeId.startsWith("parallel:")) {
+          const groupId = orchestrationSelectedNodeId.slice("parallel:".length);
+          event.preventDefault();
+          scrollParallelBranches(groupId, event.key === "ArrowLeft" ? -1 : 1);
+          return;
+        }
         const node = getOrchestrationNodeById(orchestrationSelectedNodeId);
         if (node) {
           const direction = event.key === "ArrowLeft" ? -1 : 1;

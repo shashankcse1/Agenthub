@@ -1275,6 +1275,18 @@ a.inline-link-button:hover {
   display: block;
 }
 
+.views-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.flow-orchestration-view.runtime-console-panel[hidden],
+.flow-orchestration-view [data-console-panel][hidden] {
+  display: none !important;
+}
+
 .security-console-tabs,
 .gateway-ops-tabs {
   display: flex;
@@ -2484,12 +2496,6 @@ body[data-theme="light"] a {
     width: 100%;
     flex-wrap: wrap;
   }
-  .sidebar {
-    position: relative;
-    min-height: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--line);
-  }
 
   .card-grid,
   .form-grid,
@@ -2638,6 +2644,13 @@ body[data-theme="light"] .trust-ribbon .status-action {
   flex-shrink: 0;
 }
 
+.flow-orchestration-view .runtime-console-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
 /* Fill viewport — studio workspace grows into remaining page height */
 #mainContent:has(#orchestration.active) {
   display: flex;
@@ -2689,11 +2702,39 @@ body[data-theme="light"] .trust-ribbon .status-action {
   --flow-text-muted: var(--ink-soft);
   --flow-accent-soft: rgba(99, 102, 241, 0.12);
   --flow-accent-border: rgba(99, 102, 241, 0.45);
-  --flow-parallel-text: #a5f3fc;
-  --flow-parallel-text-strong: #ecfeff;
-  --flow-parallel-text-sub: #cffafe;
-  --flow-parallel-branch-bg: rgba(0, 0, 0, 0.18);
-  --flow-parallel-btn-bg: rgba(0, 0, 0, 0.15);
+  --flow-parallel-text: var(--flow-text);
+  --flow-parallel-text-strong: var(--flow-text);
+  --flow-parallel-text-sub: var(--flow-text-muted);
+  --flow-parallel-accent: #818cf8;
+  --flow-parallel-accent-hover: #6366f1;
+  --flow-parallel-accent-border: var(--flow-accent-border);
+  --flow-parallel-accent-border-subtle: rgba(129, 140, 248, 0.28);
+  --flow-parallel-accent-border-strong: rgba(129, 140, 248, 0.55);
+  --flow-parallel-surface-header: rgba(99, 102, 241, 0.16);
+  --flow-parallel-surface-nav: var(--flow-surface-subtle);
+  --flow-parallel-surface-footer: rgba(99, 102, 241, 0.12);
+  --flow-parallel-surface-btn: rgba(99, 102, 241, 0.2);
+  --flow-parallel-surface-btn-hover: rgba(99, 102, 241, 0.32);
+  --flow-parallel-surface-soft: var(--flow-accent-soft);
+  --flow-parallel-on-accent: #ffffff;
+  --flow-parallel-group-bg: linear-gradient(180deg, rgba(99, 102, 241, 0.14) 0%, var(--flow-surface-subtle) 100%);
+  --flow-parallel-nav-bg: var(--flow-surface-subtle);
+  --flow-parallel-icon-bg: linear-gradient(145deg, #818cf8, #6366f1);
+  --flow-parallel-shadow: rgba(99, 102, 241, 0.14);
+  --flow-parallel-shadow-strong: rgba(99, 102, 241, 0.24);
+  --flow-parallel-inset: rgba(255, 255, 255, 0.06);
+  --flow-parallel-rail: rgba(129, 140, 248, 0.48);
+  --flow-parallel-fade: rgba(99, 102, 241, 0.24);
+  --flow-parallel-inspector-pick-bg: var(--flow-surface-subtle);
+  --flow-parallel-branch-bg: var(--flow-surface-raised);
+  --flow-parallel-btn-bg: var(--flow-surface-raised);
+  --flow-parallel-btn-border: var(--flow-border);
+  --flow-parallel-btn-fg: var(--flow-text);
+  --flow-parallel-branch-tone-0: #818cf8;
+  --flow-parallel-branch-tone-1: #a78bfa;
+  --flow-parallel-branch-tone-2: #6366f1;
+  --flow-parallel-branch-tone-3: #8b5cf6;
+  --flow-parallel-branch-tone-4: #c084fc;
   --flow-drop-label: rgba(165, 180, 252, 0.98);
   --flow-insert-bg: rgba(255, 255, 255, 0.05);
   --flow-insert-border: rgba(154, 178, 209, 0.45);
@@ -2720,11 +2761,39 @@ body[data-theme="light"] .flow-orchestration-view {
   --flow-text-muted: #475569;
   --flow-accent-soft: rgba(99, 102, 241, 0.08);
   --flow-accent-border: rgba(99, 102, 241, 0.35);
-  --flow-parallel-text: #0e7490;
-  --flow-parallel-text-strong: #0e7490;
-  --flow-parallel-text-sub: #155e75;
-  --flow-parallel-branch-bg: #ffffff;
-  --flow-parallel-btn-bg: rgba(255, 255, 255, 0.92);
+  --flow-parallel-text: var(--flow-text);
+  --flow-parallel-text-strong: var(--flow-text);
+  --flow-parallel-text-sub: var(--flow-text-muted);
+  --flow-parallel-accent: #6366f1;
+  --flow-parallel-accent-hover: #4f46e5;
+  --flow-parallel-accent-border: var(--flow-accent-border);
+  --flow-parallel-accent-border-subtle: rgba(99, 102, 241, 0.22);
+  --flow-parallel-accent-border-strong: rgba(99, 102, 241, 0.48);
+  --flow-parallel-surface-header: var(--flow-accent-soft);
+  --flow-parallel-surface-nav: var(--flow-surface-subtle);
+  --flow-parallel-surface-footer: var(--flow-accent-soft);
+  --flow-parallel-surface-btn: var(--flow-accent-soft);
+  --flow-parallel-surface-btn-hover: rgba(99, 102, 241, 0.16);
+  --flow-parallel-surface-soft: var(--flow-accent-soft);
+  --flow-parallel-on-accent: #ffffff;
+  --flow-parallel-group-bg: linear-gradient(180deg, var(--flow-accent-soft) 0%, var(--flow-surface-raised) 100%);
+  --flow-parallel-nav-bg: var(--flow-surface-subtle);
+  --flow-parallel-icon-bg: linear-gradient(145deg, #6366f1, #4f46e5);
+  --flow-parallel-shadow: rgba(99, 102, 241, 0.1);
+  --flow-parallel-shadow-strong: rgba(99, 102, 241, 0.16);
+  --flow-parallel-inset: rgba(255, 255, 255, 0.85);
+  --flow-parallel-rail: rgba(99, 102, 241, 0.4);
+  --flow-parallel-fade: rgba(99, 102, 241, 0.12);
+  --flow-parallel-inspector-pick-bg: var(--flow-surface-subtle);
+  --flow-parallel-branch-bg: var(--flow-surface-raised);
+  --flow-parallel-btn-bg: var(--flow-surface-raised);
+  --flow-parallel-btn-border: var(--flow-border);
+  --flow-parallel-btn-fg: var(--flow-text);
+  --flow-parallel-branch-tone-0: #6366f1;
+  --flow-parallel-branch-tone-1: #7c3aed;
+  --flow-parallel-branch-tone-2: #4f46e5;
+  --flow-parallel-branch-tone-3: #8b5cf6;
+  --flow-parallel-branch-tone-4: #a855f7;
   --flow-drop-label: #4338ca;
   --flow-insert-bg: #ffffff;
   --flow-insert-border: rgba(99, 102, 241, 0.35);
@@ -3689,6 +3758,173 @@ body[data-theme="light"] .flow-data-map-code {
   opacity: 0.85;
 }
 
+.flow-data-map-section-lead {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  opacity: 0.78;
+  line-height: 1.4;
+}
+
+.flow-data-map-where {
+  margin: 0 0 0.35rem;
+  font-size: 0.68rem;
+  opacity: 0.82;
+  line-height: 1.35;
+}
+
+.flow-data-map-nested-label {
+  margin: 0.35rem 0 0.15rem;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+}
+
+.flow-mapping-section-intro {
+  margin: 0 0 0.45rem;
+  font-size: 0.72rem;
+  opacity: 0.82;
+  line-height: 1.4;
+}
+
+.flow-mapping-field-hint {
+  display: block;
+  margin: 0.15rem 0 0.35rem;
+  font-size: 0.68rem;
+  opacity: 0.78;
+  line-height: 1.35;
+  font-weight: normal;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.flow-mapping-field {
+  display: block;
+}
+
+.flow-var-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.2rem 0 0.4rem;
+  align-items: center;
+}
+
+.flow-var-picker select {
+  flex: 1 1 7rem;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 0.72rem;
+}
+
+.flow-var-picker-compact {
+  margin: 0.35rem 0 0.5rem;
+}
+
+.flow-var-picker-compact select {
+  flex: 1 1 100%;
+}
+
+.flow-field-helper-row,
+.flow-scope-id-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.2rem 0 0.4rem;
+  align-items: center;
+}
+
+.flow-field-helper-row select,
+.flow-scope-id-controls select,
+.flow-json-path-picker {
+  flex: 1 1 8rem;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 0.72rem;
+}
+
+.flow-scope-id-field input[data-inspector-config-field="scope_id"] {
+  width: 100%;
+}
+
+.flow-mapping-section-tip .inline-link-button {
+  font-size: inherit;
+  padding: 0;
+  vertical-align: baseline;
+}
+
+.flow-output-params-section {
+  border-color: rgba(129, 140, 248, 0.35);
+  background: rgba(99, 102, 241, 0.04);
+}
+
+.flow-output-params-meta {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+}
+
+.flow-output-params-meta div {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0.35rem;
+  align-items: baseline;
+}
+
+.flow-output-params-meta dt {
+  opacity: 0.7;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.flow-output-params-meta dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.flow-output-params-list {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.flow-output-params-list li {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.15rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.12);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+body[data-theme="light"] .flow-output-params-list li {
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.flow-output-params-list li code {
+  font-size: 0.66rem;
+  word-break: break-all;
+}
+
+.flow-output-params-list li span {
+  opacity: 0.78;
+}
+
+.flow-output-params-list-compact {
+  margin-top: 0.35rem;
+}
+
+.flow-output-params-list-compact li {
+  padding: 0.25rem 0.4rem;
+}
+
 .flow-data-map-empty {
   font-size: 0.75rem;
   opacity: 0.78;
@@ -3930,6 +4166,155 @@ body[data-theme="light"] .flow-run-detail {
 .flow-security-card p {
   margin: 0.25rem 0 0;
   font-size: 0.82rem;
+}
+
+.flow-iga-posture-panel {
+  margin-bottom: 0.85rem;
+}
+
+.flow-iga-posture-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.55rem;
+}
+
+.flow-platform-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.55rem;
+  margin: 0.65rem 0 0.85rem;
+}
+
+.flow-platform-stat {
+  border: 1px solid var(--flow-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.65rem;
+  background: var(--flow-surface-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.flow-platform-stat strong {
+  font-size: 1.25rem;
+}
+
+.flow-platform-stat span {
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+.flow-iga-queues-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.flow-iga-queue-table {
+  width: 100%;
+  font-size: 0.82rem;
+}
+
+.gateway-tunnel-panel textarea {
+  width: 100%;
+  margin-top: 0.35rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+}
+
+.flow-iga-card {
+  border: 1px solid var(--flow-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.6rem;
+  background: var(--flow-surface-subtle);
+}
+
+.flow-iga-card h5 {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+}
+
+.flow-iga-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.flow-iga-badge {
+  font-size: 0.68rem;
+  padding: 0.12rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--flow-border-subtle);
+}
+
+.flow-iga-badge.is-on {
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #a7f3d0;
+}
+
+.flow-iga-badge.is-off {
+  opacity: 0.55;
+}
+
+.flow-iga-stage-list {
+  margin: 0;
+  padding-left: 1rem;
+  font-size: 0.82rem;
+}
+
+.flow-iga-help {
+  font-size: 0.82rem;
+  opacity: 0.85;
+  margin: 0 0 0.5rem;
+}
+
+.flow-staged-progress-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.flow-staged-step {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--flow-border-subtle);
+}
+
+.flow-staged-step.is-approved {
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #a7f3d0;
+}
+
+.flow-staged-step.is-pending {
+  opacity: 0.7;
+}
+
+.flow-staged-step.is-rejected {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+}
+
+.flow-jit-access-panel {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--flow-border-subtle);
+}
+
+.flow-certify-queue-form,
+.flow-jit-review-form {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--flow-border-subtle);
+}
+
+.flow-iga-due-cert-card,
+.flow-iga-jit-card {
+  margin-top: 0.5rem;
 }
 
 @media (max-width: 1100px) {
@@ -4583,6 +4968,92 @@ body[data-theme="light"] .flow-orchestration-view .flow-table-search {
   align-items: flex-end;
 }
 
+.flow-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.flow-history-filters label {
+  font-size: 0.78rem;
+  min-width: 10rem;
+}
+
+.flow-access-policy-form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.flow-access-fieldset {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+}
+
+.flow-access-fieldset legend {
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+
+.flow-access-fieldset label {
+  font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.flow-access-policy-card {
+  margin-top: 0.75rem;
+}
+
+.flow-access-policy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.flow-access-policy-preview {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border-subtle, #2a3344);
+  border-radius: 8px;
+  background: var(--surface-elevated, rgba(255, 255, 255, 0.03));
+  font-size: 0.82rem;
+}
+
+.flow-access-policy-preview pre {
+  margin: 0.5rem 0 0;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.flow-data-connections-hint {
+  margin: 0.35rem 0 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text-muted, #9aa4b2);
+}
+
+.audit-filter-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.audit-filter-form label {
+  font-size: 0.78rem;
+  min-width: 9rem;
+}
+
 .flow-approval-filters label {
   font-size: 0.78rem;
   min-width: 10rem;
@@ -5037,10 +5508,10 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
 }
 
 .flow-summary-chip-parallel {
-  border-color: rgba(6, 182, 212, 0.55);
-  background: rgba(6, 182, 212, 0.16);
+  border-color: var(--flow-parallel-accent-border);
+  background: var(--flow-parallel-surface-nav);
   color: var(--flow-parallel-text);
-  box-shadow: 0 0 0 1px rgba(6, 182, 212, 0.12);
+  box-shadow: 0 0 0 1px var(--flow-parallel-accent-border-subtle);
 }
 
 .flow-summary-chip-muted {
@@ -5128,8 +5599,8 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
 
 .flow-run-mode-opt[data-run-mode-pick="parallel"].active,
 .flow-run-mode-opt[data-default-run-mode="parallel"].active {
-  background: rgba(6, 182, 212, 0.12);
-  border-color: rgba(6, 182, 212, 0.45);
+  background: var(--flow-parallel-surface-soft);
+  border-color: var(--flow-parallel-accent-border);
   color: var(--flow-parallel-text-strong);
 }
 
@@ -5150,10 +5621,10 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
   max-width: 22rem;
   padding: 0.55rem 0.75rem;
   margin: 0;
-  border: 1.5px dashed rgba(6, 182, 212, 0.45);
+  border: 1.5px dashed var(--flow-parallel-accent-border);
   border-radius: var(--radius-md);
-  background: rgba(6, 182, 212, 0.08);
-  color: inherit;
+  background: var(--flow-parallel-surface-soft);
+  color: var(--flow-parallel-text-strong);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
@@ -5161,9 +5632,9 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
 
 .flow-add-parallel-btn:hover {
   transform: none;
-  border-color: rgba(6, 182, 212, 0.75);
-  background: rgba(6, 182, 212, 0.14);
-  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.12);
+  border-color: var(--flow-parallel-accent-border-strong);
+  background: var(--flow-parallel-surface-footer);
+  box-shadow: 0 0 0 3px var(--flow-parallel-shadow);
 }
 
 .flow-add-parallel-icon {
@@ -5175,9 +5646,9 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
   place-items: center;
   font-size: 1.1rem;
   font-weight: 700;
-  color: #ecfeff;
-  background: linear-gradient(145deg, rgba(6, 182, 212, 0.85), rgba(8, 145, 178, 0.95));
-  box-shadow: 0 2px 8px rgba(6, 182, 212, 0.35);
+  color: var(--flow-parallel-on-accent);
+  background: var(--flow-parallel-icon-bg);
+  box-shadow: 0 2px 8px var(--flow-parallel-shadow-strong);
 }
 
 .flow-add-parallel-copy {
@@ -5200,11 +5671,454 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
 
 .flow-parallel-group {
   width: 100%;
-  border: 2px solid rgba(6, 182, 212, 0.45);
+  border: 2px solid var(--flow-parallel-accent-border);
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, rgba(6, 182, 212, 0.1) 0%, rgba(6, 182, 212, 0.03) 100%);
-  box-shadow: 0 4px 18px rgba(6, 182, 212, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: var(--flow-parallel-group-bg);
+  box-shadow: 0 4px 18px var(--flow-parallel-shadow), inset 0 1px 0 var(--flow-parallel-inset);
   overflow: visible;
+  cursor: default;
+  color: var(--flow-parallel-text);
+}
+
+.flow-parallel-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--flow-parallel-surface-header);
+  border-bottom: 1px solid var(--flow-parallel-accent-border-subtle);
+}
+
+.flow-parallel-header-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.flow-parallel-header-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.flow-parallel-header-badge {
+  flex-shrink: 0;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--flow-parallel-text-strong);
+  background: var(--flow-parallel-surface-btn);
+  border: 1px solid var(--flow-parallel-accent-border-subtle);
+}
+
+.flow-parallel-branch-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid var(--flow-parallel-accent-border-subtle);
+  background: var(--flow-parallel-nav-bg);
+}
+
+.flow-parallel-branch-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.42rem 0.7rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--flow-parallel-accent-border-subtle);
+  background: var(--flow-parallel-btn-bg);
+  color: var(--flow-parallel-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.12s;
+}
+
+.flow-parallel-branch-tab:hover {
+  border-color: var(--flow-parallel-accent-border);
+  background: var(--flow-parallel-surface-btn-hover);
+}
+
+.flow-parallel-branch-tab.is-active {
+  border-color: var(--flow-parallel-accent-border-strong);
+  background: var(--flow-parallel-accent);
+  color: var(--flow-parallel-on-accent);
+  box-shadow: 0 2px 8px var(--flow-parallel-shadow);
+}
+
+.flow-parallel-branch-tab-num {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.25rem;
+  border-radius: 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.flow-parallel-branch-tab.is-active .flow-parallel-branch-tab-num {
+  background: color-mix(in srgb, var(--flow-parallel-on-accent) 22%, transparent);
+}
+
+.flow-parallel-branch-tab-meta {
+  font-size: 0.65rem;
+  font-weight: 500;
+  opacity: 0.82;
+}
+
+.flow-parallel-branches-wrap.has-tab-mode .flow-parallel-branches {
+  max-width: 100%;
+  padding: 0.75rem;
+  overflow-x: visible;
+  justify-content: center;
+}
+
+.flow-parallel-branches-wrap.has-tab-mode .flow-parallel-branch {
+  flex: 1 1 100%;
+  min-width: min(100%, 22rem);
+  max-width: 22rem;
+}
+
+.flow-parallel-branch.is-branch-tab-hidden {
+  display: none !important;
+}
+
+.flow-parallel-split-rail {
+  position: relative;
+  height: 1.1rem;
+  margin: 0 1.5rem;
+  border-top: 2px solid var(--flow-parallel-rail);
+}
+
+.flow-parallel-rail-label {
+  position: absolute;
+  top: -0.55rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 0.45rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--flow-parallel-text-sub);
+  background: var(--flow-parallel-group-bg);
+}
+
+.flow-parallel-join-title {
+  font-weight: 700;
+  color: var(--flow-parallel-text-strong);
+}
+
+.flow-parallel-branches-wrap {
+  position: relative;
+}
+
+.flow-parallel-branches-wrap.has-scroll-controls .flow-parallel-branches {
+  padding-left: 2.1rem;
+  padding-right: 2.1rem;
+}
+
+.flow-parallel-branches-wrap.has-scroll-controls {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.flow-parallel-header-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--flow-parallel-accent-border-subtle);
+  background: var(--flow-parallel-nav-bg);
+}
+
+.flow-parallel-header-nav-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.flow-parallel-header-nav-btn {
+  flex-shrink: 0;
+  min-width: 2.5rem;
+  height: 2.35rem;
+  padding: 0 0.55rem;
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
+  font-weight: 800;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  background: var(--flow-parallel-accent);
+  border: 1px solid var(--flow-parallel-accent-border-strong);
+  color: var(--flow-parallel-on-accent);
+  cursor: pointer;
+  box-shadow: 0 2px 8px var(--flow-parallel-shadow);
+  transition: background 0.15s, transform 0.12s, opacity 0.15s;
+}
+
+.flow-parallel-header-nav-btn:hover:not(:disabled) {
+  background: var(--flow-parallel-accent-hover);
+  transform: translateY(-1px);
+}
+
+.flow-parallel-header-nav-btn:disabled {
+  opacity: 0.28;
+  cursor: default;
+  box-shadow: none;
+}
+
+.flow-parallel-header-nav-label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--flow-parallel-text-sub);
+  text-align: center;
+}
+
+.flow-parallel-header-nav-label strong {
+  color: var(--flow-parallel-text-strong);
+  font-size: 0.88rem;
+}
+
+.flow-parallel-branch-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.flow-parallel-branch-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--flow-parallel-surface-btn);
+  cursor: pointer;
+  transition: transform 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.flow-parallel-branch-dot:hover {
+  transform: scale(1.15);
+  background: var(--flow-parallel-accent);
+}
+
+.flow-parallel-branch-dot.is-active {
+  width: 1.35rem;
+  background: var(--flow-parallel-accent);
+  box-shadow: 0 0 0 2px var(--flow-parallel-accent-border-subtle);
+}
+
+.flow-parallel-group[data-branch-count="3"] .flow-parallel-branches,
+.flow-parallel-group[data-branch-count="4"] .flow-parallel-branches,
+.flow-parallel-group[data-branch-count="5"] .flow-parallel-branches {
+  width: 100%;
+  max-width: min(100%, calc(2 * 14.15rem + 0.75rem));
+  margin-left: auto;
+  margin-right: auto;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.flow-parallel-branches-wrap.show-scroll-arrows .flow-parallel-scroll-edge {
+  display: grid;
+  top: 50%;
+}
+
+.flow-parallel-scroll-edge {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 4;
+  width: 2rem;
+  height: 3.25rem;
+  padding: 0;
+  display: none;
+  place-items: center;
+  font-size: 1.35rem;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  background: var(--flow-parallel-accent);
+  border: 1px solid var(--flow-parallel-accent-border-strong);
+  color: var(--flow-parallel-on-accent);
+  box-shadow: 0 2px 12px var(--flow-parallel-shadow-strong);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s, opacity 0.15s;
+}
+
+.flow-parallel-scroll-edge--left {
+  left: 0.35rem;
+}
+
+.flow-parallel-scroll-edge--right {
+  right: 0.35rem;
+}
+
+.flow-parallel-scroll-edge:hover:not(:disabled) {
+  background: var(--flow-parallel-accent-hover);
+  transform: translateY(-50%) scale(1.04);
+}
+
+.flow-parallel-scroll-edge:disabled {
+  opacity: 0.35;
+  cursor: default;
+  box-shadow: none;
+}
+
+.flow-parallel-scroll-hint {
+  display: none;
+  margin: 0;
+  padding: 0.35rem 0.75rem 0.15rem;
+  font-size: 0.68rem;
+  text-align: center;
+  color: var(--flow-parallel-text-sub);
+  opacity: 0.85;
+}
+
+.flow-parallel-branches-wrap.has-overflow .flow-parallel-scroll-hint {
+  display: block;
+}
+
+.flow-parallel-branches-wrap.has-scroll-controls.has-overflow::before,
+.flow-parallel-branches-wrap.has-scroll-controls.has-overflow::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 1.6rem;
+  width: 1.75rem;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.flow-parallel-branches-wrap.has-scroll-controls.can-scroll-left::before {
+  left: 0;
+  background: linear-gradient(90deg, var(--flow-parallel-fade), transparent);
+}
+
+.flow-parallel-branches-wrap.has-scroll-controls.can-scroll-right::after {
+  right: 0;
+  background: linear-gradient(270deg, var(--flow-parallel-fade), transparent);
+}
+
+.flow-inspector-parallel-badge {
+  margin-bottom: 0.5rem;
+  --node-accent: var(--flow-parallel-accent);
+}
+
+.flow-inspector-parallel-branch-list {
+  margin: 0.5rem 0 0.75rem;
+  padding-left: 0;
+  list-style: none;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.flow-inspector-parallel-branch-list li {
+  margin-bottom: 0.35rem;
+}
+
+.flow-inspector-parallel-branch-list li.is-focused .flow-inspector-parallel-branch-pick {
+  border-color: var(--flow-parallel-accent-border-strong);
+  background: var(--flow-parallel-surface-nav);
+}
+
+.flow-inspector-parallel-branch-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--flow-border-subtle);
+  background: var(--flow-parallel-inspector-pick-bg);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--flow-text);
+}
+
+.flow-inspector-parallel-branch-pick:hover {
+  border-color: var(--flow-parallel-accent-border);
+}
+
+.flow-inspector-branch-order {
+  margin-bottom: 0.5rem;
+}
+
+.flow-inspector-meta-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+}
+
+.flow-inspector-meta-list div {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.flow-inspector-meta-list dt {
+  margin: 0;
+  opacity: 0.72;
+  font-weight: 600;
+}
+
+.flow-inspector-meta-list dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.flow-parallel-join-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--flow-parallel-text);
+  background: var(--flow-parallel-surface-footer);
+  border-top: 1px solid var(--flow-parallel-accent-border-subtle);
+  cursor: pointer;
+  width: 100%;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  font: inherit;
+  text-align: center;
+}
+
+.flow-parallel-join-footer > span:first-of-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.flow-parallel-join-main {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  font-weight: 600;
 }
 
 .flow-parallel-body {
@@ -5212,19 +6126,8 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
 }
 
 .flow-parallel-group.selected {
-  outline: 2px solid rgba(6, 182, 212, 0.75);
-  box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.15), 0 8px 24px rgba(6, 182, 212, 0.12);
-}
-
-.flow-parallel-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem 0.75rem;
-  padding: 0.7rem 0.85rem;
-  background: rgba(6, 182, 212, 0.22);
-  border-bottom: 1px solid rgba(6, 182, 212, 0.35);
+  outline: 2px solid var(--flow-parallel-accent-border-strong);
+  box-shadow: 0 0 0 4px var(--flow-parallel-shadow), 0 8px 24px var(--flow-parallel-shadow-strong);
 }
 
 .flow-parallel-header-title {
@@ -5232,6 +6135,20 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
   align-items: center;
   gap: 0.6rem;
   min-width: 0;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  color: var(--flow-parallel-text-strong);
+  font: inherit;
+  flex: 1 1 auto;
+}
+
+.flow-parallel-header-title:hover .flow-parallel-header-copy strong {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .flow-parallel-header-icon {
@@ -5243,9 +6160,9 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
   place-items: center;
   font-size: 1.15rem;
   font-weight: 700;
-  color: #ecfeff;
-  background: linear-gradient(145deg, rgba(6, 182, 212, 0.9), rgba(8, 145, 178, 1));
-  box-shadow: 0 2px 10px rgba(6, 182, 212, 0.4);
+  color: var(--flow-parallel-on-accent);
+  background: var(--flow-parallel-icon-bg);
+  box-shadow: 0 2px 10px var(--flow-parallel-shadow-strong);
 }
 
 .flow-parallel-header-copy {
@@ -5281,26 +6198,31 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
 
 .flow-parallel-add-branch,
 .flow-parallel-remove-branch,
-.flow-parallel-dissolve {
+.flow-parallel-dissolve,
+.flow-parallel-details {
   font-size: 0.72rem;
-  padding: 0.28rem 0.55rem;
-  border-color: rgba(6, 182, 212, 0.35);
+  padding: 0.32rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--flow-parallel-btn-border);
   background: var(--flow-parallel-btn-bg);
-  color: var(--flow-text);
+  color: var(--flow-parallel-btn-fg);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.flow-parallel-details {
+  font-weight: 600;
+  border-color: var(--flow-parallel-accent-border);
+  background: var(--flow-parallel-surface-btn);
+  color: var(--flow-parallel-text-strong);
 }
 
 .flow-parallel-add-branch:hover,
 .flow-parallel-remove-branch:hover,
-.flow-parallel-dissolve:hover {
-  background: rgba(6, 182, 212, 0.2);
-  border-color: rgba(6, 182, 212, 0.55);
-}
-
-.flow-parallel-split-rail {
-  height: 0.85rem;
-  margin: 0 2rem;
-  border-top: 2px solid rgba(6, 182, 212, 0.5);
-  position: relative;
+.flow-parallel-dissolve:hover,
+.flow-parallel-details:hover {
+  background: var(--flow-parallel-surface-btn-hover);
+  border-color: var(--flow-parallel-accent-border-strong);
+  color: var(--flow-parallel-text-strong);
 }
 
 .flow-parallel-split-rail::after {
@@ -5312,8 +6234,8 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  background: rgba(6, 182, 212, 0.95);
-  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.2);
+  background: var(--flow-parallel-accent);
+  box-shadow: 0 0 0 3px var(--flow-parallel-shadow);
 }
 
 .flow-parallel-split-rail-join {
@@ -5328,8 +6250,12 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
   align-items: stretch;
   padding: 0.65rem 0.75rem 0.5rem;
   overflow-x: auto;
+  overflow-y: visible;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
 }
 
 .flow-parallel-group[data-branch-count="2"] .flow-parallel-branches {
@@ -5341,56 +6267,169 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
   min-width: 12rem;
 }
 
+.flow-parallel-branch--tone-0 {
+  --branch-accent: var(--flow-parallel-branch-tone-0);
+}
+
+.flow-parallel-branch--tone-1 {
+  --branch-accent: var(--flow-parallel-branch-tone-1);
+}
+
+.flow-parallel-branch--tone-2 {
+  --branch-accent: var(--flow-parallel-branch-tone-2);
+}
+
+.flow-parallel-branch--tone-3 {
+  --branch-accent: var(--flow-parallel-branch-tone-3);
+}
+
+.flow-parallel-branch--tone-4 {
+  --branch-accent: var(--flow-parallel-branch-tone-4);
+}
+
 .flow-parallel-branch {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  flex: 0 0 12.5rem;
-  min-width: 12.5rem;
-  max-width: 16rem;
-  padding: 0.55rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(6, 182, 212, 0.28);
-  border-top: 3px solid rgba(6, 182, 212, 0.65);
-  background: var(--flow-parallel-branch-bg);
+  flex: 0 0 13.5rem;
+  min-width: 13.5rem;
+  max-width: 17rem;
+  scroll-snap-align: start;
+  border-radius: calc(var(--radius-sm) + 2px);
+  border: 1px solid color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 35%, var(--flow-border-subtle));
+  border-top: 3px solid var(--branch-accent, var(--flow-parallel-accent));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 12%, var(--flow-parallel-branch-bg)) 0%,
+    var(--flow-parallel-branch-bg) 100%
+  );
+  box-shadow: var(--flow-shadow);
   overflow: visible;
+  transition: box-shadow 0.18s, transform 0.18s, border-color 0.18s;
 }
 
-.flow-parallel-branch-label {
+.flow-parallel-branch:hover {
+  box-shadow: var(--flow-shadow-lg);
+}
+
+.flow-parallel-branch.is-branch-active {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 55%, transparent),
+    var(--flow-shadow-lg);
+  transform: translateY(-1px);
+}
+
+.flow-parallel-branch.is-branch-focused {
+  outline: 2px solid color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.flow-parallel-branch-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  font-size: 0.72rem;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.55rem 0.6rem;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 22%, var(--flow-border-subtle));
+  background: color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 10%, var(--flow-parallel-branch-bg));
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  border-radius: calc(var(--radius-sm) + 2px) calc(var(--radius-sm) + 2px) 0 0;
+  transition: background 0.15s;
+}
+
+.flow-parallel-branch-head:hover {
+  background: color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 18%, var(--flow-parallel-branch-bg));
+}
+
+.flow-parallel-branch-head-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  min-width: 0;
+}
+
+.flow-parallel-branch-title {
+  font-size: 0.78rem;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--flow-parallel-text);
-  margin-bottom: 0.35rem;
-  padding-bottom: 0.35rem;
-  border-bottom: 1px solid rgba(6, 182, 212, 0.2);
+  letter-spacing: 0.03em;
+  color: var(--flow-parallel-text-strong);
+  line-height: 1.2;
+}
+
+.flow-parallel-branch-meta {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--flow-parallel-text-sub);
+  opacity: 0.9;
+}
+
+.flow-parallel-branch.has-steps .flow-parallel-branch-meta {
+  color: color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 80%, var(--flow-parallel-text-sub));
+}
+
+.flow-parallel-branch-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0.45rem 0.5rem 0.55rem;
+  gap: 0;
 }
 
 .flow-parallel-branch-num {
+  flex-shrink: 0;
   display: inline-grid;
   place-items: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  background: rgba(6, 182, 212, 0.35);
-  color: #ecfeff;
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  background: var(--branch-accent, var(--flow-parallel-accent));
+  color: var(--flow-parallel-on-accent);
+  box-shadow: 0 2px 6px var(--flow-parallel-shadow);
 }
 
 .flow-parallel-branch-empty {
-  margin: 0.5rem 0 0.35rem;
-  font-size: 0.72rem;
-  opacity: 0.65;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0.25rem;
+  padding: 1.1rem 0.75rem;
   text-align: center;
   line-height: 1.4;
-  padding: 0.35rem;
-  border: 1px dashed rgba(154, 178, 209, 0.2);
+  border: 1.5px dashed color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 35%, var(--flow-border-subtle));
   border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 8%, var(--flow-parallel-branch-bg));
+}
+
+.flow-parallel-branch-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--branch-accent, var(--flow-parallel-accent));
+  background: color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 18%, var(--flow-parallel-branch-bg));
+  margin-bottom: 0.1rem;
+}
+
+.flow-parallel-branch-empty strong {
+  font-size: 0.8rem;
+  color: var(--flow-parallel-text-strong);
+}
+
+.flow-parallel-branch-empty span:last-child {
+  font-size: 0.72rem;
+  opacity: 0.78;
+  color: var(--flow-parallel-text-sub);
+  max-width: 14rem;
 }
 
 .flow-parallel-branch .flow-lane-step {
@@ -5406,17 +6445,12 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
   padding: 0.2rem 0;
 }
 
-.flow-parallel-join-footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  padding: 0.55rem 0.85rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--flow-parallel-text);
-  background: rgba(6, 182, 212, 0.14);
-  border-top: 1px solid rgba(6, 182, 212, 0.3);
+.flow-parallel-join-hint {
+  display: block;
+  font-size: 0.68rem;
+  opacity: 0.72;
+  font-weight: 500;
+  color: var(--flow-parallel-text-sub);
 }
 
 .flow-parallel-join-icon {
@@ -5425,8 +6459,16 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
   width: 1.35rem;
   height: 1.35rem;
   border-radius: 999px;
-  background: rgba(6, 182, 212, 0.35);
+  background: var(--flow-parallel-surface-btn);
+  color: var(--flow-parallel-text-strong);
   font-size: 0.85rem;
+}
+
+.flow-parallel-collapse-toggle {
+  font-size: 0.72rem;
+  padding: 0.28rem 0.55rem;
+  color: var(--flow-parallel-text-sub);
+  border-color: var(--flow-parallel-btn-border);
 }
 
 .flow-widget-help {
@@ -5542,33 +6584,12 @@ body.flow-drag-active .flow-toolkit-item:not(.is-dragging) {
   opacity: 0.6;
 }
 
-body[data-theme="light"] .flow-orchestration-view .flow-parallel-group {
-  background: linear-gradient(180deg, rgba(6, 182, 212, 0.08) 0%, rgba(255, 255, 255, 0.95) 100%);
-  border-color: rgba(6, 182, 212, 0.4);
-  box-shadow: 0 4px 16px rgba(6, 182, 212, 0.08);
-}
-
-body[data-theme="light"] .flow-orchestration-view .flow-parallel-header {
-  background: rgba(6, 182, 212, 0.12);
-  border-bottom-color: rgba(6, 182, 212, 0.25);
-}
-
 body[data-theme="light"] .flow-orchestration-view .flow-parallel-branch {
-  border-color: rgba(6, 182, 212, 0.28);
-  border-top-color: rgba(6, 182, 212, 0.55);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
 }
 
-body[data-theme="light"] .flow-orchestration-view .flow-parallel-join-footer {
-  background: rgba(6, 182, 212, 0.08);
-}
-
-body[data-theme="light"] .flow-orchestration-view .flow-add-parallel-btn {
-  background: rgba(6, 182, 212, 0.06);
-  border-color: rgba(6, 182, 212, 0.35);
-}
-
-body[data-theme="light"] .flow-orchestration-view .flow-summary-chip-parallel {
-  background: rgba(6, 182, 212, 0.1);
+body[data-theme="light"] .flow-orchestration-view .flow-parallel-branch-head {
+  background: color-mix(in srgb, var(--branch-accent, var(--flow-parallel-accent)) 8%, var(--flow-parallel-branch-bg));
 }
 
 body[data-theme="light"] .flow-orchestration-view .flow-template-card {
@@ -5777,9 +6798,4 @@ body[data-theme="light"] .flow-orchestration-view .flow-template-card {
 
 .flow-parallel-group.is-collapsed .flow-parallel-body {
   display: none;
-}
-
-.flow-parallel-collapse-toggle {
-  font-size: 0.72rem;
-  padding: 0.28rem 0.55rem;
 }

@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.policy_constants import ROLE_PLATFORM_ADMIN, ROLE_SECURITY_APPROVER
+from tests.conftest import response_error_message
 
 client = TestClient(app)
 
@@ -66,7 +67,7 @@ def test_runtime_config_upsert_rejects_invalid_structured_value():
         headers=_admin_headers("admin-rc-upsert-invalid"),
     )
     assert response.status_code == 400
-    assert "between 1 and 500" in str(response.json()["detail"])
+    assert "must be between" in response_error_message(response)
 
 
 def test_runtime_config_validate_rejects_invalid_gateway_defaults():
@@ -413,3 +414,83 @@ def test_runtime_config_upsert_and_delete_emit_cache_invalidation_audit_events()
     )
     assert cache_audit.status_code == 200
     assert len(cache_audit.json()) >= 2
+
+
+def _super_admin_headers(actor_id: str) -> dict[str, str]:
+    return {"X-Actor-Role": "Super Admin", "X-Actor-Id": actor_id}
+
+
+def test_validation_rules_endpoint_includes_catalog_metadata():
+    response = client.get(
+        "/runtime-config/validation-rules",
+        headers=_admin_headers("admin-rc-rules-meta"),
+    )
+    assert response.status_code == 200
+    rules = response.json().get("rules") or []
+    gateway_rule = next(rule for rule in rules if rule.get("key") == "gateway.default_global_timeout_ms")
+    assert gateway_rule.get("rule_id") == "key:gateway.default_global_timeout_ms"
+    assert gateway_rule.get("source") == "builtin"
+
+
+def test_platform_admin_cannot_create_validation_rule():
+    response = client.post(
+        "/runtime-config/validation-rules",
+        json={"key": "custom.test.limit", "type": "int", "min": 1, "max": 5},
+        headers=_admin_headers("admin-rc-rule-deny"),
+    )
+    assert response.status_code == 403
+
+
+def test_super_admin_can_update_builtin_rule_and_validation_uses_catalog():
+    rule_id = "key:observability.logs.default_limit"
+    update = client.put(
+        f"/runtime-config/validation-rules/{rule_id}",
+        json={"key": "observability.logs.default_limit", "type": "int", "min": 1, "max": 100},
+        headers=_super_admin_headers("super-rc-rule-update"),
+    )
+    assert update.status_code == 200
+    assert update.json()["max"] == 100
+
+    validate = client.post(
+        "/runtime-config/validate",
+        json={"config_key": "observability.logs.default_limit", "config_value": "150"},
+        headers=_admin_headers("admin-rc-rule-updated"),
+    )
+    assert validate.status_code == 200
+    assert validate.json()["valid"] is False
+    assert "between 1 and 100" in validate.json()["error"]
+
+
+def test_super_admin_can_create_and_delete_custom_validation_rule():
+    create = client.post(
+        "/runtime-config/validation-rules",
+        json={
+            "key": "custom.operator.test_flag",
+            "type": "boolean_like",
+            "description": "custom test flag",
+        },
+        headers=_super_admin_headers("super-rc-rule-custom"),
+    )
+    assert create.status_code == 200
+    rule_id = create.json()["rule_id"]
+    assert create.json()["source"] == "custom"
+
+    validate = client.post(
+        "/runtime-config/validate",
+        json={"config_key": "custom.operator.test_flag", "config_value": "maybe"},
+        headers=_admin_headers("admin-rc-rule-custom"),
+    )
+    assert validate.status_code == 200
+    assert validate.json()["valid"] is False
+
+    delete_builtin = client.delete(
+        "/runtime-config/validation-rules/key:gateway.default_global_timeout_ms",
+        headers=_super_admin_headers("super-rc-rule-delete-builtin"),
+    )
+    assert delete_builtin.status_code == 400
+
+    deleted = client.delete(
+        f"/runtime-config/validation-rules/{rule_id}",
+        headers=_super_admin_headers("super-rc-rule-delete-custom"),
+    )
+    assert deleted.status_code == 200

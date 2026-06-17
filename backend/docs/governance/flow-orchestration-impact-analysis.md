@@ -40,10 +40,35 @@ Documents the n8n-style Flow Orchestration domain: multi-step workflow definitio
 
 ### Authz and least privilege
 
+Platform roles (unchanged baseline):
+
 - **Read** (`GET /orchestration/*`): Platform Admin, Super Admin, Master Admin, Auditor, AI Ops Approver.
 - **Write** (`POST/PUT/DELETE /orchestration/flows*`): Platform Admin, Super Admin, Master Admin, Release Manager.
 - **Run** (`POST .../run`): Platform Admin, Super Admin, Master Admin, AI Ops Approver.
 - **Approve prod** (`POST .../approve`): Security Approver with production dual-approval headers.
+
+**Per-flow access policy** (`access_policy_json` on each flow, Security tab in Flow Studio):
+
+| Action | Policy block | Enforced on |
+|---|---|---|
+| Create / edit / delete / validate | `owners` (users, groups, teams) | Flow mutations |
+| Execute | `runners` | `POST .../run` |
+| Schedule management | `schedulers` | Schedule trigger edits + scheduled runs |
+| Approve | `approvers.clauses` + `match` (`any` \| `all`) | `POST .../approve` |
+
+Match semantics per block:
+
+- **`any`**: actor matches if listed in any non-empty users/groups/teams dimension.
+- **`all`**: actor must match every non-empty dimension in the block.
+- **Approvers `match: all`**: actor must satisfy every clause; **`any`**: any one clause is enough.
+
+Empty lists in a block = no extra restriction (platform role still required). Platform Admin / Super Admin / Master Admin bypass flow scope checks.
+
+Directory membership resolves via `directory_group_memberships` and `directory_team_memberships`.
+
+**Advanced IGA** (see `flow-orchestration-iga-impact-analysis.md`, GOV-FLOW-IGA-001): SoD rules under `access_policy_json.iga.sod`, staged approvers (`mode: staged`), JIT access requests, access policy certification (prod run gate), optional `iga.entitlement_id` bridge to `GatewayEntitlement`, and `OrchestrationFlowApprovalEvent` audit trail.
+
+**Dynamic scope resolution** (approver/runner/owner blocks): optional `resolve_from` on scope specs supports `database_query` (via `orchestration.data_connections_json` registry + built-in `platform` connection) and `http_json` (allowlisted hosts). Operators preview merged scopes with `POST /orchestration/flows/{flow_id}/access-policy/resolve`; connections listed at `GET /orchestration/data-connections`; read-only SQL probe at `POST /orchestration/data-connections/{connection_id}/test-query` (Security tab **Data connection test query** panel). Console counts at `GET /orchestration/summary` (Overview card + Flow Orchestration summary grid).
 
 ### Secret handling
 
@@ -91,13 +116,13 @@ Flow Studio HTTP widget inspector exposes auth type + binding picker; validate r
 
 ### Residual risk
 
-- Phase 1 executor is simulated/stub for several node types; production automation requires Phase 2 live runtime.
+- Phase 1 executor simulated dry-run paths remain for validation; live executor covers gateway-backed nodes including notifications and human approval pause/resume.
 - Visual canvas not available; misconfiguration risk mitigated by validate endpoint and audit trail.
 
 ### Go/no-go (Phase 1)
 
-**Go** for operator design, validation, approval workflow, audit evidence, and stub execution in non-prod.
-**No-go** for unattended prod automation until Phase 2 live executor and canvas UX ship (tracked as RSK-018).
+**Go** for operator design, validation, approval workflow, audit evidence, and live executor in non-prod when `orchestration.live_executor_enabled` is set.
+**Conditional go** for unattended prod automation — requires `orchestration.live_executor_prod_enabled` and flow approval (RSK-018 partial).
 
 ## Cloud Engineer
 
@@ -146,10 +171,27 @@ Flow Studio HTTP widget inspector exposes auth type + binding picker; validate r
 ## Phase 2 Deferred
 
 - Visual drag-drop canvas builder (current UI: step/chain builder only).
-- **Live condition evaluation** against prior step outputs (`jsonPath(steps['node-id'].output, '$.path')` expression contract); Phase 1 stores config and simulates `matched: true`.
+- **Production live executor default-off** — enable via `orchestration.live_executor_prod_enabled` after review; dev/staging uses `orchestration.live_executor_enabled`.
+- **HTTP auth binding resolution** at runtime (`auth_binding_id` stored; bearer/basic/api_key/OIDC not yet injected on outbound calls).
 - **Dynamic approver resolution** from prior step JSON paths at run time (config fields exist; runtime resolver deferred).
-- Live MCP/HTTP/LLM execution engine with queue workers and step output propagation.
 - Webhook ingress router binding to flow triggers.
+- Live email/SMS provider delivery via `gateway_notification_delivery` (RSK-019 partial — rate limits deferred).
+
+## Phase 1.5 — Live executor (shipped, opt-in)
+
+Runtime config keys (Runtime Config Studio):
+
+| Key | Default | Purpose |
+|---|---|---|
+| `orchestration.live_executor_enabled` | `false` | When `true`, non-dry-run executes gateway-backed nodes instead of pure stubs |
+| `orchestration.live_executor_prod_enabled` | `false` | Additional gate for `environment=prod` |
+| `orchestration.live_executor_max_wait_seconds` | `30` | Caps `wait_delay` sleep in live mode |
+
+Live node types: `llm_chat`, `embedding_create`, `rag_query`, `vector_query`, `vector_ingest`, `guardrail_evaluate`, `memory_read`, `memory_write`, `mcp_tool`, `wait_delay`, `condition`, `http_request` (allowlist enforced).
+
+Still simulated in dry-run mode only. Live executor covers `email_send`, `sms_send`, and `human_approval` pause/resume when enabled.
+
+Step output propagation: `{{steps['node-id'].output}}` and `{{input}}` template resolution against prior step outputs.
 
 ## Parallel execution (Phase 1 — shipped)
 

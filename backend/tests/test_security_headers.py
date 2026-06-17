@@ -37,7 +37,7 @@ def test_health_response_includes_transport_security_headers():
     assert response.headers.get("X-Content-Type-Options") == "nosniff"
     assert response.headers.get("X-Frame-Options") == "DENY"
     assert response.headers.get("Referrer-Policy") == "no-referrer"
-    assert response.headers.get("Permissions-Policy") == "camera=(), microphone=(), geolocation=()"
+    assert response.headers.get("Permissions-Policy") == "camera=(self), microphone=(self), geolocation=()"
     assert response.headers.get("Strict-Transport-Security") == "max-age=63072000; includeSubDomains; preload"
 
 
@@ -54,7 +54,7 @@ def test_cors_preflight_allows_browser_put_for_supported_model_updates(monkeypat
         headers={
             "Origin": "http://127.0.0.1:4173",
             "Access-Control-Request-Method": "PUT",
-            "Access-Control-Request-Headers": "content-type,x-actor-id,x-actor-role,x-mfa-verified",
+            "Access-Control-Request-Headers": "content-type,x-actor-id,x-actor-role,x-approver-id,x-approver-role,x-mfa-verified",
         },
     )
 
@@ -62,3 +62,27 @@ def test_cors_preflight_allows_browser_put_for_supported_model_updates(monkeypat
     assert response.headers.get("Access-Control-Allow-Origin") == "http://127.0.0.1:4173"
     allow_methods = response.headers.get("Access-Control-Allow-Methods") or ""
     assert "PUT" in allow_methods
+    allow_headers = (response.headers.get("Access-Control-Allow-Headers") or "").lower()
+    assert "x-approver-id" in allow_headers
+    assert "x-approver-role" in allow_headers
+
+
+def test_cors_preflight_allows_null_origin_for_file_opened_ui(monkeypatch: pytest.MonkeyPatch):
+    main_module = _reload_main(
+        monkeypatch,
+        APP_ENV="local",
+        CORS_ALLOW_ORIGINS="http://127.0.0.1:4173",
+    )
+    client = TestClient(main_module.app)
+
+    response = client.options(
+        "/gateway/cursor-token",
+        headers={
+            "Origin": "null",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "x-actor-id,x-actor-role,x-approver-id,x-approver-role",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("Access-Control-Allow-Origin") == "null"
