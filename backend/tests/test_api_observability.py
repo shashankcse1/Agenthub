@@ -91,7 +91,12 @@ def test_agentic_policy_auto_tune_apply_emits_audit_event():
     )
     assert audit.status_code == 200
     events = audit.json()
-    assert any(event["actor_id"] == "platform-audit-1" for event in events)
+    assert any(
+        event.get("action_type") == "agentic.policy.auto_tune"
+        and event.get("resource_type") == "route_policy"
+        and event.get("decision_outcome") == "allow"
+        for event in events
+    )
 
 
 def test_benchmark_cancel_emits_request_time_audit_event():

@@ -799,17 +799,16 @@ def auto_tune_policies(
         )
 
     if not payload.dry_run:
-        if changed_count > 0:
-            create_audit_event(
-                db,
-                actor_id=ctx.actor_id,
-                action_type="agentic.policy.auto_tune",
-                resource_type="route_policy",
-                resource_id=f"auto-tune:{payload.environment}",
-                trace_id=f"trace-auto-tune-{payload.environment}",
-                decision_outcome="allow",
-                environment=payload.environment,
-            )
+        create_audit_event(
+            db,
+            actor_id=ctx.actor_id,
+            action_type="agentic.policy.auto_tune",
+            resource_type="route_policy",
+            resource_id=f"auto-tune:{payload.environment}",
+            trace_id=f"trace-auto-tune-{payload.environment}",
+            decision_outcome="allow",
+            environment=payload.environment,
+        )
         db.commit()
     logger.info(
         "agentic_policy_auto_tune_completed %s",
