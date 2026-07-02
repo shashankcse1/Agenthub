@@ -85,6 +85,8 @@ def openai_vector_store_get(
     require_role(ctx, _RAG_READ_ROLES)
     trace_id = f"trace-gateway-vector-store-get-{uuid4()}"
     store = get_vector_store_by_id(db, store_id)
+    if not store:
+        raise HTTPException(status_code=404, detail="Vector store not found.")
     create_audit_event(
         db,
         actor_id=ctx.actor_id,
