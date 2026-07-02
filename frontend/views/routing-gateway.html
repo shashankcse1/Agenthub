@@ -1631,9 +1631,27 @@
                 <button id="testGatewayVectorStoreHealth" type="button" class="ghost">Test Selected Store</button>
                 <button id="loadOpenAiVectorStoreDetail" type="button" class="ghost">Inspect OpenAI Store</button>
                 <button id="createGatewayVectorStore" type="button" class="ghost">Create Store</button>
+                <button id="openCreateVectorStoreModal" type="button" class="ghost">Create Vector Store</button>
               </div>
             </div>
             <p class="mono">Supported types: pgvector, qdrant, pinecone, mongodb_atlas, weaviate, chroma, redis, custom_http, mcp_bridge. API keys use <strong>secret refs</strong> only — store values in <a href="#" id="jumpGatewayVectorStoreSecrets">Providers → Store Secret Value</a>, then bind each row’s Secret Backend + Secret Ref.</p>
+            <div id="createVectorStoreModal" class="modal">
+              <div class="modal-content">
+                <span class="close-button">&times;</span>
+                <h2>Create Vector Store</h2>
+                <form id="vectorStoreForm">
+                  <label for="storeName">Store Name:</label>
+                  <input type="text" id="storeName" name="storeName" required>
+                  <label for="storeType">Store Type:</label>
+                  <select id="storeType" name="storeType" required>
+                    <option value="pgvector">pgvector</option>
+                    <option value="qdrant">qdrant</option>
+                    <!-- Add other options as needed -->
+                  </select>
+                  <button type="submit">Create Store</button>
+                </form>
+              </div>
+            </div>
             <div class="wide-field operator-panel">
               <h4>Create Vector Store</h4>
               <form id="createVectorStoreForm">
