@@ -1634,6 +1634,14 @@
               </div>
             </div>
             <p class="mono">Supported types: pgvector, qdrant, pinecone, mongodb_atlas, weaviate, chroma, redis, custom_http, mcp_bridge. API keys use <strong>secret refs</strong> only — store values in <a href="#" id="jumpGatewayVectorStoreSecrets">Providers → Store Secret Value</a>, then bind each row’s Secret Backend + Secret Ref.</p>
+            <div class="wide-field operator-panel">
+              <h4>Create Vector Store</h4>
+              <form id="createVectorStoreForm">
+                <label>Type<input name="type" placeholder="qdrant" /></label>
+                <label>Provider ID<input name="provider_id" placeholder="provider-1" /></label>
+                <button type="submit" class="ghost">Create</button>
+              </form>
+            </div>
             <datalist id="gatewayVectorStoreSecretRefOptions">
               <option value="pgvector">pgvector</option>
               <option value="qdrant">qdrant</option>
