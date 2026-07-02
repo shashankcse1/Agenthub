@@ -1626,14 +1626,31 @@
             <div class="wide-field route-priority-chain">
               <div class="card-head route-priority-chain-head">
                 <h4>Vector Store Registry</h4>
-                <div class="inline-actions">
-                  <button id="addGatewayVectorStoreRow" type="button" class="ghost">Add Store</button>
-                  <button id="testGatewayVectorStoreHealth" type="button" class="ghost">Test Selected Store</button>
-                  <button id="loadOpenAiVectorStoreDetail" type="button" class="ghost">Inspect OpenAI Store</button>
-                </div>
+              <div class="inline-actions">
+                <button id="addGatewayVectorStoreRow" type="button" class="ghost">Add Store</button>
+                <button id="testGatewayVectorStoreHealth" type="button" class="ghost">Test Selected Store</button>
+                <button id="loadOpenAiVectorStoreDetail" type="button" class="ghost">Inspect OpenAI Store</button>
+                <button id="createGatewayVectorStore" type="button" class="ghost">Create Store</button>
               </div>
-              <p class="mono">Supported types: pgvector, qdrant, pinecone, mongodb_atlas, weaviate, chroma, redis, custom_http, mcp_bridge. API keys use <strong>secret refs</strong> only — store values in <a href="#" id="jumpGatewayVectorStoreSecrets">Providers → Store Secret Value</a>, then bind each row’s Secret Backend + Secret Ref.</p>
-              <datalist id="gatewayVectorStoreSecretRefOptions">
+            </div>
+            <p class="mono">Supported types: pgvector, qdrant, pinecone, mongodb_atlas, weaviate, chroma, redis, custom_http, mcp_bridge. API keys use <strong>secret refs</strong> only — store values in <a href="#" id="jumpGatewayVectorStoreSecrets">Providers → Store Secret Value</a>, then bind each row’s Secret Backend + Secret Ref.</p>
+            <datalist id="gatewayVectorStoreSecretRefOptions">
+              <option value="pgvector">pgvector</option>
+              <option value="qdrant">qdrant</option>
+              <option value="pinecone">pinecone</option>
+              <option value="mongodb_atlas">mongodb_atlas</option>
+              <option value="weaviate">weaviate</option>
+              <option value="chroma">chroma</option>
+              <option value="redis">redis</option>
+              <option value="custom_http">custom_http</option>
+              <option value="mcp_bridge">mcp_bridge</option>
+            </datalist>
+            <form id="createGatewayVectorStoreForm" style="display: none;">
+              <label>Type<input name="type" list="gatewayVectorStoreSecretRefOptions" required /></label>
+              <label>Provider ID<input name="provider_id" placeholder="provider-1" required /></label>
+              <label>API Key<input name="api_key" type="password" placeholder="your-api-key" required /></label>
+              <button type="submit">Create</button>
+            </form>
                 <option value="providers/vector/qdrant/store-id/api-key"></option>
                 <option value="providers/vector/pinecone/store-id/api-key"></option>
                 <option value="providers/vector/qdrant/store-id/api-key"></option>
