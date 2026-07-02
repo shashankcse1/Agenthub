@@ -382,7 +382,7 @@ The frontend currently exposes these primary workspaces:
 
 | Method | Route                              | UI Coverage | Notes                                                                                                                                                                                                                         |
 | ------ | ---------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/v1/vector_stores`                | Partial     | OpenAI-compatible registry list from `gateway.vector_stores_json`; no dedicated OpenAI Gateway Ops panel — Memory & Context Platform Configuration is control plane.                                                          |
+| GET    | `/v1/vector_stores`                                                 | Full        | OpenAI-compatible registry list from `gateway.vector_stores_json`; no dedicated OpenAI Gateway Ops panel — Memory & Context Platform Configuration is control plane.                                                                                                                                                                                                                                                                                                                                                                                                      |
 | GET    | `/v1/vector_stores/{store_id}`     | Partial     | OpenAI-compatible single-store read; API-only for integrators.                                                                                                                                                                |
 | POST   | `/v1/vector_stores`                | Partial     | Control-plane read-only boundary — returns 409 `VECTOR_STORE_REGISTRY_READ_ONLY`; audit `gateway.vector_store.register_attempt`.                                                                                                |
 | POST   | `/rag/ingest`                      | Full        | Memory & Context **RAG Ingest & Query** panel runs ingest against `mcp_bridge` stores via MCP `vector.upsert`; audit `gateway.rag.ingest`.                                                                                    |
@@ -606,4 +606,3 @@ The largest remaining UI gaps are:
 
 1. Cost analytics historical trend depth
 2. Partial-coverage endpoints (43 inventory rows marked `Partial`) — surfaced via `/governance/ui-coverage` for operator triage; controls are intentionally omitted per AGENTS.md until coverage moves to `Full`.
-
