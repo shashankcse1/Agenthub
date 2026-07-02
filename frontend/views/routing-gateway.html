@@ -1629,10 +1629,13 @@
                 <div class="inline-actions">
                   <button id="addGatewayVectorStoreRow" type="button" class="ghost">Add Store</button>
                   <button id="testGatewayVectorStoreHealth" type="button" class="ghost">Test Selected Store</button>
+                  <button id="loadOpenAiVectorStoreDetail" type="button" class="ghost">Inspect OpenAI Store</button>
                 </div>
               </div>
               <p class="mono">Supported types: pgvector, qdrant, pinecone, mongodb_atlas, weaviate, chroma, redis, custom_http, mcp_bridge. API keys use <strong>secret refs</strong> only — store values in <a href="#" id="jumpGatewayVectorStoreSecrets">Providers → Store Secret Value</a>, then bind each row’s Secret Backend + Secret Ref.</p>
               <datalist id="gatewayVectorStoreSecretRefOptions">
+                <option value="providers/vector/qdrant/store-id/api-key"></option>
+                <option value="providers/vector/pinecone/store-id/api-key"></option>
                 <option value="providers/vector/qdrant/store-id/api-key"></option>
                 <option value="providers/vector/pinecone/store-id/api-key"></option>
                 <option value="providers/vector/weaviate/store-id/api-key"></option>
