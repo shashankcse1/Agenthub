@@ -31,6 +31,49 @@ Workspace-wide operations quickstart:
 
 - ../operations-quickstart.md
 
+## Operator consoles and navigation
+
+Sidebar navigation (loaded via `js/view-loader.js` into `#viewsRoot`):
+
+| Nav label | View partial | Primary API domain |
+|-----------|--------------|-------------------|
+| Overview | `views/overview.html` | Platform status, UI coverage gaps |
+| Playground | `views/playground.html` | Inference / chat trials |
+| Benchmark & Scan | `views/benchmark-scan.html` | Benchmark jobs, security scans |
+| Routing & Gateway | `views/routing-gateway.html` | Gateway routes, memory, RAG, policies |
+| Route Drafts | (Routing workspace tab) | Draft promote/rollback |
+| Flow Orchestration | `views/flow-orchestration.html` | `/orchestration/*` |
+| Compliance | `views/compliance.html` | Evidence export, controls |
+| Providers | `views/providers.html` | Tenants, secrets, entitlements |
+| Modules | `views/modules.html` | Module register / sync |
+| Observability | `views/observability.html` | Traces, metrics |
+| Security | `views/security.html` | Authz explain, bindings |
+| Browser Security | `views/browser-security.html` | GuardBridge |
+
+Agent work orders (`inv-*` / `cmp-*`) usually touch **Routing & Gateway**, **Playground**, or governance docs first — see [AGENTS.md](../AGENTS.md) UI priority order.
+
+Gap gating: `js/ui-coverage.js` loads `GET /governance/ui-coverage/inventory` and hides or labels controls when backend marks **Gap**.
+
+## Validation smoke (operator and enhancement agent)
+
+**Enhancement agent** (`gateway-enhancement-agent`) runs a subset of these as validation gates when `TARGET_REPO` points at this repo. Governance-only doc changes skip backend pytest and control coverage in the agent runner.
+
+Minimum checks after editing `app.js` or gateway UI:
+
+```bash
+node --check frontend/app.js
+bash scripts/security_smoke.sh
+```
+
+Full local smoke list is under [Security Checks](#security-checks) below. After implementing an agent work order, run from the agent checkout:
+
+```bash
+cd "../gateway-enhancement-agent"
+TARGET_REPO="$(pwd)/../new design" gateway-agent validate
+```
+
+See [.cursor/skills/gateway-competitor-sdlc/SKILL.md](../.cursor/skills/gateway-competitor-sdlc/SKILL.md).
+
 ## Run locally
 
 1. Start backend API (example):
@@ -60,9 +103,18 @@ Workspace-wide operations quickstart:
 ## Notes
 
 - Overview includes quick-start chips for priority consoles (Playground, Benchmark & Scan, Routing & Gateway, **Memory & Context**, Compliance, Observability) and a **Flow Orchestration** summary card (`GET /orchestration/summary`) with jump chip to the orchestration console.
+- Overview **Control Plane** card shows `APP_PLANE` mode, isolation, on-plane %, schedulers, policy-generation fingerprint, published fingerprint, drift/gate/watcher/SLO, Force Reconcile (optional attest+gate ceremony), **CPLI** score/band/trend/dimensions, release-gate checklist + history, promotion readiness/streak, Ready/Alive/Contract/Desired⇄Observed/LKG/Peer ack/Readonly chips, attestation history, Attest/Verify/Evaluate/Export/Mint Evidence Pack, Export/Mint/**Apply** Snapshot, Freeze/Unfreeze, Rollback to LKG, Ack Published, blockers/next actions, and durable drift events from `GET/POST /platform/control-plane*`. Global control-plane advisory banner uses `operational-status.control_plane` (prioritizes freeze / not-ready).
+- Cost **QBR numbers-first** includes CPLI, CP release-gate, CI go/no-go, promotion, ready, contract, LKG, and readonly chips from `control_plane_leadership` (engineering-only; marketing claims stay blocked).
+- Session Context supports optional **Gateway API Base** so inference paths use the data-plane process; **Plane Split** profile targets control `:8001` and gateway `:8002`.
 - Each view shows a short subtitle under the page title to clarify the operator workflow.
-- Session Context is collapsible in the sidebar; use **Save Context** after changing profile, API base, or actor settings (available while signed in).
-- On mobile/tablet widths, open navigation with the header menu button; sidebar quick-find is hidden when header search is available.
+- Operator UX standards (shared across all consoles): WAI-ARIA tab keyboard navigation (←/→/Home/End), document title + live announcement on view change, focus move to page title after nav, dismissible toasts (stack capped at 4), `/` focuses global search (↑/↓ to move results, empty focus shows recent consoles), `.` focuses the active page Search field, `?` opens the keyboard shortcuts guide (header `?` button + `g` then console key including `b` for Benchmark), Escape closes search/feedback/shortcuts/confirm, shell progress bar during view load/refresh, silent prefetch of recent/likely consoles, offline connectivity banner, governed confirm dialog for destructive and prod-guarded actions, pin/recent sidebar strips, session-persisted console tabs, progressive disclosure for posture/workflow/long notes (`UiKit.collapseOperatorGuides`), short hero leads on priority consoles, hover Copy on operator result blocks, busy state on header Refresh, structured empty rows for empty tables, invalid-field highlighting, print stylesheet for evidence review, and `prefers-contrast` / `prefers-reduced-motion` respect.
+- Typography system (`fonts.css` + `styles/type-system.css`): self-hosted **Source Serif 4** (display), **Source Sans 3** (UI), **IBM Plex Mono** (code); modular rem scale (`--text-3xs`…`--text-hero`) with semantic roles (`--type-kicker`, `--type-label`, `--type-body`, …); 16px body default; shared by dashboard, login, 404, and 500.
+- Spacing rhythm tokens (`--space-1`…`--space-8`, `--space-card`, `--space-section`) keep console heroes, cards, tabs, and form grids aligned; view loader shows skeleton placeholders while consoles fetch.
+- Sidebar menus and console tablists share `styles/nav-tabs.css`: brass active states (no blue), aria-controls groups, keyboard open/navigate/escape, pinned/recent quick strips with per-item pin controls, and removed stacked `margin-top` gaps between cards/panels.
+- Overall page polish (`styles/pages.css`): unified console heroes, denser workflow steps, hidden empty result regions, sticky-header scroll margins, responsive card heads, busy/toast feedback on console Refresh actions, keyboard shortcuts overlay, nav hierarchy labels/hints/codes aligned to the brass shell, shell progress bar, offline banner, scrollable inventory tables with sticky brass headers, compact scrolled header, view-enter motion, governed confirm dialog chrome, and progressive disclosure (`operator-guide`) so posture ledgers, workflow steps, and long card notes collapse behind a one-line summary.
+- Operator density toggle (comfortable/compact, persisted), header breadcrumbs (group / console), and back-to-top control on long pages.
+- Header shows last opened/refreshed time; desktop hides duplicate sidebar Quick Find (header search is primary); mobile drawer keeps Quick Find; login submit uses busy state; status pills and table pagination follow the brass shell rhythm.
+- Session Context, Plane Find, and Plane status are collapsible in the sidebar (closed by default). Nav groups use accordion expand (only the active section opens). **Filter nav** (`\`) shrinks the plane map; **Collapse / Active / All** toolbar buttons control group expand. **Pinned** (☆ on hover) and **Recent** strips jump to consoles; pins persist in `localStorage`. Desktop **minimize** (rail, `[`) collapses labels to short codes with hover flyouts; `]` restores accordion to the active group; double-click a rail item expands the full sidebar. Preference persists in `localStorage`.
 - API base URL and actor context can be changed from the left settings panel.
 - UI server port can be changed with `UI_PORT` or `--port` in `scripts/run_ui.sh`.
 - Backend API base can be changed per profile from the UI settings panel.
@@ -104,7 +156,7 @@ Workspace-wide operations quickstart:
 - Agents page also includes ownership operations (`/owners/{owner_id}/agents`, `/agents/{agent_id}/owner`, `/agents/{agent_id}/ownership-history`) for end-to-end ownership governance coverage.
 - Full UI/API/product coverage audit matrix is documented in `../backend/docs/governance/ui-api-design-coverage-map.md`.
 - Overview and Compliance expose live API UI coverage gap reports via `GET /governance/ui-coverage` (Partial/Gap/undocumented backend routes). The frontend loads `GET /governance/ui-coverage/inventory` at boot and blocks `api()` calls to inventory rows marked `Gap` until an operator workflow exists.
-- **Platform operator experience:** global banners; **`POST /platform/feedback` saves to PostgreSQL `operator_feedback`** (audited); Overview loads list/analytics from DB; triage via `POST /platform/feedback/{id}/actions`. See `documentation-source-of-truth.md` § REST API Observability Standards for audit action types.
+- **Platform operator experience:** global banners; **`POST /platform/feedback` saves to PostgreSQL `operator_feedback`** (audited); Overview loads list/analytics from DB; triage via `POST /platform/feedback/{id}/actions`. Control/data plane isolation via `APP_PLANE` (see `/health.plane` and `GET /platform/control-plane`). See `documentation-source-of-truth.md` § REST API Observability Standards for audit action types.
 - **Lazy view loading:** only Overview is mounted at boot; other consoles hydrate on first nav visit (`view-loader.js`) to reduce startup API load and memory use.
 - UI view visibility can be controlled from runtime config using `ui.feature.<view>.enabled` or environment-specific keys like `ui.feature.discovery.enabled.prod`.
 - The same studio supports provider priority, fallback hops/timeouts, retry budget, and circuit-breaker thresholds per agent.
@@ -127,6 +179,7 @@ Workspace-wide operations quickstart:
 - OpenAI-Compatible Gateway Ops includes a **Cursor / configured model** picker; selecting a model applies it to all gateway ops model dropdowns on the active tab.
 - OpenAI-Compatible Gateway Ops model fields and Playground selected/candidate models use **catalog-backed dropdowns** populated from the canonical platform register (`GET /providers/models/available`) on sign-in and via **Load Configured Models** in Routing & Gateway.
 - Providers **Models** tab includes a **UI Model Availability Register** (policy echo + ranked model list) for verifying which models appear in all UI dropdowns; enable/disable models via Supported Models Catalog `status` (`active`/`beta` vs `disabled`/`deprecated`).
+- Providers **Models** tab can **Seed trending / Bedrock / Azure / GCP / all packs** (`POST /providers/models/seed-trending` with `packs`). Gateway invoke: Bedrock via Converse, Azure OpenAI deployment URLs, Gemini API + Vertex OpenAI-compat (`VERTEX_PROJECT`/`VERTEX_LOCATION`). Set `{VENDOR}_API_KEY` / AWS default chain / Azure endpoint as needed.
 - Tenant ID fields across Routing & Gateway, Providers, Security, Agents, and Compliance now use catalog-backed dropdowns (`data-tenant-select`) populated from `GET /providers/tenants`; optional filters include an **All tenants** blank option. The Tenant Directory create/edit form keeps a free-text Tenant ID input for registering new tenants.
 - Route Priority now shows a Policy Scope indicator in the UI so operators can confirm whether the loaded policy is default or request-tag scoped.
 - Route Priority includes a visual fallback-chain builder: add/remove/reorder provider+model targets (priority 1, 2, 3…), provider datalist from workload/secret providers, **model dropdown from supported-model catalog**, live validation against backend `priority_order` schema, and optional advanced JSON editing.
@@ -136,14 +189,14 @@ Workspace-wide operations quickstart:
 - Route fallback policy JSON supports optional `routing_groups` with per-group strategy and `failover_weight` to model weighted failover between deployment groups.
 - Route retry policy JSON supports `error_type_policies` with per-error `max_retries` and `cooldown_seconds`; execution enforces these controls and records cooldown-aware skip outcomes.
 - Pre-Call Filters card supports route-scoped region/context-window guardrails via `PUT/GET /gateway/routes/{route_policy_id}/pre-call-filters` (including optional request-tag scoped policies).
-- Input Data Policy card supports route-scoped input policy controls via `PUT/GET /gateway/routes/{route_policy_id}/input-data-policy` with `allow|warn|block|mask` modes, data-class policy classes (`standard|sensitive|pii|phi|secret`), pattern controls, optional request-tag scope, and production dual-approval semantics.
+- Input Data Policy card supports route-scoped input policy controls via `PUT/GET /gateway/routes/{route_policy_id}/input-data-policy` with `allow|warn|block|mask` modes, data-class policy classes (`standard|sensitive|pii|phi|secret`), pattern controls, **prompt-injection heuristic mode** (`off|warn|block|inherit`; platform default `gateway.prompt_injection.default_mode=warn`), optional request-tag scope, and production dual-approval semantics. Live enforcement applies on `/v1/chat/completions` and `/v1/responses` (before provider entitlement) as well as execute-fallback. The same platform default also screens **RAG ingest/query**, **MCP tool arguments**, and **gateway memory** writes; retrieved RAG snippets are wrapped as untrusted content. Playground stream log and Gateway chat results surface `content_guard_*` decisions.
 - Output Guardrails card supports route-scoped output policy controls via `PUT/GET /gateway/routes/{route_policy_id}/output-guardrails` with `allow|warn|block|transform` modes, phrase controls, token ceilings, optional request-tag scope, and production dual-approval semantics.
 - Traffic Mirroring card supports shadow/observe mirror target configuration via `PUT/GET /gateway/routes/{route_policy_id}/traffic-mirroring` (including optional request-tag scoped policies).
 - Canary Rollout Lifecycle card supports governed weighted canary configuration/readback and explicit stop/promote actions via `PUT/GET /gateway/routes/{route_policy_id}/canary-rollout`, `POST /gateway/routes/{route_policy_id}/canary-rollout/stop`, and `POST /gateway/routes/{route_policy_id}/canary-rollout/promote` (including optional request-tag scoped policies, cohort selectors, automatic success/failure gate controls, and production dual-approval semantics).
 - Mirror Analytics card supports route-scoped mirroring summary and experiment reporting via `GET /gateway/routes/{route_policy_id}/traffic-mirroring/analytics-summary` and `GET /gateway/routes/{route_policy_id}/traffic-mirroring/experiment-report`.
 - Gateway Entitlements card supports scoped action-grant list/filter and upsert workflows via `GET /gateway/entitlements` and `PUT /gateway/entitlements/{entitlement_id}`.
 - NHI Inventory & Hygiene card supports machine-identity inventory and hygiene review via `GET /gateway/nhi/inventory` and `GET /gateway/nhi/hygiene`.
-- Access Reviews & JIT card supports campaign create/read workflows via `POST /gateway/access-reviews/campaigns` and `GET /gateway/access-reviews/campaigns/{campaign_id}`, plus JIT request create/approve workflows via `POST /gateway/jit-requests` and `POST /gateway/jit-requests/{request_id}/approve`.
+- Access Reviews & JIT card supports campaign create/read workflows via `POST /gateway/access-reviews/campaigns` and `GET /gateway/access-reviews/campaigns/{campaign_id}`, plus JIT request create/approve/list/get/revoke/expire-tick workflows via `/gateway/jit-requests*`. Approve can mint a short-lived virtual key for `user|team|group` owner scopes; the one-time bearer token is shown once in the minted-key panel (copy + jump to Key Lifecycle). **JIT Request Queue** supports status/env filters, revoke, expire tick, and **Notify**. **JIT Email & External REST Decisions** configures reviewer emails, notification channel, public base URL for signed approve/deny links (`/gateway/jit-actions/{token}`), selected external callback IDs, and optional custom REST URL + credential binding (save requires dual approval; prod email approve off by default). JIT-linked keys appear with a JIT column in Key Lifecycle and auto-block when the grant expires or is revoked.
 - Least-Privilege Recommendations card supports recommendation read/apply workflows via `GET /gateway/least-privilege/recommendations` and `POST /gateway/least-privilege/recommendations/{recommendation_id}/apply`.
 - Gateway Governance Evidence card supports filtered gateway-governance evidence aggregation/export via `POST /gateway/governance/evidence/export`, with backend-generated JSON bundle metadata and action-level summaries.
 - OpenAI-Compatible Gateway Ops card now supports governed `POST /v1/chat/completions`, `POST /v1/responses`, and `POST /v1/realtime` (with SSE streaming lifecycle visibility when `stream=true` plus stream policy controls for binary mode, max event bytes, and heartbeat interval), `POST /v1/embeddings`, responses lifecycle (`POST/GET/GET{id}/DELETE{id} /v1/responses`), and files metadata lifecycle (`POST/GET/GET{id}/DELETE{id} /v1/files`) workflows directly from the Routing & Gateway view, including server-backed list filters and client-side advanced filtering + bulk delete operations for responses/files records.
@@ -174,8 +227,9 @@ Workspace-wide operations quickstart:
 - Routing & Gateway now also supports decision-trace evidence retrieval via `GET /gateway/decision-traces/{trace_id}` for audit/logging investigation of action timelines and decision outcomes.
 - Routing & Gateway also supports provider-priority readback and audit-backed priority timeline history (`/gateway/routes/{route_policy_id}/providers/priority/timeline`), plus cache stats, endpoint compatibility checks, and transform-debug requests.
 - Key Lifecycle now supports explicit block and unblock actions for virtual keys in addition to create, update, usage inspection, rotation, guardrail evaluation, temporary budget increase requests/readback, and rotation schedule create/list/update/execute actions.
-- Cost console supports request-tagged spend tracking ingestion, pricing catalog and pricing calculator workflows (custom LLM token pricing simulation and provider/model discount simulation), budget lifecycle create/list/edit/delete workflows with advanced controls (expanded scope types, reset timezone/hour, temporary increases, soft-alert toggle, rate/session caps), policy evaluation with effective-budget and soft-alert output, aggregated limit evaluation including agent IDs and soft-alert scopes, anomaly review, and session/agent cost drilldown workflows.
+- Cost console supports budget remediations (temporary increase/clear, soft-alert acknowledge, Evaluate jump), environment-aware spend/hours/`soft_alert_active`/`temporary_increase_active`, policy/limit evaluate with hours + Edit/Temp+/Ack, Anomalies with decision/hours + CSV, budget CSV export, and Overview/Hierarchy alert remediation actions.
 - Cost console also includes ranked model intelligence browsing for supported models using the current pricing data.
+- Cost Telemetry user/team/group breakdown, timeseries, comparison, export, team/group burn charts, and owners timeseries typed filters (`team:{id}` / `group:{id}` / `user:{id}`) use the same membership hierarchy rollup as budgets (member `user:`/`actor:` spend rolls into directory teams/groups).
 - Providers console now supports supported-model explainability and approval governance: recommendation rationale capture, approval/rejection actions with ticket and review note, environment selection (`dev`/`prod`), and approval/version visibility (`approval_status`, `metadata_version`, approver metadata).
 - Cost console supports workspace dropdown navigation (Overview, Telemetry, Pricing, Budgets, Drilldown), live overview metrics, integrated spend-vs-hours chart, Telemetry **Spend timeseries** (`GET /cost/timeseries` with dimension/window/scope filter chart + hourly table) and **Scope breakdown** (`GET /cost/breakdown` by dimension/window), catalog-driven pricing calculator dropdowns, subsection selectors for pricing/budget workspaces, and cross-table search.
 - Discovery console supports posture score ring, confidence distribution, auto-refresh, posture alert banner, clickable KPI metrics, horizontal-scroll topology map, **Agent Ops & Trace Sources** card (configure sources, Observability pivot), agent-ops functional labels, agent detail drawer, agents CSV export, `/discovery/summary` dashboard, source sync, live connections, duplicate/triage workflows, and resolve/promote actions.

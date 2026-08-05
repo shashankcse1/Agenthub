@@ -176,6 +176,12 @@ def test_gateway_analytics_summary_endpoint_returns_aggregates_for_authorized_ro
     assert payload["total_estimated_cost_cents"] >= 1
     assert isinstance(payload["top_models"], list)
     assert isinstance(payload["top_endpoint_families"], list)
+    assert "on_plane_coverage_percent" in payload
+    assert "on_plane_events" in payload
+    assert "off_plane_detected" in payload
+    assert isinstance(payload.get("on_plane_coverage"), dict)
+    assert payload["on_plane_events"] >= 1
+    assert payload["on_plane_coverage_percent"] is not None
 
 
 def test_observability_logs_redact_sensitive_mode_masks_identity_fields():
@@ -364,7 +370,22 @@ def test_agent_register_options_endpoint():
     payload = resp.json()
     assert isinstance(payload.get("allowed_agent_types"), list)
     assert payload.get("default_environment") == "dev"
-    assert "other" in payload["allowed_agent_types"]
+    # Full catalog — not limited to the four cloud deployment types.
+    for expected in (
+        "assistant",
+        "chatbot",
+        "automation",
+        "orchestrator",
+        "aws",
+        "azure",
+        "gcp",
+        "onprem",
+        "hybrid",
+        "other",
+    ):
+        assert expected in payload["allowed_agent_types"]
+    assert len(payload["allowed_agent_types"]) >= 10
+    assert isinstance(payload.get("provider_backed_agent_types"), list)
 
 
 def test_agent_register_options_derives_types_from_active_providers():
@@ -396,7 +417,10 @@ def test_agent_register_options_derives_types_from_active_providers():
         headers={"X-Actor-Role": "Auditor", "X-Actor-Id": f"aud-register-options-{suffix}"},
     )
     assert resp.status_code == 200
-    assert "aws" in resp.json()["allowed_agent_types"]
+    payload = resp.json()
+    assert "aws" in payload["allowed_agent_types"]
+    assert "assistant" in payload["allowed_agent_types"]
+    assert "aws" in payload["provider_backed_agent_types"]
 
 
 def test_agent_register_persists_inventory_without_auto_config_stub():
@@ -7138,6 +7162,9 @@ def test_gateway_nhi_hygiene_summary_reports_findings():
     assert payload["stale_credentials"] >= 1
     assert payload["missing_owner"] >= 1
     assert payload["high_risk_identities"] >= 1
+    assert "unmanaged_prod_identities" in payload
+    assert "prod_unmanaged_zero_ok" in payload
+    assert isinstance(payload["prod_unmanaged_zero_ok"], bool)
     assert any(item["key"] == "workload_identity_profile" for item in payload["source_distribution"])
 
 
@@ -7208,11 +7235,15 @@ def test_gateway_jit_request_create_and_approve_with_prod_dual_approval():
             "environment": "prod",
             "justification": "Need temporary fallback execution in production for active incident.",
             "requested_duration_minutes": 45,
+            "owner_scope_type": "user",
+            "mint_virtual_key": True,
         },
         headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-1"},
     )
     assert requested.status_code == 200
     request_id = requested.json()["request_id"]
+    assert requested.json()["mint_virtual_key"] is True
+    assert requested.json()["owner_scope_type"] == "user"
 
     denied_approval = client.post(
         f"/gateway/jit-requests/{request_id}/approve",
@@ -7236,6 +7267,537 @@ def test_gateway_jit_request_create_and_approve_with_prod_dual_approval():
     approved_payload = approved.json()
     assert approved_payload["status"] == "approved"
     assert approved_payload["expires_at"] is not None
+    assert approved_payload["issued_virtual_key_id"]
+    assert approved_payload["issued_virtual_key_token"]
+    key_id = approved_payload["issued_virtual_key_id"]
+    bearer = approved_payload["issued_virtual_key_token"]
+
+    key_get = client.get(
+        f"/keys/{key_id}",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-key"},
+    )
+    assert key_get.status_code == 200
+    key_payload = key_get.json()
+    assert key_payload["jit_request_id"] == request_id
+    assert key_payload["owner_scope_type"] == "user"
+    assert key_payload["owner_scope_id"] == "aiops-jit-1"
+    assert key_payload["status"] == "active"
+    assert key_payload["expires_at"] is not None
+    assert "key_hash" not in key_payload
+
+    from app.database import SessionLocal
+    from app.models import VirtualKey
+    from app.routers.gateway import _enforce_virtual_key_expiry
+
+    db = SessionLocal()
+    try:
+        key = db.query(VirtualKey).filter_by(key_id=key_id).first()
+        assert key is not None
+        assert key.key_hash == bearer
+        key.expires_at = datetime.utcnow() - timedelta(minutes=1)
+        db.commit()
+        db.refresh(key)
+        try:
+            _enforce_virtual_key_expiry(
+                db,
+                key=key,
+                actor_id="aiops-jit-1",
+                trace_id=f"trace-jit-expire-{request_id}",
+            )
+            assert False, "expected VIRTUAL_KEY_EXPIRED"
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 403
+            assert exc.detail["error_code"] == "VIRTUAL_KEY_EXPIRED"
+        db.refresh(key)
+        assert key.status == "blocked"
+    finally:
+        db.close()
+
+
+def test_gateway_jit_approve_can_skip_virtual_key_mint():
+    entitlement_id = f"ent-jit-skip-{uuid4().hex[:10]}"
+    ent = client.put(
+        f"/gateway/entitlements/{entitlement_id}",
+        json={
+            "action": "gateway.route.execute_fallback",
+            "tenant_id": "tenant-jit-skip",
+            "environment": "dev",
+            "allowed_roles": '["AI Ops Approver"]',
+            "enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-skip-seed"},
+    )
+    assert ent.status_code == 200
+
+    requested = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": entitlement_id,
+            "environment": "dev",
+            "justification": "Elevation without credential mint for role-only access window.",
+            "requested_duration_minutes": 30,
+            "mint_virtual_key": False,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-skip"},
+    )
+    assert requested.status_code == 200
+    request_id = requested.json()["request_id"]
+
+    approved = client.post(
+        f"/gateway/jit-requests/{request_id}/approve",
+        json={"decision": "approve", "decision_reason": "role elevation only"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-skip-approve"},
+    )
+    assert approved.status_code == 200
+    payload = approved.json()
+    assert payload["status"] == "approved"
+    assert payload["issued_virtual_key_id"] is None
+    assert payload["issued_virtual_key_token"] is None
+
+
+def test_gateway_jit_deny_does_not_mint_virtual_key():
+    entitlement_id = f"ent-jit-deny-{uuid4().hex[:10]}"
+    ent = client.put(
+        f"/gateway/entitlements/{entitlement_id}",
+        json={
+            "action": "gateway.route.execute_fallback",
+            "tenant_id": "tenant-jit-deny",
+            "environment": "dev",
+            "allowed_roles": '["AI Ops Approver"]',
+            "enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-deny-seed"},
+    )
+    assert ent.status_code == 200
+
+    requested = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": entitlement_id,
+            "environment": "dev",
+            "justification": "Request that should be denied without issuing credentials.",
+            "requested_duration_minutes": 20,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-deny"},
+    )
+    assert requested.status_code == 200
+    request_id = requested.json()["request_id"]
+
+    denied = client.post(
+        f"/gateway/jit-requests/{request_id}/approve",
+        json={"decision": "deny", "decision_reason": "insufficient incident evidence"},
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-jit-deny"},
+    )
+    assert denied.status_code == 200
+    payload = denied.json()
+    assert payload["status"] == "denied"
+    assert payload["issued_virtual_key_id"] is None
+    assert payload["issued_virtual_key_token"] is None
+    assert payload["expires_at"] is None
+
+
+def test_gateway_jit_list_get_revoke_and_bearer_inference():
+    entitlement_id = f"ent-jit-flow-{uuid4().hex[:10]}"
+    ent = client.put(
+        f"/gateway/entitlements/{entitlement_id}",
+        json={
+            "action": "gateway.route.execute_fallback",
+            "tenant_id": "tenant-jit-flow",
+            "environment": "dev",
+            "model_name": "gpt-4o-mini",
+            "allowed_roles": '["AI Ops Approver"]',
+            "enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-flow-seed"},
+    )
+    assert ent.status_code == 200
+
+    requested = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": entitlement_id,
+            "environment": "dev",
+            "justification": "Need short-lived credential for governed chat completions during incident.",
+            "requested_duration_minutes": 60,
+            "owner_scope_type": "user",
+            "mint_virtual_key": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-flow"},
+    )
+    assert requested.status_code == 200
+    request_id = requested.json()["request_id"]
+
+    approved = client.post(
+        f"/gateway/jit-requests/{request_id}/approve",
+        json={"decision": "approve", "decision_reason": "incident window approved"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-flow-approve"},
+    )
+    assert approved.status_code == 200
+    approved_payload = approved.json()
+    bearer = approved_payload["issued_virtual_key_token"]
+    key_id = approved_payload["issued_virtual_key_id"]
+    assert bearer and key_id
+
+    listed = client.get(
+        f"/gateway/jit-requests?entitlement_id={entitlement_id}&status=approved&active_only=true",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-list"},
+    )
+    assert listed.status_code == 200
+    listed_payload = listed.json()
+    assert listed_payload["total"] >= 1
+    assert any(row["request_id"] == request_id for row in listed_payload["data"])
+
+    fetched = client.get(
+        f"/gateway/jit-requests/{request_id}",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-get"},
+    )
+    assert fetched.status_code == 200
+    assert fetched.json()["issued_virtual_key_id"] == key_id
+    assert fetched.json().get("issued_virtual_key_token") is None
+
+    chat = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "JIT bearer smoke"}],
+            "stream": False,
+            "environment": "dev",
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-jit-chat",
+            "Authorization": f"Bearer {bearer}",
+        },
+    )
+    assert chat.status_code == 200, chat.text
+    assert str(chat.json()["id"]).startswith("chatcmpl-")
+
+    revoked = client.post(
+        f"/gateway/jit-requests/{request_id}/revoke",
+        json={"reason": "incident closed"},
+        headers={"X-Actor-Role": "Security Approver", "X-Actor-Id": "sec-jit-revoke"},
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+
+    key_after = client.get(
+        f"/keys/{key_id}",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-key-after"},
+    )
+    assert key_after.status_code == 200
+    assert key_after.json()["status"] == "blocked"
+
+    denied_chat = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "should fail after revoke"}],
+            "stream": False,
+            "environment": "dev",
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-jit-chat-denied",
+            "Authorization": f"Bearer {bearer}",
+        },
+    )
+    assert denied_chat.status_code == 403
+
+
+def test_gateway_jit_expire_tick_marks_stale_grants():
+    entitlement_id = f"ent-jit-expire-{uuid4().hex[:10]}"
+    ent = client.put(
+        f"/gateway/entitlements/{entitlement_id}",
+        json={
+            "action": "gateway.route.execute_fallback",
+            "tenant_id": "tenant-jit-expire",
+            "environment": "dev",
+            "allowed_roles": '["AI Ops Approver"]',
+            "enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-expire-seed"},
+    )
+    assert ent.status_code == 200
+
+    requested = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": entitlement_id,
+            "environment": "dev",
+            "justification": "Seed grant that will be force-expired by tick.",
+            "requested_duration_minutes": 60,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-expire"},
+    )
+    assert requested.status_code == 200
+    request_id = requested.json()["request_id"]
+    approved = client.post(
+        f"/gateway/jit-requests/{request_id}/approve",
+        json={"decision": "approve", "decision_reason": "seed for expire tick"},
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-expire-approve"},
+    )
+    assert approved.status_code == 200
+    key_id = approved.json()["issued_virtual_key_id"]
+
+    from app.database import SessionLocal
+    from app.models import GatewayJitAccessRequest
+
+    db = SessionLocal()
+    try:
+        row = db.query(GatewayJitAccessRequest).filter_by(request_id=request_id).first()
+        assert row is not None
+        row.expires_at = datetime.utcnow() - timedelta(minutes=2)
+        db.commit()
+    finally:
+        db.close()
+
+    tick = client.post(
+        "/gateway/jit-requests/expire-tick?limit=100",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-expire-tick"},
+    )
+    assert tick.status_code == 200
+    assert tick.json()["expired_grants"] >= 1
+    assert tick.json()["blocked_keys"] >= 1
+
+    fetched = client.get(
+        f"/gateway/jit-requests/{request_id}",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-expire-get"},
+    )
+    assert fetched.status_code == 200
+    assert fetched.json()["status"] == "expired"
+
+    key_after = client.get(
+        f"/keys/{key_id}",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-expire-key"},
+    )
+    assert key_after.status_code == 200
+    assert key_after.json()["status"] == "blocked"
+
+
+def test_gateway_jit_decision_notify_config_requires_dual_approval_and_email_action(monkeypatch):
+    from app.services.gateway_jit_notifications import mint_jit_action_token
+
+    monkeypatch.setattr(
+        "app.services.gateway_jit_notifications._post_external_rest",
+        lambda db, *, url, payload, credential_binding_id="": {
+            "url": url,
+            "status_code": 204,
+            "ok": True,
+            "callback_id": "external_rest_url",
+        },
+    )
+
+    entitlement_id = f"ent-jit-notify-{uuid4().hex[:10]}"
+    ent = client.put(
+        f"/gateway/entitlements/{entitlement_id}",
+        json={
+            "action": "gateway.route.execute_fallback",
+            "tenant_id": "tenant-jit-notify",
+            "environment": "dev",
+            "allowed_roles": '["AI Ops Approver"]',
+            "enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-notify-seed"},
+    )
+    assert ent.status_code == 200
+
+    denied_cfg = client.put(
+        "/gateway/jit-decision-notify/config",
+        json={
+            "enabled": True,
+            "notify_on_create": True,
+            "email_channel_id": "",
+            "reviewer_emails": ["reviewer@example.com"],
+            "public_base_url": "https://gateway.test.local",
+            "external_callback_ids": [],
+            "external_rest_url": "",
+            "external_rest_credential_binding_id": "",
+            "action_token_ttl_minutes": 60,
+            "allow_prod_email_approve": False,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-notify-cfg"},
+    )
+    assert denied_cfg.status_code == 403
+
+    saved = client.put(
+        "/gateway/jit-decision-notify/config",
+        json={
+            "enabled": True,
+            "notify_on_create": True,
+            "email_channel_id": "",
+            "reviewer_emails": ["reviewer@example.com"],
+            "public_base_url": "https://gateway.test.local",
+            "external_callback_ids": [],
+            "external_rest_url": "https://hooks.test.local/jit",
+            "external_rest_credential_binding_id": "",
+            "action_token_ttl_minutes": 60,
+            "allow_prod_email_approve": False,
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-jit-notify-cfg",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-jit-notify-cfg",
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["enabled"] is True
+    assert saved.json()["external_rest_url"] == "https://hooks.test.local/jit"
+
+    loaded = client.get(
+        "/gateway/jit-decision-notify/config",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-notify-cfg"},
+    )
+    assert loaded.status_code == 200
+    assert loaded.json()["public_base_url"] == "https://gateway.test.local"
+
+    requested = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": entitlement_id,
+            "environment": "dev",
+            "justification": "Need temporary access for notify/email-action test.",
+            "requested_duration_minutes": 30,
+            "mint_virtual_key": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-notify-1"},
+    )
+    assert requested.status_code == 200
+    request_id = requested.json()["request_id"]
+
+    notify = client.post(
+        f"/gateway/jit-requests/{request_id}/notify",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-notify-send"},
+    )
+    assert notify.status_code == 200
+    assert notify.json()["notified"] is True
+    assert any(item.get("callback_id") == "external_rest_url" for item in notify.json().get("webhooks") or [])
+
+    approve_token = mint_jit_action_token(
+        request_id=request_id,
+        decision="approve",
+        reviewer_email="reviewer@example.com",
+        ttl_minutes=60,
+    )
+    decided = client.get(f"/gateway/jit-actions/{approve_token}")
+    assert decided.status_code == 200
+    assert "JIT request approved" in decided.text or "approved" in decided.text.lower()
+
+    replay = client.post(f"/gateway/jit-actions/{approve_token}")
+    assert replay.status_code == 409
+
+    fetched = client.get(
+        f"/gateway/jit-requests/{request_id}",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-notify-get"},
+    )
+    assert fetched.status_code == 200
+    assert fetched.json()["status"] == "approved"
+    assert fetched.json()["issued_virtual_key_id"]
+    assert str(fetched.json()["approved_by"]).startswith("email:")
+
+
+def test_gateway_jit_email_action_deny_and_prod_approve_gate():
+    from app.services.gateway_jit_notifications import mint_jit_action_token
+
+    entitlement_id = f"ent-jit-email-{uuid4().hex[:10]}"
+    for environment in ("dev", "prod"):
+        ent = client.put(
+            f"/gateway/entitlements/{entitlement_id}-{environment}",
+            json={
+                "action": "gateway.route.execute_fallback",
+                "tenant_id": "tenant-jit-email",
+                "environment": environment,
+                "allowed_roles": '["AI Ops Approver"]',
+                "enabled": True,
+            },
+            headers={
+                "X-Actor-Role": "Platform Admin",
+                "X-Actor-Id": "admin-jit-email-seed",
+                **(
+                    {
+                        "X-Approver-Role": "Security Approver",
+                        "X-Approver-Id": "sec-jit-email-seed",
+                    }
+                    if environment == "prod"
+                    else {}
+                ),
+            },
+        )
+        assert ent.status_code == 200
+
+    # Deny via email action (dev)
+    requested = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": f"{entitlement_id}-dev",
+            "environment": "dev",
+            "justification": "Deny via email action link.",
+            "requested_duration_minutes": 15,
+            "mint_virtual_key": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-email-deny"},
+    )
+    assert requested.status_code == 200
+    deny_id = requested.json()["request_id"]
+    deny_token = mint_jit_action_token(
+        request_id=deny_id,
+        decision="deny",
+        reviewer_email="reviewer@example.com",
+        ttl_minutes=30,
+    )
+    denied = client.post(
+        f"/gateway/jit-actions/{deny_token}",
+        headers={"Accept": "application/json"},
+    )
+    assert denied.status_code == 200
+    assert denied.json()["status"] == "denied"
+    assert denied.json()["decision"] == "deny"
+    assert denied.json()["issued_virtual_key_token"] is None
+
+    # Prod approve blocked when allow_prod_email_approve=false
+    client.put(
+        "/gateway/jit-decision-notify/config",
+        json={
+            "enabled": True,
+            "notify_on_create": False,
+            "email_channel_id": "",
+            "reviewer_emails": [],
+            "public_base_url": "https://gateway.test.local",
+            "external_callback_ids": [],
+            "external_rest_url": "",
+            "external_rest_credential_binding_id": "",
+            "action_token_ttl_minutes": 60,
+            "allow_prod_email_approve": False,
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-jit-email-cfg",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-jit-email-cfg",
+        },
+    )
+    prod_req = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": f"{entitlement_id}-prod",
+            "environment": "prod",
+            "justification": "Prod email approve should be blocked by default.",
+            "requested_duration_minutes": 15,
+            "mint_virtual_key": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-email-prod"},
+    )
+    assert prod_req.status_code == 200
+    prod_id = prod_req.json()["request_id"]
+    prod_token = mint_jit_action_token(
+        request_id=prod_id,
+        decision="approve",
+        reviewer_email="reviewer@example.com",
+        ttl_minutes=30,
+    )
+    blocked = client.post(f"/gateway/jit-actions/{prod_token}")
+    assert blocked.status_code == 403
+    assert blocked.json()["detail"]["error_code"] == "JIT_EMAIL_PROD_APPROVE_DISABLED"
 
 
 def test_gateway_least_privilege_recommendations_generate_role_rightsize_and_apply():

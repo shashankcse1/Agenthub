@@ -10,31 +10,72 @@ function normalizeApiBaseAlias(rawBase) {
 
 const state = {
   apiBase: normalizeApiBaseAlias(localStorage.getItem("apiBase")) || "http://127.0.0.1:8000",
+  gatewayApiBase: normalizeApiBaseAlias(localStorage.getItem("gatewayApiBase")) || "",
   actorRole: localStorage.getItem("actorRole") || "Master Admin",
   actorId: localStorage.getItem("actorId") || "ui-operator",
   accessToken: localStorage.getItem("accessToken") || "",
   environmentProfile: localStorage.getItem("environmentProfile") || "local",
   mfaVerified: parseBooleanFlag(localStorage.getItem("mfaVerified"), true),
   theme: localStorage.getItem("theme") || (window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark"),
+  density: localStorage.getItem("uiDensity") === "compact" ? "compact" : "comfortable",
 };
 
 const ENVIRONMENT_PROFILES = {
   local: {
     apiBase: "http://127.0.0.1:8000",
+    gatewayApiBase: "",
+    actorRole: "Master Admin",
+    actorId: "ui-operator",
+  },
+  "plane-split": {
+    apiBase: "http://127.0.0.1:8001",
+    gatewayApiBase: "http://127.0.0.1:8002",
     actorRole: "Master Admin",
     actorId: "ui-operator",
   },
   stage: {
     apiBase: "http://127.0.0.1:8000",
+    gatewayApiBase: "",
     actorRole: "Release Manager",
     actorId: "stage-operator",
   },
   prod: {
     apiBase: "http://127.0.0.1:8000",
+    gatewayApiBase: "",
     actorRole: "Security Approver",
     actorId: "prod-operator",
   },
 };
+
+const DATA_PLANE_PATH_PREFIXES = [
+  "/v1/chat/",
+  "/v1/embeddings",
+  "/v1/responses",
+  "/v1/files",
+  "/v1/audio/",
+  "/v1/images",
+  "/v1/rerank",
+  "/v1/realtime",
+  "/v1/messages",
+  "/v1/assistants",
+  "/v1/threads",
+  "/v1/fine_tuning",
+  "/v1/passthrough",
+  "/rag/",
+];
+
+function isDataPlaneApiPath(path) {
+  const normalized = String(path || "").split("?")[0] || "/";
+  return DATA_PLANE_PATH_PREFIXES.some(
+    (prefix) => normalized === prefix.replace(/\/$/, "") || normalized.startsWith(prefix),
+  );
+}
+
+function resolveApiBaseForPath(path) {
+  const gateway = String(state.gatewayApiBase || "").trim().replace(/\/$/, "");
+  if (gateway && isDataPlaneApiPath(path)) return gateway;
+  return String(state.apiBase || "").replace(/\/$/, "");
+}
 
 const SAFE_HTTP_METHODS = new Set(AppConstants.SAFE_HTTP_METHODS);
 const DIRECTORY_DESCRIPTION_MAX_LENGTH = 500;
@@ -398,6 +439,7 @@ let gatewayEntitlementRows = [];
 let gatewayNhiInventoryRows = [];
 let gatewayNhiHygieneSummary = null;
 let gatewayAccessReviewCampaign = null;
+let gatewayJitRows = [];
 let gatewayAccessReviewItems = [];
 let gatewayLeastPrivilegeRows = [];
 let gatewayGovernanceEvidenceRows = [];
@@ -408,6 +450,9 @@ let gatewayOpenAiRealtimeSessionRows = [];
 let gatewayOpenAiRealtimeEventRows = [];
 let gatewayAssistantRows = [];
 let gatewayFineTuningJobRows = [];
+let gatewayBatchRows = [];
+let gatewayCacheEntryRows = [];
+let leadershipDrillRunRows = [];
 let playgroundRunDrilldownData = null;
 let gatewayConfiguredModelValues = [];
 let gatewaySupportedModelCatalogRows = [];
@@ -465,6 +510,14 @@ let costBudgetRows = [];
 let costPricingCatalogData = null;
 let costConsoleSearchQuery = "";
 let latestCostLimitRows = [];
+let latestCostHierarchyData = null;
+let latestCostHierarchyAlerts = null;
+let latestCostHierarchyExplain = null;
+let latestCostAnomalies = null;
+let costHierarchyDecisionFilter = "all";
+let costBudgetDecisionFilter = "all";
+let costOverviewAlertDecisionFilter = "all";
+let latestCostPolicyEval = null;
 let latestPolicyRevisions = [];
 let routeDraftRows = [];
 let routeDraftHistoryRows = [];
@@ -513,13 +566,32 @@ let selectedBrowserEvent = null;
 let directoryGroupRows = [];
 let directoryTeamRows = [];
 let globalSearchEntries = [];
+const RECENT_VIEWS_STORAGE_KEY = "agenthub.recentViews";
+const RECENT_VIEWS_LIMIT = 6;
 let orchestrationNodeTypes = [];
 let orchestrationFlows = [];
 let orchestrationSelectedFlowId = "";
 let orchestrationBuilderItems = [];
 let orchestrationSelectedNodeId = "";
 let orchestrationCanvasZoom = 100;
+let orchestrationCanvasLayout = "board"; // "lane" | "board" (n8n-style freeform)
+let orchestrationFocusPrevRail = null;
+let orchestrationBoardEdges = []; // n8n-style freeform wires [{source,target,kind?}]
+let orchestrationWireFromNodeId = "";
+let orchestrationBoardSearchQuery = "";
+let orchestrationSelectedBoardEdge = null; // { source, target }
+let orchestrationWireFromKind = ""; // "", "true", "false", "error"
+let orchestrationSuppressedSyntheticEdges = new Set(); // "source>>target" for Start/Stop auto-links user removed
+let orchestrationAnchorPositions = {
+  start: { x: 80, y: 80 },
+  end: { x: 80, y: 520 },
+};
+let orchestrationUndoStack = [];
+let orchestrationRedoStack = [];
+let orchestrationHistorySuspended = false;
+const ORCHESTRATION_UNDO_LIMIT = 40;
 let orchestrationPolicySnapshot = null;
+let orchestrationLiveReadinessSnapshot = null;
 let orchestrationRunRows = [];
 let orchestrationApprovalSelectedFlowId = "";
 let orchestrationDueCertRows = [];
@@ -539,10 +611,13 @@ let orchestrationDragPayload = null;
 let orchestrationPaletteCategoryFilter = "all";
 let orchestrationSidebarTab = "flows";
 let orchestrationPaletteArmedType = "";
+/** User overrides for palette collapse: key → true=expanded, false=collapsed */
+let orchestrationPaletteExpandState = {};
 let orchestrationSidebarFlowPage = 1;
 let orchestrationSidebarFlowPageSize = TABLE_PAGINATION_DEFAULT_PAGE_SIZE;
 let orchestrationValidationState = { valid: true, errors: [], warnings: [], byNodeId: {}, flowLevel: [] };
 let orchestrationClientValidationCache = null;
+let orchestrationValidationPanelDismissed = false;
 let orchestrationCollapsedParallelGroups = new Set();
 let orchestrationDefaultRunMode = "serial";
 let orchestrationFocusedParallelBranchIndex = null;
@@ -568,13 +643,117 @@ const ORCHESTRATION_STUDIO_PHASES = ORCH_REG?.STUDIO_PHASES || [];
 const ORCHESTRATION_MAX_PARALLEL_BRANCHES = ORCH_REG?.ORCHESTRATION_MAX_PARALLEL_BRANCHES || 5;
 const ORCHESTRATION_MIN_PARALLEL_BRANCHES = ORCH_REG?.ORCHESTRATION_MIN_PARALLEL_BRANCHES || 2;
 
+function isOrchestrationAnchorId(id) {
+  return id === ORCHESTRATION_FLOW_START_ID || id === ORCHESTRATION_FLOW_END_ID;
+}
+
+function getOrchestrationAnchorPosition(which = "start") {
+  const key = which === "end" || which === "stop" ? "end" : "start";
+  const fallback = key === "end" ? { x: 80, y: 520 } : { x: 80, y: 80 };
+  const current = orchestrationAnchorPositions?.[key];
+  return {
+    x: Number(current?.x ?? fallback.x),
+    y: Number(current?.y ?? fallback.y),
+  };
+}
+
+function setOrchestrationAnchorPosition(which, position) {
+  const key = which === "end" || which === "stop" ? "end" : "start";
+  orchestrationAnchorPositions = orchestrationAnchorPositions || { start: { x: 80, y: 80 }, end: { x: 80, y: 520 } };
+  orchestrationAnchorPositions[key] = {
+    x: Math.max(16, Number(position?.x || 16)),
+    y: Math.max(16, Number(position?.y || 16)),
+  };
+}
+
+function getOrchestrationBoardEntityById(id) {
+  if (id === ORCHESTRATION_FLOW_START_ID) {
+    return {
+      id: ORCHESTRATION_FLOW_START_ID,
+      type: "flow_start",
+      name: "Start",
+      position: getOrchestrationAnchorPosition("start"),
+      config: {},
+    };
+  }
+  if (id === ORCHESTRATION_FLOW_END_ID) {
+    return {
+      id: ORCHESTRATION_FLOW_END_ID,
+      type: "flow_end",
+      name: "Stop",
+      position: getOrchestrationAnchorPosition("end"),
+      config: {},
+    };
+  }
+  return getOrchestrationNodeById(id);
+}
+
+function ensureOrchestrationAnchorLayout(nodes = []) {
+  if (!orchestrationAnchorPositions?.start || !orchestrationAnchorPositions?.end) {
+    orchestrationAnchorPositions = { start: { x: 80, y: 80 }, end: { x: 80, y: 520 } };
+  }
+}
+
 function createOrchestrationStepNode(type) {
   const nodeType = String(type || "llm_chat");
+  const visual = getOrchestrationNodeVisual(nodeType);
+  const catalog = (typeof orchestrationNodeTypes !== "undefined" ? orchestrationNodeTypes : []).find(
+    (item) => item.type === nodeType,
+  ) || {};
+  const id = `node-${Date.now().toString(36).slice(-6)}`;
+  const config = getOrchestrationDefaultNodeConfig(nodeType);
+  if (nodeType === "while_loop" || nodeType === "do_while") {
+    config.source_node_id = id;
+    config.json_path = "$.index";
+    config.operator = "<";
+    config.compare_value = String(config.compare_value || "3");
+  }
   return {
-    id: `node-${Date.now().toString(36).slice(-6)}`,
+    id,
     type: nodeType,
-    config: getOrchestrationDefaultNodeConfig(nodeType),
+    name: String(catalog.label || visual.label || nodeType).trim(),
+    config,
     position: null,
+  };
+}
+
+function normalizeOrchestrationNodeName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, 120);
+}
+
+function getOrchestrationNodeDisplayName(node) {
+  const custom = normalizeOrchestrationNodeName(node?.name);
+  if (custom) return custom;
+  const catalog = (orchestrationNodeTypes || []).find((item) => item.type === node?.type) || {};
+  const visual = getOrchestrationNodeVisual(node?.type);
+  return String(catalog.label || visual.label || node?.type || "Step").trim();
+}
+
+function orchestrationNodeFromGraphPayload(node, index = 0) {
+  const type = String(node?.type || "llm_chat");
+  const defaults = getOrchestrationDefaultNodeConfig(type);
+  const config = {
+    ...defaults,
+    ...(node?.config && typeof node.config === "object" ? node.config : {}),
+  };
+  // Prefer top-level name; accept legacy config.step_name if present
+  const legacyName = normalizeOrchestrationNodeName(config.step_name);
+  if (Object.prototype.hasOwnProperty.call(config, "step_name")) delete config.step_name;
+  // Fill blank required defaults without wiping intentional empty overrides for optional keys.
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (config[key] == null || String(config[key]).trim() === "") {
+      if (value !== undefined && value !== null && String(value).trim() !== "") {
+        config[key] = value;
+      }
+    }
+  });
+  const name = normalizeOrchestrationNodeName(node?.name) || legacyName;
+  return {
+    id: String(node?.id || `node-${index + 1}`),
+    type,
+    name,
+    config,
+    position: node?.position && typeof node.position === "object" ? node.position : null,
   };
 }
 
@@ -599,15 +778,22 @@ function isOrchestrationStepItem(item) {
 }
 
 function isOrchestrationParallelItem(item) {
-  return item?.kind === "parallel" && Array.isArray(item?.branches);
+  return item?.kind === "parallel";
+}
+
+function normalizeOrchestrationBranches(branches) {
+  if (!Array.isArray(branches)) return [[], []];
+  const normalized = branches.map((branch) => (Array.isArray(branch) ? branch.filter(Boolean) : []));
+  while (normalized.length < ORCHESTRATION_MIN_PARALLEL_BRANCHES) normalized.push([]);
+  return normalized;
 }
 
 function countOrchestrationWidgets(items = orchestrationBuilderItems) {
   let total = 0;
-  items.forEach((item) => {
+  (Array.isArray(items) ? items : []).forEach((item) => {
     if (isOrchestrationStepItem(item)) total += 1;
     else if (isOrchestrationParallelItem(item)) {
-      item.branches.forEach((branch) => {
+      normalizeOrchestrationBranches(item.branches).forEach((branch) => {
         total += branch.length;
       });
     }
@@ -616,16 +802,18 @@ function countOrchestrationWidgets(items = orchestrationBuilderItems) {
 }
 
 function countOrchestrationParallelGroups(items = orchestrationBuilderItems) {
-  return items.filter((item) => isOrchestrationParallelItem(item)).length;
+  return (Array.isArray(items) ? items : []).filter((item) => isOrchestrationParallelItem(item)).length;
 }
 
 function flattenOrchestrationNodes(items = orchestrationBuilderItems) {
   const nodes = [];
-  items.forEach((item) => {
-    if (isOrchestrationStepItem(item)) nodes.push(item.node);
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    if (isOrchestrationStepItem(item) && item.node) nodes.push(item.node);
     else if (isOrchestrationParallelItem(item)) {
-      item.branches.forEach((branch) => {
-        branch.forEach((node) => nodes.push(node));
+      normalizeOrchestrationBranches(item.branches).forEach((branch) => {
+        branch.forEach((node) => {
+          if (node) nodes.push(node);
+        });
       });
     }
   });
@@ -633,15 +821,17 @@ function flattenOrchestrationNodes(items = orchestrationBuilderItems) {
 }
 
 function findOrchestrationNodeLocation(nodeId) {
+  if (!nodeId) return null;
   for (let itemIndex = 0; itemIndex < orchestrationBuilderItems.length; itemIndex += 1) {
     const item = orchestrationBuilderItems[itemIndex];
-    if (isOrchestrationStepItem(item) && item.node.id === nodeId) {
+    if (isOrchestrationStepItem(item) && item.node?.id === nodeId) {
       return { itemIndex, branchIndex: null, nodeIndex: 0, item, node: item.node };
     }
     if (isOrchestrationParallelItem(item)) {
-      for (let branchIndex = 0; branchIndex < item.branches.length; branchIndex += 1) {
-        const branch = item.branches[branchIndex];
-        const nodeIndex = branch.findIndex((node) => node.id === nodeId);
+      const branches = normalizeOrchestrationBranches(item.branches);
+      for (let branchIndex = 0; branchIndex < branches.length; branchIndex += 1) {
+        const branch = branches[branchIndex];
+        const nodeIndex = branch.findIndex((node) => node?.id === nodeId);
         if (nodeIndex >= 0) {
           return { itemIndex, branchIndex, nodeIndex, item, node: branch[nodeIndex] };
         }
@@ -893,7 +1083,48 @@ function moveOrchestrationParallelBranchOrder(itemIndex, branchIndex, direction)
   orchestrationFocusedParallelBranchIndex = branchIndex + direction;
 }
 
+function listOrchestrationUpstreamNodesFromEdges(nodeId) {
+  const targetId = String(nodeId || "").trim();
+  if (!targetId) return [];
+  const nodes = flattenOrchestrationNodes().filter((node) => node && node.id);
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  if (!nodesById.has(targetId)) return [];
+  ensureOrchestrationBoardEdgesSeeded(nodes);
+  const incoming = new Map();
+  const addIncoming = (source, target) => {
+    if (!source || !target || source === target) return;
+    if (!nodesById.has(source) || !nodesById.has(target)) return;
+    if (!incoming.has(target)) incoming.set(target, []);
+    if (!incoming.get(target).includes(source)) incoming.get(target).push(source);
+  };
+  sanitizeOrchestrationBoardEdges(nodes.map((node) => node.id)).forEach((edge) => {
+    addIncoming(edge.source, edge.target);
+  });
+  nodes.forEach((node) => {
+    const config = node.config || {};
+    ["true_branch", "false_branch", "body_branch", "exit_branch", "error_branch", "default_branch"].forEach((field) => {
+      addIncoming(node.id, String(config[field] || "").trim());
+    });
+  });
+  const visited = new Set();
+  const ordered = [];
+  const queue = [...(incoming.get(targetId) || [])];
+  while (queue.length) {
+    const id = queue.shift();
+    if (!id || visited.has(id) || id === targetId) continue;
+    visited.add(id);
+    const node = nodesById.get(id);
+    if (node) ordered.push(node);
+    (incoming.get(id) || []).forEach((sourceId) => queue.push(sourceId));
+  }
+  return ordered.reverse();
+}
+
 function listOrchestrationNodesBefore(nodeId) {
+  if (orchestrationCanvasLayout === "board") {
+    const fromEdges = listOrchestrationUpstreamNodesFromEdges(nodeId);
+    if (fromEdges.length) return fromEdges;
+  }
   const located = findOrchestrationNodeLocation(nodeId);
   if (!located) return [];
   const prior = [];
@@ -918,12 +1149,10 @@ function listOrchestrationNodesBefore(nodeId) {
 
 function getOrchestrationPriorSteps(currentNodeId) {
   return listOrchestrationNodesBefore(currentNodeId).map((node, index) => {
-    const visual = getOrchestrationNodeVisual(node.type);
-    const catalog = orchestrationNodeTypes.find((item) => item.type === node.type) || {};
     return {
       id: node.id,
       type: node.type,
-      label: `${index + 1}. ${catalog.label || visual.label}`,
+      label: `${index + 1}. ${getOrchestrationNodeDisplayName(node)}`,
     };
   });
 }
@@ -933,9 +1162,19 @@ function getOrchestrationFallbackNodeTypes() {
   return [];
 }
 
-function getOrchestrationConfigFieldMeta(field) {
-  if (ORCH_REG?.getConfigFieldMeta) return ORCH_REG.getConfigFieldMeta(field);
+function getOrchestrationConfigFieldMeta(field, nodeType = "") {
+  if (ORCH_REG?.getConfigFieldMeta) return ORCH_REG.getConfigFieldMeta(field, nodeType);
   return { label: field, placeholder: field, wide: false, multiline: false };
+}
+
+function orchestrationNodeMatchesBoardSearch(node) {
+  const query = String(orchestrationBoardSearchQuery || "").trim().toLowerCase();
+  if (!query) return true;
+  const visual = getOrchestrationNodeVisual(node?.type);
+  const catalog = orchestrationNodeTypes.find((item) => item.type === node?.type) || {};
+  const keywords = (visual.keywords || []).join(" ");
+  const hay = `${node?.id || ""} ${node?.name || ""} ${getOrchestrationNodeDisplayName(node)} ${node?.type || ""} ${catalog.label || ""} ${visual.label || ""} ${keywords} ${JSON.stringify(node?.config || {})}`.toLowerCase();
+  return hay.includes(query);
 }
 
 function getOrchestrationMappingSections() {
@@ -964,6 +1203,19 @@ function getOrchestrationMappingFieldSet() {
 function getOrchestrationCustomInspectorFields(nodeType) {
   if (ORCH_REG?.getCustomInspectorFields) return new Set(ORCH_REG.getCustomInspectorFields(nodeType));
   return new Set();
+}
+
+function isOrchestrationProviderHttpApiType(nodeType) {
+  if (ORCH_REG?.isProviderHttpApiType) return ORCH_REG.isProviderHttpApiType(nodeType);
+  const key = String(nodeType || "").trim();
+  if (!key.endsWith("_api") || key === "http_request") return false;
+  // Offline fallback: fixed-host and allowlisted-host APIs both use auth_binding_id.
+  return true;
+}
+
+function usesOrchestrationSchemaInspector(nodeType) {
+  if (ORCH_REG?.usesSchemaDrivenInspector) return ORCH_REG.usesSchemaDrivenInspector(nodeType);
+  return isOrchestrationProviderHttpApiType(nodeType);
 }
 
 function isOrchestrationMappingField(fieldName) {
@@ -1057,10 +1309,26 @@ function applyOrchestrationInspectorFieldValue(node, fieldName, value, { mode = 
   return true;
 }
 
-function renderOrchestrationVariableFieldOptions(stepType, includeCustom = true) {
-  const paths = getOrchestrationOutputFieldPaths(stepType);
+function renderOrchestrationVariableFieldOptions(stepType, includeCustom = true, stepId = "") {
+  const history = stepId ? orchestrationHistoryOutputShapes[stepId] : null;
+  const livePaths = history
+    ? listOrchestrationOutputFieldPaths(history)
+        .map((path) => path.replace(/^\$\.?/, ""))
+        .filter(Boolean)
+    : [];
+  const catalogPaths = getOrchestrationOutputFieldPaths(stepType);
+  const paths = [];
+  const seen = new Set();
+  [...livePaths, ...catalogPaths].forEach((path) => {
+    if (!path || seen.has(path)) return;
+    seen.add(path);
+    paths.push(path);
+  });
   const options = paths
-    .map((path) => `<option value="${safeText(path)}">${safeText(path)}</option>`)
+    .map((path) => {
+      const live = livePaths.includes(path);
+      return `<option value="${safeText(path)}">${safeText(path)}${live ? " · last run" : ""}</option>`;
+    })
     .join("");
   const fullOutput = `<option value="__full__">Entire step output</option>`;
   return includeCustom
@@ -1112,7 +1380,7 @@ function bindOrchestrationVariablePickers(scope, node) {
       fieldSelect.disabled = !stepId;
       if (!stepId) return;
       const step = getOrchestrationPriorSteps(node.id).find((item) => item.id === stepId);
-      fieldSelect.innerHTML = `<option value="">Select field…</option>${renderOrchestrationVariableFieldOptions(step?.type || "")}`;
+      fieldSelect.innerHTML = `<option value="">Select field…</option>${renderOrchestrationVariableFieldOptions(step?.type || "", true, stepId)}`;
     });
 
     fieldSelect.addEventListener("change", () => {
@@ -1226,7 +1494,7 @@ function bindOrchestrationVariablePickers(scope, node) {
 }
 
 function renderOrchestrationMappingField(field, node, required = false) {
-  const meta = getOrchestrationConfigFieldMeta(field);
+  const meta = getOrchestrationConfigFieldMeta(field, node?.type);
   let helperText = meta.helperText || "";
   if (field === "body_template" && (node.type === "email_send" || node.type === "sms_send")) {
     helperText = "Message body with {{steps['NODE_ID'].output.field}} placeholders from prior steps.";
@@ -1406,14 +1674,62 @@ function escapeOrchestrationFieldAttr(value) {
     .replace(/</g, "&lt;");
 }
 
+function isOrchestrationCredentialBindingField(field) {
+  const name = String(field || "").trim().toLowerCase();
+  return (
+    name === "auth_binding_id" ||
+    name === "binding_id" ||
+    name === "credential_binding_id" ||
+    name === "token_binding_id" ||
+    name === "hmac_secret_binding_id"
+  );
+}
+
+function renderOrchestrationCredentialBindingSelect(field, value, { required = false, label = "", helper = "", wide = true } = {}) {
+  const wideClass = wide ? " wide-field" : "";
+  const requiredMark = required ? " *" : "";
+  const helperHtml = helper ? `<span class="flow-mapping-field-hint">${safeText(helper)}</span>` : "";
+  const current = String(value || "").trim();
+  const selectedAttr = current ? "" : " selected";
+  const currentOption = current
+    ? `<option value="${escapeOrchestrationFieldAttr(current)}" selected>${escapeOrchestrationFieldAttr(current)} (loading…)</option>`
+    : "";
+  return `<label class="${wideClass.trim()}">${safeText(label || "Credential binding")}${requiredMark}${helperHtml}<select data-inspector-config-field="${escapeOrchestrationFieldAttr(field)}" data-credential-binding-select aria-label="${safeText(label || "Credential binding")}"><option value=""${selectedAttr}>Select credential binding…</option>${currentOption}</select></label>`;
+}
+
 function renderOrchestrationConfigFieldControl(field, node, required = false) {
-  const meta = getOrchestrationConfigFieldMeta(field);
+  const meta = getOrchestrationConfigFieldMeta(field, node?.type);
   const value = orchestrationConfigFieldValue(node.config || {}, field, meta);
   const wideClass = meta.wide ? " wide-field" : "";
   const requiredMark = required ? " *" : "";
   const helper = meta.helperText
     ? `<span class="flow-mapping-field-hint">${safeText(meta.helperText)}</span>`
     : "";
+
+  if (isOrchestrationCredentialBindingField(field)) {
+    return renderOrchestrationCredentialBindingSelect(field, value, {
+      required,
+      label: meta.label || "Credential binding",
+      helper: meta.helperText || "Choose a binding from Providers → Credential Bindings.",
+      wide: true,
+    });
+  }
+
+  if (field === "error_branch" || field === "true_branch" || field === "false_branch" || field === "default_branch") {
+    const emptyLabel =
+      field === "error_branch"
+        ? "Stop / no error path…"
+        : field === "true_branch"
+          ? "Default successors…"
+          : field === "default_branch"
+            ? "No default branch…"
+            : "Skip / default…";
+    return `<label class="${wideClass.trim()}">${safeText(meta.label || field)}${requiredMark}${helper}<select data-inspector-config-field="${field}"><option value="">${safeText(emptyLabel)}</option>${renderOrchestrationBranchTargetOptions(node.id, value)}</select></label>`;
+  }
+
+  if (field === "source_node_id" || field === "source_a_node_id" || field === "source_b_node_id") {
+    return `<label class="${wideClass.trim()}">${safeText(meta.label || field)}${requiredMark}${helper}<select data-inspector-config-field="${field}"><option value="">Select prior step…</option>${renderOrchestrationPriorStepOptions(node.id, value)}</select></label>`;
+  }
 
   if (meta.type === "select" && Array.isArray(meta.options)) {
     const options = meta.options
@@ -1453,6 +1769,41 @@ function getOrchestrationDefaultNodeConfig(type) {
       return { store_id: "", content_template: "" };
     case "rag_query":
       return { store_id: "", query_template: "", top_k: "8" };
+    case "embedding_create":
+      return {
+        model_id: "text-embedding-3-small",
+        input_template: "{{input}}",
+        binding_id: "",
+      };
+    case "condition":
+      return { operator: "==", json_path: "$.", true_branch: "", false_branch: "" };
+    case "while_loop":
+    case "do_while":
+      return {
+        operator: "<",
+        json_path: "$.index",
+        source_node_id: "",
+        body_branch: "",
+        exit_branch: "",
+        max_iterations: "25",
+        collect_results: "false",
+        compare_value: "3",
+      };
+    case "foreach_map":
+      return {
+        items_path: "$",
+        mapping_json: '{\n  "value": "{{item}}"\n}',
+      };
+    case "set_fields":
+      return {
+        fields_json: '{\n  "my_var": ""\n}',
+      };
+    case "static_data":
+      return {
+        fields_json: '{\n  "status": "open"\n}',
+      };
+    case "split_in_batches":
+      return { items_path: "$", batch_size: "10", batch_index: "0" };
     default:
       return {};
   }
@@ -1462,6 +1813,7 @@ function runOrchestrationClientValidation() {
   syncOrchestrationBuilderConfigs();
   const byNodeId = {};
   const flowLevel = [];
+  const warnings = [];
   const nodes = flattenOrchestrationNodes();
   const policy = orchestrationPolicySnapshot || {};
   const maxNodes = policy.max_nodes_per_flow || 50;
@@ -1478,6 +1830,13 @@ function runOrchestrationClientValidation() {
         issues.push(`Missing required field: ${field}`);
       }
     });
+    if (node.type === "llm_chat") {
+      const modelId = String(node.config?.model_id || "").trim();
+      const agentKey = String(node.config?.agent_key || "").trim();
+      if (!modelId && !agentKey) {
+        issues.push("LLM Chat requires a model or agent config");
+      }
+    }
     if (node.type === "http_request") {
       const authType = String(node.config?.auth_type || "none").trim().toLowerCase();
       if (authType && authType !== "none" && !String(node.config?.auth_binding_id || "").trim()) {
@@ -1494,6 +1853,29 @@ function runOrchestrationClientValidation() {
       }
       if (jsonPath && !String(node.config?.source_node_id || "").trim()) {
         issues.push("Select a prior step for JSON path conditions");
+      }
+    }
+    if (node.type === "while_loop" || node.type === "do_while") {
+      const jsonPath = String(node.config?.json_path || "").trim();
+      const sourceId = String(node.config?.source_node_id || "").trim();
+      if (jsonPath && !jsonPath.startsWith("$")) {
+        issues.push("JSON path must start with $");
+      }
+      if (jsonPath && jsonPath !== "$" && jsonPath !== "$." && !sourceId) {
+        issues.push("Select a prior step or This loop for the condition");
+      }
+      if (!String(node.config?.body_branch || "").trim()) {
+        issues.push("Wire a Body path (first step inside the loop)");
+      }
+      const maxRaw = String(node.config?.max_iterations || "25").trim();
+      const maxIter = Number(maxRaw);
+      if (!Number.isFinite(maxIter) || maxIter < 1 || maxIter > 100) {
+        issues.push("Max iterations must be between 1 and 100");
+      }
+      const pathUsable = Boolean(sourceId && jsonPath && jsonPath !== "$" && jsonPath !== "$.");
+      const expression = String(node.config?.expression || "").trim();
+      if (!pathUsable && !expression) {
+        warnings.push(`${node.id}: no usable loop condition — will run until max iterations`);
       }
     }
     if (node.type === "human_approval") {
@@ -1520,7 +1902,7 @@ function runOrchestrationClientValidation() {
   Object.entries(byNodeId).forEach(([nodeId, issues]) => {
     issues.forEach((issue) => errors.push(`${nodeId}: ${issue}`));
   });
-  return { valid: errors.length === 0, errors, warnings: [], byNodeId, flowLevel };
+  return { valid: errors.length === 0, errors, warnings, byNodeId, flowLevel };
 }
 
 function refreshOrchestrationValidationCache() {
@@ -1581,15 +1963,17 @@ function selectOrchestrationValidationNode(nodeId) {
   renderOrchestrationStudio();
 }
 
-function renderOrchestrationValidationPanel() {
+function renderOrchestrationValidationPanel(options = {}) {
   const panel = qs("#orchestrationValidationPanel");
   if (!panel) return;
+  const forceShow = Boolean(options.forceShow);
+  if (forceShow) orchestrationValidationPanelDismissed = false;
   const client = orchestrationClientValidationCache || runOrchestrationClientValidation();
   const mergedValid = client.valid && orchestrationValidationState.valid;
   const mergedErrors = [...new Set([...(client.errors || []), ...(orchestrationValidationState.errors || [])])];
   const mergedWarnings = [...new Set([...(client.warnings || []), ...(orchestrationValidationState.warnings || [])])];
   const hasIssues = !mergedValid || mergedWarnings.length > 0;
-  if (!hasIssues || !isOrchestrationFlowActive()) {
+  if (!hasIssues || !isOrchestrationFlowActive() || orchestrationValidationPanelDismissed) {
     panel.hidden = true;
     panel.innerHTML = "";
     return;
@@ -1598,10 +1982,11 @@ function renderOrchestrationValidationPanel() {
   panel.className = `flow-validation-panel ${mergedValid ? "is-warn" : "is-error"}`;
   const errorItems = mergedErrors.slice(0, 10);
   const warnItems = mergedWarnings.slice(0, 5);
+  const moreCount = Math.max(0, mergedErrors.length - errorItems.length);
   panel.innerHTML = `
     <div class="flow-validation-head">
-      <strong>${mergedValid ? "Review before run" : `${errorItems.length} issue${errorItems.length === 1 ? "" : "s"} to fix`}</strong>
-      <button type="button" class="ghost flow-validation-dismiss" aria-label="Dismiss validation summary">×</button>
+      <strong>${mergedValid ? "Review before run" : `${mergedErrors.length} issue${mergedErrors.length === 1 ? "" : "s"} to fix`}</strong>
+      <button type="button" class="ghost flow-validation-dismiss" title="Dismiss" aria-label="Dismiss validation summary">×</button>
     </div>
     <ul class="flow-validation-list">
       ${errorItems
@@ -1614,12 +1999,14 @@ function renderOrchestrationValidationPanel() {
         .join("")}
       ${warnItems.map((w) => `<li class="flow-validation-item is-warn">${safeText(w)}</li>`).join("")}
     </ul>
+    ${moreCount ? `<p class="flow-validation-more">+${moreCount} more — open Check for full list</p>` : ""}
   `;
-  panel.querySelector(".flow-validation-dismiss")?.addEventListener("click", () => {
-    orchestrationValidationState = { valid: true, errors: [], warnings: [], byNodeId: {}, flowLevel: [] };
-    refreshOrchestrationValidationCache();
-    renderOrchestrationValidationPanel();
-    renderOrchestrationCanvas();
+  panel.querySelector(".flow-validation-dismiss")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    orchestrationValidationPanelDismissed = true;
+    panel.hidden = true;
+    panel.innerHTML = "";
   });
   panel.querySelectorAll("[data-validation-jump]").forEach((item) => {
     item.addEventListener("click", () => {
@@ -1716,7 +2103,7 @@ const VIEW_TITLES = {
   agents: "Agents",
   playground: "Playground",
   "benchmark-scan": "Benchmark & Scan",
-  orchestration: "Flow Orchestration",
+  orchestration: "Flow Studio",
   "routing-gateway": "Routing & Gateway",
   "runtime-config": "Runtime Config",
   providers: "Providers",
@@ -1732,24 +2119,50 @@ const VIEW_TITLES = {
 };
 
 const VIEW_DESCRIPTIONS = {
-  overview: "Platform health, spend, and operator shortcuts.",
-  agents: "Register agents, manage ownership, and configure agent settings.",
-  playground: "Test prompts, manage the registry, and review run quality.",
-  "benchmark-scan": "Run benchmarks and security scans with history browsing.",
-  orchestration: "Configure multi-step workflows with validation, approval gates, and run history.",
-  "routing-gateway": "Manage routes, gateway policies, keys, MCP, memory/context tuning, semantic cache defaults, vector store registry, and OpenAI-compatible ops.",
-  "runtime-config": "Edit database-backed runtime values. Super Admins can manage the Rule Catalog; other admins can browse and test rules.",
-  providers: "Tenant-scoped workload identity, secret providers, model catalog, and entitlements with guided operator workflows.",
-  modules: "Secure module lifecycle and AI skills registry.",
-  agentic: "Readiness certifications, schedules, and checkpoint workflows.",
-  discovery: "Source sync, triage, conflicts, alerts, and promotion.",
-  cost: "Spend tracking, budgets, pricing, and anomaly review.",
-  audit: "Browse immutable audit events and evidence trails.",
-  compliance: "Control coverage, evidence bundles, and investigation workflows.",
-  observability: "Trace lookup, log explorer, and schema health checks.",
-  security: "Session policy, SSO, directory, and authorization explainability.",
-  "browser-security": "GuardBridge extension telemetry, policies, and incident export.",
+  overview: "Governed posture, spend ledger, and plane shortcuts.",
+  agents: "Enroll agents, attribute ownership, and bind agent settings to the plane.",
+  playground: "Prompt lab — run, judge, triage.",
+  "benchmark-scan": "Exams, scans, and history.",
+  orchestration: "Design · Govern · Run on the governed canvas.",
+  "routing-gateway": "Routes, keys, memory, and ops.",
+  "runtime-config": "Plane defaults and the validation rule catalog.",
+  providers: "Trust fabric for tenants, workload identity, secrets, and entitlements.",
+  modules: "Artifact catalog for module lifecycle and AI skills registry.",
+  agentic: "Readiness certification, load proof, and policy auto-tune schedules.",
+  discovery: "Inventory plane for source sync, triage, and governed promotion.",
+  cost: "Spend ledger for budgets, pricing, anomalies, and scope alerts.",
+  audit: "Immutable evidence trail for decisioned operator actions.",
+  compliance: "Coverage, evidence, and holds.",
+  observability: "Signal lineage across traces, logs, and schema contracts.",
+  security: "Identity & access — directory, sessions, SSO, and auth explain.",
+  "browser-security": "GuardBridge endpoint governance with minimized telemetry.",
 };
+
+const VIEW_DOMAIN_KICKERS = {
+  overview: "Control plane",
+  "runtime-config": "Plane defaults",
+  providers: "Trust fabric",
+  modules: "Artifact catalog",
+  agents: "Agent registry",
+  agentic: "Readiness plane",
+  playground: "Prompt laboratory",
+  "benchmark-scan": "Posture exams",
+  "routing-gateway": "Inference plane",
+  orchestration: "Core capability",
+  discovery: "Inventory plane",
+  cost: "Spend ledger",
+  audit: "Evidence ledger",
+  compliance: "Attestation",
+  observability: "Signal lineage",
+  security: "Access control",
+  "browser-security": "Endpoint governance",
+};
+
+function formatViewDomainKicker(viewName) {
+  return VIEW_DOMAIN_KICKERS[viewName] || "Governance plane";
+}
+
+
 
 function runtimeRuleStatusStorageKey() {
   const api = encodeURIComponent(String(state.apiBase || "unknown"));
@@ -1769,12 +2182,29 @@ function safeText(value) {
 }
 
 function setTableMessage(tbody, colSpan, message) {
+  if (!tbody) return;
+  const span = Math.max(1, Number(colSpan) || 1);
+  const text = String(message || "No records yet.");
+  const isEmptyCue = /no |empty|not found|nothing|load .* to/i.test(text);
   tbody.textContent = "";
+  if (isEmptyCue && typeof UiKit !== "undefined" && UiKit.renderEmptyState) {
+    const tr = document.createElement("tr");
+    tr.className = "table-empty-row";
+    const td = document.createElement("td");
+    td.colSpan = span;
+    td.innerHTML = UiKit.renderEmptyState({
+      title: text.replace(/\.\s*$/, ""),
+      message: "Adjust filters or refresh this console section.",
+    });
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
   const tr = document.createElement("tr");
+  tr.className = "table-message-row";
   const td = document.createElement("td");
-  td.colSpan = colSpan;
-  td.className = "mono";
-  td.textContent = message;
+  td.colSpan = span;
+  td.textContent = text;
   tr.appendChild(td);
   tbody.appendChild(tr);
 }
@@ -2024,6 +2454,7 @@ function appendTableRow(tbody, values) {
     tr.appendChild(td);
   });
   tbody.appendChild(tr);
+  return tr;
 }
 
 function buildApiUrl(path) {
@@ -2080,21 +2511,57 @@ function incidentRef() {
 function setGlobalError(message) {
   const banner = qs("#globalErrorBanner");
   const target = qs("#globalErrorMessage");
-  const footer = qs(".public-footer");
+  const footer = qs(".sidebar-footer");
+  const planeStatus = qs("#sidebarPlaneStatus");
+  const planeStatusText = qs("#sidebarPlaneStatusText");
   if (!banner || !target) return;
   target.textContent = `${safeText(message)} (Ref: ${incidentRef()})`;
   banner.hidden = false;
   if (footer) footer.classList.add("is-alert");
+  if (planeStatus && planeStatusText) {
+    planeStatus.classList.remove("is-ok", "is-degraded");
+    planeStatus.classList.add("is-incident");
+    planeStatusText.textContent = "Plane incident";
+  }
 }
 
 function clearGlobalError() {
   const banner = qs("#globalErrorBanner");
-  const footer = qs(".public-footer");
+  const footer = qs(".sidebar-footer");
   if (banner) banner.hidden = true;
   if (footer) footer.classList.remove("is-alert");
 }
 
+function syncSidebarPlaneStatus(label, isHealthy = false) {
+  const planeStatus = qs("#sidebarPlaneStatus");
+  const planeStatusText = qs("#sidebarPlaneStatusText");
+  const planeSummary = qs("#sidebarPlaneSummary");
+  if (!planeStatus || !planeStatusText) return;
+  const normalized = String(label || "").trim().toLowerCase();
+  planeStatus.classList.remove("is-ok", "is-degraded", "is-incident");
+  let statusLabel = `Plane ${safeText(label) || "idle"}`;
+  if (normalized === "incident") {
+    planeStatus.classList.add("is-incident");
+    statusLabel = "Plane incident";
+  } else if (normalized === "degraded") {
+    planeStatus.classList.add("is-degraded");
+    statusLabel = "Plane degraded";
+  } else if (Boolean(isHealthy) || normalized === "healthy" || normalized === "monitoring") {
+    planeStatus.classList.add("is-ok");
+    statusLabel = "Plane online";
+  }
+  planeStatusText.textContent = statusLabel;
+  planeStatus.title = statusLabel;
+  if (planeSummary) {
+    const railHint = qs(".app-shell")?.classList.contains("sidebar-rail")
+      ? " · click to expand sidebar"
+      : " — expand for edition links";
+    planeSummary.title = `${statusLabel}${railHint}`;
+  }
+}
+
 function renderStatusBadge(label, isHealthy = false) {
+  syncSidebarPlaneStatus(label, isHealthy);
   const badge = qs("#statusBadge");
   if (!badge) return;
   const action = qs("#statusAction");
@@ -3008,7 +3475,11 @@ async function setTenantCatalogStatus(row, status) {
     normalizedStatus === "inactive"
       ? `Deactivate tenant ${tenantId}? It will be removed from onboarding pickers but existing provider records remain.`
       : `Reactivate tenant ${tenantId}? It will appear in onboarding pickers again.`;
-  if (!window.confirm(confirmMessage)) return;
+  if (!(await operatorConfirm(confirmMessage, {
+    title: normalizedStatus === "inactive" ? "Deactivate tenant" : "Reactivate tenant",
+    okLabel: normalizedStatus === "inactive" ? "Deactivate" : "Reactivate",
+    danger: normalizedStatus === "inactive",
+  }))) return;
 
   const payload = {
     tenant_id: tenantId,
@@ -3092,9 +3563,12 @@ const AI_PROVIDER_TYPE_OPTIONS = [
   { value: "cohere", label: "Cohere" },
   { value: "mistral", label: "Mistral" },
   { value: "groq", label: "Groq" },
-  { value: "azure", label: "Azure OpenAI" },
+  { value: "azure-openai", label: "Azure OpenAI" },
+  { value: "azure", label: "Azure OpenAI (legacy id)" },
   { value: "aws", label: "AWS Bedrock" },
-  { value: "google", label: "Google (Gemini)" },
+  { value: "google", label: "Google Gemini API" },
+  { value: "vertex", label: "Google Vertex AI" },
+  { value: "deepseek", label: "DeepSeek" },
   { value: "perplexity", label: "Perplexity" },
   { value: "together", label: "Together AI" },
   { value: "fireworks", label: "Fireworks AI" },
@@ -3126,8 +3600,12 @@ const AI_PROVIDER_SECRET_REFS = {
   mistral: "providers/mistral/api-key",
   groq: "providers/groq/api-key",
   azure: "providers/azure/openai-key",
+  "azure-openai": "providers/azure/openai-key",
   aws: "providers/aws/bedrock-credentials",
+  bedrock: "providers/aws/bedrock-credentials",
   google: "providers/google/api-key",
+  vertex: "providers/vertex/access-token",
+  deepseek: "providers/deepseek/api-key",
   perplexity: "providers/perplexity/api-key",
   together: "providers/together/api-key",
   fireworks: "providers/fireworks/api-key",
@@ -3506,12 +3984,17 @@ function normalizeAgentTypeFromProvider(providerType) {
   if (["azure", "azure-openai", "azure-key-vault"].includes(normalized)) return "azure";
   if (["google", "gcp", "vertex", "gcp-secret-manager"].includes(normalized)) return "gcp";
   if (["onprem", "self-hosted", "vmware", "kubernetes"].includes(normalized)) return "onprem";
+  if (["openai", "anthropic", "cursor"].includes(normalized)) return "assistant";
   return "other";
 }
 
 function labelForAgentType(agentType) {
   const key = String(agentType || "").trim().toLowerCase();
   const labels = {
+    assistant: "Assistant",
+    chatbot: "Chatbot",
+    automation: "Automation",
+    orchestrator: "Orchestrator",
     aws: "AWS",
     azure: "Azure",
     gcp: "GCP",
@@ -3519,7 +4002,7 @@ function labelForAgentType(agentType) {
     hybrid: "Hybrid",
     other: "Other",
   };
-  return labels[key] || "Other";
+  return labels[key] || key.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) || "Other";
 }
 
 function setAgentTypeOptions(select, values, selectedValue = "") {
@@ -3544,20 +4027,43 @@ async function loadRegisterAgentTypeOptions() {
   const hint = qs("#registerAgentTypeHint");
   if (!select) return;
 
-  setSelectOptions(select, [], { placeholder: "Loading enabled agent types..." });
+  setSelectOptions(select, [], { placeholder: "Loading agent types..." });
+
+  const fallbackTypes = [
+    "assistant",
+    "chatbot",
+    "automation",
+    "orchestrator",
+    "aws",
+    "azure",
+    "gcp",
+    "onprem",
+    "hybrid",
+    "other",
+  ];
 
   try {
     const data = await api("/agents/register-options");
-    const options = uniqueSorted(Array.isArray(data?.allowed_agent_types) ? data.allowed_agent_types : []);
-    if (!options.length) throw new Error("No enabled agent types");
-    setAgentTypeOptions(select, options, options.includes("other") ? "other" : options[0]);
+    const options = Array.isArray(data?.allowed_agent_types) ? data.allowed_agent_types : [];
+    const catalog = options.length ? options : fallbackTypes;
+    const preferred = catalog.includes("assistant")
+      ? "assistant"
+      : catalog.includes("other")
+        ? "other"
+        : catalog[0];
+    setAgentTypeOptions(select, catalog, preferred);
     if (hint) {
-      hint.textContent = `Enabled agent types: ${options.map(labelForAgentType).join(", ")} (from active provider configuration).`;
+      const backed = Array.isArray(data?.provider_backed_agent_types) ? data.provider_backed_agent_types : [];
+      const backedLabel = backed.length
+        ? ` Provider-backed today: ${backed.map(labelForAgentType).join(", ")}.`
+        : "";
+      hint.textContent = `Available agent types (${catalog.length}): ${catalog.map(labelForAgentType).join(", ")}.${backedLabel}`;
     }
   } catch {
-    setAgentTypeOptions(select, ["other"], "other");
+    setAgentTypeOptions(select, fallbackTypes, "assistant");
     if (hint) {
-      hint.textContent = "Unable to load enabled agent types from backend; defaulting to Other.";
+      hint.textContent =
+        "Unable to load agent types from backend; showing full local catalog (not limited to 4 cloud types).";
     }
   }
 }
@@ -3572,6 +4078,7 @@ function mapAgentTypeToAiProvider(agentType) {
   if (normalized === "aws") return "openai";
   if (normalized === "azure") return "azure-openai";
   if (normalized === "gcp") return "google";
+  if (["assistant", "chatbot", "automation", "orchestrator"].includes(normalized)) return "openai";
   return "openai";
 }
 
@@ -4052,7 +4559,11 @@ async function deleteRuntimeValidationRule(rule) {
   }
   const ruleId = String(rule?.rule_id || "").trim();
   if (!ruleId) return;
-  if (!window.confirm(`Delete custom rule ${ruleId}?`)) return;
+  if (!(await operatorConfirm(`Delete custom rule ${ruleId}?`, {
+    title: "Delete validation rule",
+    okLabel: "Delete",
+    danger: true,
+  }))) return;
 
   try {
     await api(`/runtime-config/validation-rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" });
@@ -4622,12 +5133,18 @@ async function saveAgentConfigsToStorage(configs) {
   await Promise.all(
     rows
       .filter((config) => config?.agent_key)
-      .map((config) =>
-        api(`/agent-configs/${encodeURIComponent(config.agent_key)}`, {
+      .map((config) => {
+        const payload = {
+          ...config,
+          provider_priority: Array.isArray(config.provider_priority)
+            ? stringifyPriorityList(config.provider_priority)
+            : String(config.provider_priority || ""),
+        };
+        return api(`/agent-configs/${encodeURIComponent(config.agent_key)}`, {
           method: "PUT",
-          body: JSON.stringify(config),
-        }),
-      ),
+          body: JSON.stringify(payload),
+        });
+      }),
   );
 }
 
@@ -4719,9 +5236,22 @@ function appendTableCellBadge(tr, value, tone = "idle") {
   tr.appendChild(td);
 }
 
-function appendFlowPlatformStat(parent, value, label) {
+function appendFlowPlatformStat(parent, value, label, options = {}) {
   const article = document.createElement("article");
   article.className = "flow-platform-stat";
+  const numeric = Number(value);
+  if (options.attention && Number.isFinite(numeric) && numeric > 0) {
+    article.classList.add("is-attention");
+  }
+  if (options.view) {
+    article.classList.add("is-clickable");
+    article.tabIndex = 0;
+    article.setAttribute("role", "link");
+    article.dataset.view = options.view;
+    if (options.consoleTab) article.dataset.consoleTab = options.consoleTab;
+    article.title = options.title || `Open ${label}`;
+    article.setAttribute("aria-label", article.title);
+  }
   const strong = document.createElement("strong");
   strong.textContent = String(value ?? 0);
   const span = document.createElement("span");
@@ -4733,11 +5263,44 @@ function appendFlowPlatformStat(parent, value, label) {
 function renderOrchestrationPlatformSummaryGrid(panel, summary) {
   if (!panel) return;
   panel.textContent = "";
-  appendFlowPlatformStat(panel, summary?.flow_count, "Flows");
-  appendFlowPlatformStat(panel, summary?.pending_prod_approvals, "Prod approvals pending");
-  appendFlowPlatformStat(panel, summary?.certifications_due, "Certifications due");
-  appendFlowPlatformStat(panel, summary?.active_jit_grants, "Active JIT grants");
-  appendFlowPlatformStat(panel, summary?.runs_awaiting_approval, "Runs awaiting approval");
+  const deepLink = panel.id === "overviewOrchestrationSummary"
+    ? { view: "orchestration" }
+    : null;
+  appendFlowPlatformStat(panel, summary?.flow_count, "Flows", deepLink
+    ? { ...deepLink, consoleTab: "flows", title: "Open Flow Studio · All flows" }
+    : {});
+  appendFlowPlatformStat(panel, summary?.pending_prod_approvals, "Prod approvals pending", {
+    ...(deepLink || {}),
+    consoleTab: deepLink ? "approvals" : undefined,
+    title: deepLink ? "Open Flow Studio · Approvals" : undefined,
+    attention: true,
+  });
+  appendFlowPlatformStat(panel, summary?.certifications_due, "Certifications due", {
+    ...(deepLink || {}),
+    consoleTab: deepLink ? "security" : undefined,
+    title: deepLink ? "Open Flow Studio · Security" : undefined,
+    attention: true,
+  });
+  appendFlowPlatformStat(panel, summary?.active_jit_grants, "Active JIT grants", {
+    ...(deepLink || {}),
+    consoleTab: deepLink ? "security" : undefined,
+    title: deepLink ? "Open Flow Studio · Security" : undefined,
+    attention: true,
+  });
+  appendFlowPlatformStat(panel, summary?.runs_awaiting_approval, "Runs awaiting approval", {
+    ...(deepLink || {}),
+    consoleTab: deepLink ? "runs" : undefined,
+    title: deepLink ? "Open Flow Studio · History" : undefined,
+    attention: true,
+  });
+}
+
+async function openOrchestrationConsoleTab(tabName) {
+  await switchView("orchestration");
+  window.setTimeout(() => {
+    const tab = qs(`#orchestration [data-console-tab="${tabName || "studio"}"]`);
+    tab?.click();
+  }, 120);
 }
 
 function outcomeTone(outcome) {
@@ -4790,7 +5353,7 @@ function renderHorizontalBarChart(target, entries, { emptyMessage, valueKey = "c
   if (!rows.length) {
     const empty = document.createElement("p");
     empty.className = target.classList.contains("discovery-bar-chart") ? "discovery-chart-empty" : "observability-chart-empty";
-    empty.textContent = emptyMessage || "No data available.";
+    empty.textContent = emptyMessage || "No ledgered signals in window.";
     target.appendChild(empty);
     return;
   }
@@ -5238,7 +5801,7 @@ async function exportObservabilityLogs(format = "csv") {
   });
   const url = `${state.apiBase}/observability/logs/export${query}`;
   try {
-    const response = await fetch(url, { headers: { "X-Actor-Role": state.actorRole } });
+    const response = await fetch(url, { headers: ApiClient.buildHeaders(state) });
     if (!response.ok) throw new Error(`Export failed (${response.status})`);
     const blob = await response.blob();
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -6017,35 +6580,68 @@ function hideAllGlobalSearchPanels() {
   });
 }
 
+function getRecentViews() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_VIEWS_STORAGE_KEY) || "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.map((id) => String(id || "").trim()).filter(Boolean).slice(0, RECENT_VIEWS_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function rememberRecentView(viewName) {
+  const id = String(viewName || "").trim();
+  if (!id) return;
+  const next = [id, ...getRecentViews().filter((item) => item !== id)].slice(0, RECENT_VIEWS_LIMIT);
+  try {
+    localStorage.setItem(RECENT_VIEWS_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function prefetchLikelyViews(currentView) {
+  if (typeof ViewLoader === "undefined" || typeof ViewLoader.prefetchView !== "function") return;
+  const preferred = ["orchestration", "playground", "routing-gateway", "overview", "benchmark-scan"];
+  const candidates = [...getRecentViews(), ...preferred]
+    .map((id) => String(id || "").trim())
+    .filter((id) => id && id !== currentView && !ViewLoader.isLoaded(id));
+  const unique = [...new Set(candidates)].slice(0, 3);
+  if (!unique.length) return;
+  const run = () => {
+    unique.forEach((viewId, index) => {
+      window.setTimeout(() => {
+        void ViewLoader.prefetchView(viewId);
+      }, 350 + index * 550);
+    });
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(run, { timeout: 2800 });
+  } else {
+    window.setTimeout(run, 900);
+  }
+}
+
+async function operatorConfirm(message, options = {}) {
+  if (typeof UiKit !== "undefined" && typeof UiKit.confirm === "function") {
+    return UiKit.confirm(message, options);
+  }
+  return window.confirm(String(message || "Continue?"));
+}
+
 function renderGlobalSearchResults(query, panelSelector = "#globalSearchResults") {
   const panel = qs(panelSelector);
   if (!panel) return;
   const normalized = String(query || "").trim().toLowerCase();
-  if (!normalized) {
-    panel.hidden = true;
-    panel.textContent = "";
-    return;
-  }
 
-  const matches = globalSearchEntries
-    .filter((entry) => entry.keywords.includes(normalized))
-    .slice(0, 8);
-
-  panel.textContent = "";
-  if (!matches.length) {
-    const empty = document.createElement("div");
-    empty.className = "global-search-empty mono";
-    empty.textContent = "No matches found.";
-    panel.appendChild(empty);
-    panel.hidden = false;
-    return;
-  }
-
-  matches.forEach((entry) => {
+  const appendEntryButton = (entry, { recent = false } = {}) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "global-search-item";
-    button.innerHTML = `<strong>${safeText(entry.title)}</strong><span>${safeText(entry.subtitle)}</span>`;
+    button.className = recent ? "global-search-item global-search-item-recent" : "global-search-item";
+    button.setAttribute("role", "option");
+    const badge = recent ? `<em class="global-search-recent-badge">Recent</em>` : "";
+    button.innerHTML = `<strong>${safeText(entry.title)}</strong><span>${safeText(entry.subtitle)}</span>${badge}`;
     button.addEventListener("click", () => {
       switchView(entry.viewName);
       hideAllGlobalSearchPanels();
@@ -6058,7 +6654,44 @@ function renderGlobalSearchResults(query, panelSelector = "#globalSearchResults"
       }
     });
     panel.appendChild(button);
-  });
+  };
+
+  panel.textContent = "";
+  panel.setAttribute("role", "listbox");
+
+  if (!normalized) {
+    const recentIds = getRecentViews();
+    const recentEntries = recentIds
+      .map((viewName) => globalSearchEntries.find((entry) => entry.viewName === viewName && !entry.anchorId))
+      .filter(Boolean)
+      .slice(0, RECENT_VIEWS_LIMIT);
+    if (!recentEntries.length) {
+      panel.hidden = true;
+      return;
+    }
+    const heading = document.createElement("div");
+    heading.className = "global-search-heading mono";
+    heading.textContent = "Recent consoles";
+    panel.appendChild(heading);
+    recentEntries.forEach((entry) => appendEntryButton(entry, { recent: true }));
+    panel.hidden = false;
+    return;
+  }
+
+  const matches = globalSearchEntries
+    .filter((entry) => entry.keywords.includes(normalized))
+    .slice(0, 8);
+
+  if (!matches.length) {
+    const empty = document.createElement("div");
+    empty.className = "global-search-empty mono";
+    empty.textContent = "No governed matches.";
+    panel.appendChild(empty);
+    panel.hidden = false;
+    return;
+  }
+
+  matches.forEach((entry) => appendEntryButton(entry));
   panel.hidden = false;
 }
 
@@ -6076,18 +6709,54 @@ function bindGlobalSearchInput(inputSelector, panelSelector, buttonSelector = ""
   const panel = qs(panelSelector);
   const button = buttonSelector ? qs(buttonSelector) : null;
   if (!input || !panel) return;
+  let activeIndex = -1;
+
+  const items = () => Array.from(panel.querySelectorAll(".global-search-item"));
+  const setActive = (index) => {
+    const list = items();
+    list.forEach((el, i) => {
+      const on = i === index;
+      el.classList.toggle("is-active", on);
+      el.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    activeIndex = index;
+    list[index]?.scrollIntoView?.({ block: "nearest" });
+  };
 
   input.addEventListener("input", (evt) => {
+    activeIndex = -1;
     renderGlobalSearchResults(evt.target.value, panelSelector);
   });
   input.addEventListener("keydown", (evt) => {
+    const list = items();
     if (evt.key === "Escape") {
       panel.hidden = true;
       panel.textContent = "";
       input.value = "";
+      activeIndex = -1;
+      return;
+    }
+    if (evt.key === "ArrowDown" && list.length) {
+      evt.preventDefault();
+      if (panel.hidden) renderGlobalSearchResults(input.value, panelSelector);
+      const next = activeIndex < 0 ? 0 : (activeIndex + 1) % items().length;
+      setActive(next);
+      return;
+    }
+    if (evt.key === "ArrowUp" && list.length) {
+      evt.preventDefault();
+      if (panel.hidden) renderGlobalSearchResults(input.value, panelSelector);
+      const next = activeIndex <= 0 ? items().length - 1 : activeIndex - 1;
+      setActive(next);
+      return;
     }
     if (evt.key === "Enter") {
       evt.preventDefault();
+      const selected = items()[activeIndex];
+      if (selected) {
+        selected.click();
+        return;
+      }
       triggerGlobalSearch(inputSelector, panelSelector);
     }
   });
@@ -6095,9 +6764,11 @@ function bindGlobalSearchInput(inputSelector, panelSelector, buttonSelector = ""
   input.addEventListener("blur", () => {
     setTimeout(() => {
       panel.hidden = true;
+      activeIndex = -1;
     }, 120);
   });
   input.addEventListener("focus", () => {
+    activeIndex = -1;
     renderGlobalSearchResults(input.value, panelSelector);
   });
 }
@@ -7053,7 +7724,7 @@ function renderPlaygroundRuns() {
   const tbody = qs("#playgroundRunTable");
   if (!tbody) return;
   if (!playgroundRuns.length) {
-    setTableMessage(tbody, 7, "No runs yet.");
+    setTableMessage(tbody, 7, "No laboratory runs on ledger.");
     return;
   }
   tbody.textContent = "";
@@ -7328,6 +7999,15 @@ async function assessPlaygroundRunFeedback(options = {}) {
   const traceId = String(
     options.traceId || form?.elements.trace_id?.value || memRun?.inference_trace_id || "",
   ).trim();
+  const environment = String(
+    options.environment ||
+      qs("#playgroundRunForm")?.elements?.environment?.value ||
+      state.environmentProfile ||
+      "dev",
+  )
+    .trim()
+    .toLowerCase();
+  const assessEnvironment = !environment || environment === "local" ? "dev" : environment;
   setPlaygroundFeedbackAssessStatus("Running AI quality assessment…");
   try {
     const data = await api(`/playground/runs/${encodeURIComponent(runId)}/assess`, {
@@ -7335,7 +8015,7 @@ async function assessPlaygroundRunFeedback(options = {}) {
       body: JSON.stringify({
         response_text: responseText || null,
         trace_id: traceId || null,
-        environment: "dev",
+        environment: assessEnvironment,
       }),
     });
     applyPlaygroundFeedbackAssessment(data);
@@ -7772,7 +8452,12 @@ function renderPromptRegistryVersions() {
     rollbackBtn.className = "ghost";
     rollbackBtn.textContent = "Rollback";
     rollbackBtn.addEventListener("click", () => rollbackPromptRegistryVersion(version.version));
-    actions.appendChild(rollbackBtn);
+    const viewBtn = document.createElement("button");
+    viewBtn.type = "button";
+    viewBtn.className = "ghost";
+    viewBtn.textContent = "View";
+    viewBtn.addEventListener("click", () => loadPromptRegistryVersion(version.version));
+    actions.append(viewBtn, rollbackBtn);
     tr.appendChild(actions);
     tbody.appendChild(tr);
   });
@@ -7904,6 +8589,33 @@ async function loadPromptRegistryVersions(promptRegistryId) {
   }
 }
 
+async function loadPromptRegistryVersion(versionNumber, promptRegistryId) {
+  const result = qs("#promptRegistryResult");
+  const payloadTarget = qs("#promptRegistryVersionPayload");
+  const form = qs("#promptRegistryForm");
+  const trimmedId = String(promptRegistryId || selectedPromptRegistryId || "").trim();
+  const version = Number(versionNumber);
+  if (!trimmedId || !Number.isFinite(version) || version < 1) {
+    if (result) result.textContent = "Select a prompt and version first.";
+    return;
+  }
+  try {
+    const data = await api(`/playground/prompts/${encodeURIComponent(trimmedId)}/versions/${encodeURIComponent(String(version))}`);
+    selectedPromptRegistryId = data.prompt_registry_id || trimmedId;
+    if (form) {
+      form.elements.prompt_registry_id.value = selectedPromptRegistryId;
+      form.elements.prompt_text.value = data.prompt_text || "";
+      form.elements.change_reason.value = `viewed-v${data.version}`;
+    }
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+    if (result) {
+      result.textContent = `Loaded version ${safeText(data.version)} for ${safeText(selectedPromptRegistryId)} (${safeText(data.change_reason)}).`;
+    }
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function savePromptRegistryItem(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#promptRegistryForm");
@@ -7993,8 +8705,22 @@ async function promotePromptRegistryItem(previewOnly = false) {
     return;
   }
 
+  const targetEnvironment = String(raw.target_environment || "dev").trim().toLowerCase();
+  const approverRole = String(raw.approver_role || "").trim();
+  const approverId = String(raw.approver_id || "").trim();
+  const isProdTarget = targetEnvironment === "prod" || targetEnvironment === "production";
+  if (!previewOnly && isProdTarget && !actorBypassesProvidersDualApproval()) {
+    if (!approverRole || !approverId) {
+      if (result) {
+        result.textContent =
+          "Approver Role and Approver ID are required to promote prompts to production.";
+      }
+      return;
+    }
+  }
+
   const payload = {
-    target_environment: String(raw.target_environment || "dev").trim().toLowerCase(),
+    target_environment: targetEnvironment,
     reason: String(raw.reason || "promote").trim() || "promote",
     approval_ticket: String(raw.approval_ticket || "").trim() || null,
     require_render_validation: String(raw.require_render_validation || "true").toLowerCase() !== "false",
@@ -8002,10 +8728,15 @@ async function promotePromptRegistryItem(previewOnly = false) {
     preview_only: Boolean(previewOnly),
   };
 
+  const headers = {};
+  if (approverRole) headers["X-Approver-Role"] = approverRole;
+  if (approverId) headers["X-Approver-Id"] = approverId;
+
   try {
     const data = await api(`/playground/prompts/${encodeURIComponent(promptRegistryId)}/promote`, {
       method: "POST",
       body: JSON.stringify(payload),
+      headers,
     });
     if (!previewOnly) {
       selectedPromptRegistryId = data?.item?.prompt_registry_id || promptRegistryId;
@@ -8028,6 +8759,37 @@ async function promotePromptRegistryItem(previewOnly = false) {
 async function submitPromptRegistryPromotion(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   await promotePromptRegistryItem(false);
+}
+
+async function renderPromptRegistryItem() {
+  const form = qs("#promptRegistryPromotionForm");
+  const result = qs("#promptRegistryPromotionResult");
+  const payloadTarget = qs("#promptRegistryRenderPayload");
+  if (!form) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const promptRegistryId = String(raw.prompt_registry_id || selectedPromptRegistryId || "").trim();
+  if (!promptRegistryId) {
+    if (result) result.textContent = "Select a prompt registry item first.";
+    return;
+  }
+  try {
+    const data = await api(`/playground/prompts/${encodeURIComponent(promptRegistryId)}/render`, {
+      method: "POST",
+      body: JSON.stringify({
+        variables: parseRenderVariablesInput(raw.render_variables),
+        require_all_variables: true,
+      }),
+    });
+    const missing = Array.isArray(data.missing_variables) && data.missing_variables.length
+      ? data.missing_variables.join(", ")
+      : "none";
+    if (result) {
+      result.textContent = `Rendered ${safeText(promptRegistryId)} v${safeText(data.version)}. Missing variables: ${safeText(missing)}.`;
+    }
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
 }
 
 async function loadPlaygroundRuns(evt) {
@@ -8751,13 +9513,19 @@ function renderGatewayOpenAiFilesRows() {
     viewBtn.textContent = "Get";
     viewBtn.addEventListener("click", () => loadGatewayOpenAiFileById(row.id));
 
+    const contentBtn = document.createElement("button");
+    contentBtn.type = "button";
+    contentBtn.className = "ghost";
+    contentBtn.textContent = "Content";
+    contentBtn.addEventListener("click", () => downloadGatewayOpenAiFileContent(row.id));
+
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "ghost";
     deleteBtn.textContent = "Delete";
     deleteBtn.addEventListener("click", () => deleteGatewayOpenAiFileById(row.id));
 
-    actions.append(useBtn, viewBtn, deleteBtn);
+    actions.append(useBtn, viewBtn, contentBtn, deleteBtn);
     tr.appendChild(actions);
     tbody.appendChild(tr);
   });
@@ -8768,7 +9536,7 @@ function renderKeyRows() {
   const tbody = qs("#keysTable");
   if (!tbody) return;
   if (!keyRows.length) {
-    setTableMessage(tbody, 8, "No keys found.");
+    setTableMessage(tbody, 11, "No virtual keys on ledger.");
     return;
   }
   tbody.textContent = "";
@@ -8784,6 +9552,9 @@ function renderKeyRows() {
     appendTableCell(tr, row.allowed_models);
     appendTableCell(tr, summarizeKeyGuardrails(row.guardrail_policy));
     appendTableCell(tr, row.status);
+    appendTableCell(tr, row.expires_at ? formatGatewayRecordDate(row.expires_at) : "—");
+    appendTableCell(tr, row.authn_method || "token");
+    appendTableCell(tr, row.jit_request_id || "—");
     const actions = document.createElement("td");
     actions.className = "cell-actions";
     const useBtn = document.createElement("button");
@@ -8791,6 +9562,12 @@ function renderKeyRows() {
     useBtn.className = "ghost";
     useBtn.textContent = "Edit";
     useBtn.addEventListener("click", () => populateKeyForm(row));
+    const refreshBtn = document.createElement("button");
+    refreshBtn.type = "button";
+    refreshBtn.className = "ghost";
+    refreshBtn.textContent = "Refresh";
+    refreshBtn.title = "GET /keys/{key_id}";
+    refreshBtn.addEventListener("click", () => void retrieveKey(row.key_id));
     const usageBtn = document.createElement("button");
     usageBtn.type = "button";
     usageBtn.className = "ghost";
@@ -8825,7 +9602,7 @@ function renderKeyRows() {
       populateKeyRotationScheduleForm(row.key_id);
       loadKeyRotationSchedules(null, row.key_id);
     });
-    actions.append(useBtn, usageBtn, rotateBtn, toggleStatusBtn, guardrailBtn, budgetBtn, schedulesBtn);
+    actions.append(useBtn, refreshBtn, usageBtn, rotateBtn, toggleStatusBtn, guardrailBtn, budgetBtn, schedulesBtn);
     tr.appendChild(actions);
     tbody.appendChild(tr);
   });
@@ -9130,6 +9907,7 @@ async function createGatewayJitRequest(evt) {
   const accessResult = qs("#gatewayAccessReviewResult");
   if (!form || !result) return;
   const raw = Object.fromEntries(new FormData(form).entries());
+  hideGatewayJitMintedKeyPanel();
 
   try {
     const data = await api("/gateway/jit-requests", {
@@ -9139,13 +9917,352 @@ async function createGatewayJitRequest(evt) {
         environment: String(raw.environment || "dev").trim(),
         justification: String(raw.justification || "").trim(),
         requested_duration_minutes: Number(raw.requested_duration_minutes || 60),
+        owner_scope_type: String(raw.owner_scope_type || "user").trim() || "user",
+        owner_scope_id: String(raw.owner_scope_id || "").trim() || null,
+        mint_virtual_key: String(raw.mint_virtual_key || "true").trim().toLowerCase() !== "false",
       }),
     });
     const approveForm = qs("#gatewayJitApproveForm");
     if (approveForm?.elements?.request_id) approveForm.elements.request_id.value = data.request_id;
     result.textContent = JSON.stringify(data, null, 2);
-    if (accessResult) accessResult.textContent = `Created JIT request ${data.request_id}.`;
+    if (accessResult) {
+      accessResult.textContent = `Created JIT request ${data.request_id} (mint_virtual_key=${data.mint_virtual_key ? "true" : "false"}, owner=${safeText(data.owner_scope_type)}:${safeText(data.owner_scope_id || "requester")}).`;
+    }
+    void loadGatewayJitQueue();
   } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+    if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function hideGatewayJitMintedKeyPanel() {
+  const panel = qs("#gatewayJitMintedKeyPanel");
+  if (panel) panel.hidden = true;
+  const tokenInput = qs("#gatewayJitMintedKeyToken");
+  if (tokenInput) tokenInput.value = "";
+}
+
+function showGatewayJitMintedKeyPanel(data) {
+  const panel = qs("#gatewayJitMintedKeyPanel");
+  const keyIdEl = qs("#gatewayJitMintedKeyId");
+  const expiresEl = qs("#gatewayJitMintedKeyExpires");
+  const tokenInput = qs("#gatewayJitMintedKeyToken");
+  if (!panel || !keyIdEl || !expiresEl || !tokenInput) return;
+  const keyId = String(data.issued_virtual_key_id || "").trim();
+  const token = String(data.issued_virtual_key_token || "").trim();
+  if (!keyId && !token) {
+    panel.hidden = true;
+    return;
+  }
+  keyIdEl.textContent = keyId || "—";
+  expiresEl.textContent = data.expires_at ? formatGatewayRecordDate(data.expires_at) : "—";
+  tokenInput.value = token;
+  panel.hidden = false;
+  panel.dataset.keyId = keyId;
+}
+
+async function copyGatewayJitMintedToken() {
+  const tokenInput = qs("#gatewayJitMintedKeyToken");
+  const accessResult = qs("#gatewayAccessReviewResult");
+  const token = String(tokenInput?.value || "").trim();
+  if (!token) {
+    if (accessResult) accessResult.textContent = "No one-time token available to copy.";
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(token);
+    } else {
+      tokenInput.focus();
+      tokenInput.select();
+      document.execCommand("copy");
+    }
+    if (accessResult) accessResult.textContent = "Copied one-time JIT bearer token to clipboard.";
+  } catch (err) {
+    if (accessResult) accessResult.textContent = `Copy failed: ${safeText(err.message)}`;
+  }
+}
+
+function jumpGatewayJitMintedKey() {
+  const panel = qs("#gatewayJitMintedKeyPanel");
+  const keyId = String(panel?.dataset?.keyId || qs("#gatewayJitMintedKeyId")?.textContent || "").trim();
+  if (!keyId || keyId === "—") return;
+  const keyForm = qs("#keyLifecycleForm");
+  if (keyForm?.elements?.key_id) keyForm.elements.key_id.value = keyId;
+  void retrieveKey(keyId);
+  qs("#keysTable")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderGatewayJitQueueTable() {
+  const tbody = qs("#gatewayJitQueueTable");
+  const summary = qs("#gatewayJitQueueSummary");
+  if (!tbody) return;
+  if (!gatewayJitRows.length) {
+    setTableMessage(tbody, 8, "No JIT requests for current filters.");
+    if (summary) summary.textContent = "0 JIT requests loaded.";
+    return;
+  }
+  if (summary) {
+    summary.textContent = `${gatewayJitRows.length} JIT request${gatewayJitRows.length === 1 ? "" : "s"} loaded.`;
+  }
+  tbody.textContent = "";
+  gatewayJitRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.request_id);
+    appendTableCell(tr, row.status);
+    appendTableCell(tr, row.entitlement_id);
+    appendTableCell(tr, row.requester_id);
+    appendTableCell(tr, `${row.owner_scope_type || "user"}:${row.owner_scope_id || row.requester_id || "—"}`);
+    appendTableCell(tr, row.issued_virtual_key_id || "—");
+    appendTableCell(tr, row.expires_at ? formatGatewayRecordDate(row.expires_at) : "—");
+    const actions = document.createElement("td");
+    actions.className = "cell-actions";
+    const useBtn = document.createElement("button");
+    useBtn.type = "button";
+    useBtn.className = "ghost";
+    useBtn.textContent = "Use";
+    useBtn.addEventListener("click", () => {
+      const approveForm = qs("#gatewayJitApproveForm");
+      if (approveForm?.elements?.request_id) approveForm.elements.request_id.value = row.request_id;
+    });
+    actions.appendChild(useBtn);
+    const status = String(row.status || "").trim().toLowerCase();
+    if (status === "requested" || status === "approved") {
+      const revokeBtn = document.createElement("button");
+      revokeBtn.type = "button";
+      revokeBtn.className = "ghost";
+      revokeBtn.textContent = "Revoke";
+      revokeBtn.addEventListener("click", () => void revokeGatewayJitRequest(row.request_id));
+      actions.appendChild(revokeBtn);
+    }
+    if (status === "requested") {
+      const notifyBtn = document.createElement("button");
+      notifyBtn.type = "button";
+      notifyBtn.className = "ghost";
+      notifyBtn.textContent = "Notify";
+      notifyBtn.addEventListener("click", () => void notifyGatewayJitRequest(row.request_id));
+      actions.appendChild(notifyBtn);
+    }
+    if (row.issued_virtual_key_id) {
+      const keyBtn = document.createElement("button");
+      keyBtn.type = "button";
+      keyBtn.className = "ghost";
+      keyBtn.textContent = "Key";
+      keyBtn.addEventListener("click", () => void retrieveKey(row.issued_virtual_key_id));
+      actions.appendChild(keyBtn);
+    }
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadGatewayJitQueue() {
+  const form = qs("#gatewayJitQueueFilters");
+  const summary = qs("#gatewayJitQueueSummary");
+  const accessResult = qs("#gatewayAccessReviewResult");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams();
+  const status = String(raw.status || "").trim();
+  const environment = String(raw.environment || "").trim();
+  const entitlementId = String(raw.entitlement_id || "").trim();
+  const activeOnly = String(raw.active_only || "false").trim().toLowerCase() === "true";
+  if (status) params.set("status", status);
+  if (environment) params.set("environment", environment);
+  if (entitlementId) params.set("entitlement_id", entitlementId);
+  if (activeOnly) params.set("active_only", "true");
+  params.set("limit", "50");
+  try {
+    const data = await api(`/gateway/jit-requests?${params.toString()}`);
+    gatewayJitRows = Array.isArray(data.data) ? data.data : [];
+    renderGatewayJitQueueTable();
+    if (accessResult) accessResult.textContent = `Loaded ${data.total ?? gatewayJitRows.length} JIT request(s).`;
+  } catch (err) {
+    gatewayJitRows = [];
+    renderGatewayJitQueueTable();
+    if (summary) summary.textContent = `Error: ${safeText(err.message)}`;
+    if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function revokeGatewayJitRequest(requestId) {
+  const accessResult = qs("#gatewayAccessReviewResult");
+  const result = qs("#gatewayJitResult");
+  const id = String(requestId || "").trim();
+  if (!id) return;
+  const confirmed = window.confirm(`Revoke JIT request ${id}? Any minted virtual key will be blocked.`);
+  if (!confirmed) return;
+  try {
+    const data = await api(`/gateway/jit-requests/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+      body: JSON.stringify({ reason: "operator revoke from Access Reviews & JIT queue" }),
+    });
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+    if (accessResult) accessResult.textContent = `JIT request ${id} revoked (VK ${safeText(data.issued_virtual_key_id || "none")}).`;
+    await loadGatewayJitQueue();
+    if (data.issued_virtual_key_id) void loadKeys();
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function _parseCommaList(raw) {
+  return String(raw || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function refreshGatewayJitNotifyPickers() {
+  const channelSelect = qs("#gatewayJitNotifyChannelSelect");
+  const datalist = qs("#gatewayJitNotifyCallbackDatalist");
+  const status = qs("#gatewayJitDecisionNotifyStatus");
+  try {
+    const [channelsPayload, callbacks] = await Promise.all([
+      api("/gateway/notification-channels"),
+      api("/gateway/external-callbacks"),
+    ]);
+    const channels = Array.isArray(channelsPayload?.data)
+      ? channelsPayload.data
+      : Array.isArray(channelsPayload)
+        ? channelsPayload
+        : [];
+    if (channelSelect) {
+      const current = String(channelSelect.value || "");
+      channelSelect.textContent = "";
+      const blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = "(none)";
+      channelSelect.appendChild(blank);
+      channels.forEach((row) => {
+        const id = String(row.channel_id || row.id || "").trim();
+        if (!id) return;
+        const opt = document.createElement("option");
+        opt.value = id;
+        opt.textContent = `${id}${row.enabled === false ? " (disabled)" : ""}`;
+        channelSelect.appendChild(opt);
+      });
+      if (current) channelSelect.value = current;
+    }
+    if (datalist) {
+      datalist.textContent = "";
+      (Array.isArray(callbacks) ? callbacks : []).forEach((row) => {
+        const id = String(row.callback_id || "").trim();
+        if (!id) return;
+        const opt = document.createElement("option");
+        opt.value = id;
+        datalist.appendChild(opt);
+      });
+    }
+    if (status) status.textContent = `Pickers refreshed (${channels.length} channels, ${(Array.isArray(callbacks) ? callbacks : []).length} callbacks).`;
+  } catch (err) {
+    if (status) status.textContent = `Picker refresh failed: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayJitDecisionNotify() {
+  const form = qs("#gatewayJitDecisionNotifyForm");
+  const status = qs("#gatewayJitDecisionNotifyStatus");
+  const result = qs("#gatewayJitResult");
+  if (!form) return;
+  try {
+    await refreshGatewayJitNotifyPickers();
+    const data = await api("/gateway/jit-decision-notify/config");
+    form.elements.enabled.value = data.enabled ? "true" : "false";
+    form.elements.notify_on_create.value = data.notify_on_create === false ? "false" : "true";
+    form.elements.email_channel_id.value = data.email_channel_id || "";
+    form.elements.reviewer_emails.value = Array.isArray(data.reviewer_emails) ? data.reviewer_emails.join(", ") : "";
+    form.elements.public_base_url.value = data.public_base_url || "";
+    form.elements.external_callback_ids.value = Array.isArray(data.external_callback_ids)
+      ? data.external_callback_ids.join(", ")
+      : "";
+    form.elements.external_rest_url.value = data.external_rest_url || "";
+    form.elements.external_rest_credential_binding_id.value = data.external_rest_credential_binding_id || "";
+    form.elements.action_token_ttl_minutes.value = String(data.action_token_ttl_minutes || 1440);
+    form.elements.allow_prod_email_approve.value = data.allow_prod_email_approve ? "true" : "false";
+    if (status) {
+      status.textContent = `Loaded JIT decision notify config (enabled=${data.enabled ? "true" : "false"}).`;
+    }
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    if (status) status.textContent = `Error: ${safeText(err.message)}`;
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewayJitDecisionNotify() {
+  const form = qs("#gatewayJitDecisionNotifyForm");
+  const status = qs("#gatewayJitDecisionNotifyStatus");
+  const result = qs("#gatewayJitResult");
+  if (!form) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const approverRole = String(raw.approver_role || "").trim();
+  const approverId = String(raw.approver_id || "").trim();
+  if (!approverRole || !approverId) {
+    if (status) status.textContent = "Approver Role and Approver ID are required to save (dual approval).";
+    return;
+  }
+  const body = {
+    enabled: String(raw.enabled || "false").toLowerCase() === "true",
+    notify_on_create: String(raw.notify_on_create || "true").toLowerCase() !== "false",
+    email_channel_id: String(raw.email_channel_id || "").trim(),
+    reviewer_emails: _parseCommaList(raw.reviewer_emails),
+    public_base_url: String(raw.public_base_url || "").trim(),
+    external_callback_ids: _parseCommaList(raw.external_callback_ids),
+    external_rest_url: String(raw.external_rest_url || "").trim(),
+    external_rest_credential_binding_id: String(raw.external_rest_credential_binding_id || "").trim(),
+    action_token_ttl_minutes: Number(raw.action_token_ttl_minutes || 1440),
+    allow_prod_email_approve: String(raw.allow_prod_email_approve || "false").toLowerCase() === "true",
+  };
+  try {
+    const data = await api("/gateway/jit-decision-notify/config", {
+      method: "PUT",
+      headers: {
+        "X-Approver-Role": approverRole,
+        "X-Approver-Id": approverId,
+      },
+      body: JSON.stringify(body),
+    });
+    if (status) {
+      status.textContent = `Saved JIT decision notify config (enabled=${data.enabled ? "true" : "false"}, reviewers=${(data.reviewer_emails || []).length}).`;
+    }
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    if (status) status.textContent = `Error: ${safeText(err.message)}`;
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function notifyGatewayJitRequest(requestId) {
+  const accessResult = qs("#gatewayAccessReviewResult");
+  const result = qs("#gatewayJitResult");
+  const id = String(requestId || "").trim();
+  if (!id) return;
+  try {
+    const data = await api(`/gateway/jit-requests/${encodeURIComponent(id)}/notify`, { method: "POST" });
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+    if (accessResult) {
+      accessResult.textContent = `Notified JIT ${id}: emails=${data.emails_sent ?? 0}, webhooks=${(data.webhooks || []).length}.`;
+    }
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayJitExpireTick() {
+  const accessResult = qs("#gatewayAccessReviewResult");
+  const result = qs("#gatewayJitResult");
+  try {
+    const data = await api("/gateway/jit-requests/expire-tick", { method: "POST" });
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+    if (accessResult) {
+      accessResult.textContent = `Expire tick: scanned ${data.scanned}, expired ${data.expired_grants}, blocked keys ${data.blocked_keys}.`;
+    }
+    await loadGatewayJitQueue();
+    void loadKeys();
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
     if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
   }
 }
@@ -9163,17 +10280,43 @@ async function approveGatewayJitRequest(evt) {
     return;
   }
 
+  const body = {
+    decision: String(raw.decision || "approve").trim(),
+    decision_reason: String(raw.decision_reason || "").trim() || null,
+  };
+  const mintOverride = String(raw.mint_virtual_key || "").trim().toLowerCase();
+  if (mintOverride === "true") body.mint_virtual_key = true;
+  if (mintOverride === "false") body.mint_virtual_key = false;
+
   try {
     const data = await api(`/gateway/jit-requests/${encodeURIComponent(requestId)}/approve`, {
       method: "POST",
-      body: JSON.stringify({
-        decision: String(raw.decision || "approve").trim(),
-        decision_reason: String(raw.decision_reason || "").trim() || null,
-      }),
+      body: JSON.stringify(body),
     });
-    result.textContent = JSON.stringify(data, null, 2);
-    if (accessResult) accessResult.textContent = `JIT request ${requestId} marked ${safeText(data.status)}.`;
+    result.textContent = JSON.stringify(
+      {
+        ...data,
+        issued_virtual_key_token: data.issued_virtual_key_token
+          ? "[one-time token shown in panel above — copy now]"
+          : null,
+      },
+      null,
+      2,
+    );
+    showGatewayJitMintedKeyPanel(data);
+    if (accessResult) {
+      const minted = data.issued_virtual_key_id
+        ? ` Minted VK ${safeText(data.issued_virtual_key_id)} (copy bearer token now).`
+        : "";
+      accessResult.textContent = `JIT request ${requestId} marked ${safeText(data.status)}.${minted}`;
+    }
+    if (data.issued_virtual_key_id) {
+      void loadKeys();
+    }
+    void loadGatewayJitQueue();
   } catch (err) {
+    hideGatewayJitMintedKeyPanel();
+    result.textContent = `Error: ${safeText(err.message)}`;
     if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
   }
 }
@@ -9250,10 +10393,19 @@ function getGatewayGovernanceEvidenceFilters() {
   const form = qs("#gatewayGovernanceEvidenceForm");
   if (!form) return null;
   const raw = Object.fromEntries(new FormData(form).entries());
+  const channels = String(raw.approved_sharing_channels || "security-ops,compliance-review")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 12);
   return {
     limit: Number(raw.limit || 100),
     decision_outcome: String(raw.decision_outcome || "").trim() || null,
     bundle_label: String(raw.bundle_label || "gateway-governance-evidence").trim() || "gateway-governance-evidence",
+    data_classification: String(raw.data_classification || "confidential").trim() || "confidential",
+    retention_days: Number(raw.retention_days || 90),
+    classification_owner: String(raw.classification_owner || "security-ops").trim() || "security-ops",
+    approved_sharing_channels: channels.length ? channels : ["security-ops", "compliance-review"],
   };
 }
 
@@ -9272,6 +10424,10 @@ async function loadGatewayGovernanceEvidence(evt) {
         decision_outcome: filters.decision_outcome,
         limit_per_action: filters.limit,
         bundle_label: filters.bundle_label,
+        data_classification: filters.data_classification,
+        retention_days: filters.retention_days,
+        classification_owner: filters.classification_owner,
+        approved_sharing_channels: filters.approved_sharing_channels,
       }),
     });
 
@@ -9282,7 +10438,7 @@ async function loadGatewayGovernanceEvidence(evt) {
 
     renderGatewayGovernanceEvidenceSummary(gatewayGovernanceEvidenceSummaryRows);
     result.textContent = gatewayGovernanceEvidenceRows.length
-      ? `Loaded ${gatewayGovernanceEvidenceRows.length} governance evidence events.`
+      ? `Loaded ${gatewayGovernanceEvidenceRows.length} governance evidence events (owner ${safeText(data?.classification_owner)}).`
       : "No governance evidence events found for selected filters.";
   } catch (err) {
     result.textContent = `Error: ${safeText(err.message)}`;
@@ -9304,6 +10460,10 @@ async function exportGatewayGovernanceEvidence(evt) {
         decision_outcome: filters.decision_outcome,
         limit_per_action: filters.limit,
         bundle_label: filters.bundle_label,
+        data_classification: filters.data_classification,
+        retention_days: filters.retention_days,
+        classification_owner: filters.classification_owner,
+        approved_sharing_channels: filters.approved_sharing_channels,
       }),
     });
   } catch (err) {
@@ -9377,6 +10537,12 @@ function renderGatewayInferenceResult(target, { data, error, source, title }) {
     }
     const details = [
       data?.risk_tier ? `risk: ${data.risk_tier}` : "",
+      data?.content_guard_decision && data.content_guard_decision !== "allow"
+        ? `content_guard: ${data.content_guard_decision}`
+        : "",
+      Array.isArray(data?.content_guard_reasons) && data.content_guard_reasons.length
+        ? `guard_reasons: ${data.content_guard_reasons.slice(0, 4).join(", ")}`
+        : "",
       data?.usage?.total_tokens ? `tokens: ${data.usage.total_tokens}` : "",
       data?.model ? `model: ${data.model}` : "",
     ]
@@ -9805,6 +10971,12 @@ const CURSOR_GATEWAY_OPERATION_FAMILIES = [
   { family: "Rerank", endpoint: "POST /v1/rerank", panel: "transport" },
   { family: "Responses Lifecycle", endpoint: "GET/DELETE /v1/responses*", panel: "lifecycle" },
   { family: "Files Lifecycle", endpoint: "POST/GET/DELETE /v1/files*", panel: "lifecycle" },
+  { family: "File Content", endpoint: "GET /v1/files/{id}/content", panel: "lifecycle" },
+  { family: "Batches Lifecycle", endpoint: "POST/GET /v1/batches*", panel: "lifecycle" },
+  { family: "Configs Readback", endpoint: "GET /v1/configs*", panel: "lifecycle" },
+  { family: "Models Readback", endpoint: "GET /v1/models*", panel: "lifecycle" },
+  { family: "Guardrails Readback", endpoint: "GET /v1/guardrails*", panel: "lifecycle" },
+  { family: "Async Log Exports", endpoint: "GET/POST /v1/logs/exports*", panel: "lifecycle" },
   { family: "Realtime Lifecycle", endpoint: "GET/POST /v1/realtime/sessions*", panel: "lifecycle" },
 ];
 
@@ -9812,7 +10984,7 @@ const GATEWAY_OPS_TAB_HINTS = {
   core: "Core: chat completions, embeddings, and responses create workflows for Cursor-backed inference.",
   media: "Media: audio transcription/translation, image generation, and realtime session creation.",
   transport: "Transport: message-oriented and agent-to-agent gateway operations with audit and cost telemetry.",
-  lifecycle: "Lifecycle: responses/files/realtime record management, filtering, and privileged delete workflows.",
+  lifecycle: "Lifecycle: responses/files/batches/realtime plus OpenAI-compat configs, models, guardrails, and async log exports.",
 };
 
 function normalizeGatewayInferenceModel(modelValue) {
@@ -11241,6 +12413,31 @@ async function loadGatewayOpenAiFileById(fileId) {
   }
 }
 
+async function downloadGatewayOpenAiFileContent(fileId) {
+  const form = qs("#gatewayOpenAiFilesOpsForm");
+  const result = qs("#gatewayOpenAiFilesResult");
+  const payloadTarget = qs("#gatewayOpenAiFilesPayload");
+  if (!form || !result || !payloadTarget) return;
+
+  const id = String(fileId || form.elements.file_id.value || selectedGatewayOpenAiFileId || "").trim();
+  if (!id) {
+    result.textContent = "File ID is required.";
+    return;
+  }
+
+  try {
+    const data = await api(`/v1/files/${encodeURIComponent(id)}/content`);
+    selectedGatewayOpenAiFileId = data.id || id;
+    form.elements.file_id.value = selectedGatewayOpenAiFileId;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+    const available = data?.content_available ? "available" : "unavailable";
+    result.textContent = `File content ${available} for ${safeText(selectedGatewayOpenAiFileId)} (${safeText(data?.bytes)} bytes).`;
+    renderGatewayOpenAiFilesRows();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function deleteGatewayOpenAiFileById(fileId, options = {}) {
   const form = qs("#gatewayOpenAiFilesOpsForm");
   const result = qs("#gatewayOpenAiFilesResult");
@@ -12006,6 +13203,1038 @@ async function cancelGatewayFineTuningJob() {
   }
 }
 
+function renderGatewayBatchesTable() {
+  const tbody = qs("#gatewayBatchesTable");
+  if (!tbody) return;
+  if (!gatewayBatchRows.length) {
+    setTableMessage(tbody, 7, "No batches found.");
+    return;
+  }
+  tbody.textContent = "";
+  gatewayBatchRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Click to select batch ID";
+    tr.addEventListener("click", () => {
+      const opsForm = qs("#gatewayBatchOpsForm");
+      if (opsForm?.elements?.batch_id) opsForm.elements.batch_id.value = row.id || "";
+    });
+    appendTableCell(tr, row.id);
+    appendTableCell(tr, row.status);
+    appendTableCell(tr, row.endpoint_family);
+    appendTableCell(tr, row.request_count ?? "--");
+    appendTableCell(tr, row.completed_count ?? "--");
+    appendTableCell(tr, row.failed_count ?? "--");
+    appendTableCell(tr, row.created_at ? new Date(row.created_at * 1000).toISOString() : "--");
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadGatewayBatches(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayBatchesResult");
+  const tbody = qs("#gatewayBatchesTable");
+  const form = qs("#gatewayBatchFilters");
+  if (tbody) setTableMessage(tbody, 7, "Loading...");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const query = buildQueryString({
+    status: raw.status,
+    limit: raw.limit || 20,
+    offset: raw.offset || 0,
+  });
+  try {
+    const data = await api(`/v1/batches${query}`);
+    gatewayBatchRows = Array.isArray(data?.data) ? data.data : [];
+    renderGatewayBatchesTable();
+    if (result) result.textContent = `Loaded ${gatewayBatchRows.length} batches.`;
+  } catch (err) {
+    gatewayBatchRows = [];
+    renderGatewayBatchesTable();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function createGatewayBatch(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayBatchCreateForm");
+  const result = qs("#gatewayBatchesResult");
+  const payloadTarget = qs("#gatewayBatchesPayload");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  let requests;
+  let metadata = {};
+  try {
+    requests = parseGatewayJsonInput(raw.requests_json, "Requests JSON");
+    if (!Array.isArray(requests) || !requests.length) {
+      throw new Error("Requests JSON must be a non-empty array.");
+    }
+    if (String(raw.metadata_json || "").trim()) {
+      metadata = parseGatewayJsonInput(raw.metadata_json, "Metadata JSON") || {};
+    }
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+    return;
+  }
+  try {
+    const data = await api("/v1/batches", {
+      method: "POST",
+      body: JSON.stringify({
+        endpoint_family: String(raw.endpoint_family || "responses").trim() || "responses",
+        requests,
+        metadata,
+        environment: String(raw.environment || "dev").trim() || "dev",
+      }),
+    });
+    const opsForm = qs("#gatewayBatchOpsForm");
+    if (opsForm?.elements?.batch_id) opsForm.elements.batch_id.value = data.id || "";
+    result.textContent = `Created batch ${safeText(data.id)} (${safeText(data.status)}).`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+    await loadGatewayBatches();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function retrieveGatewayBatch() {
+  const form = qs("#gatewayBatchOpsForm");
+  const result = qs("#gatewayBatchesResult");
+  const payloadTarget = qs("#gatewayBatchesPayload");
+  if (!form || !result) return;
+  const batchId = String(form.elements?.batch_id?.value || "").trim();
+  if (!batchId) {
+    result.textContent = "Batch ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/batches/${encodeURIComponent(batchId)}`);
+    result.textContent = `Retrieved batch ${safeText(data.id)} (${safeText(data.status)}).`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayBatchResults() {
+  const form = qs("#gatewayBatchOpsForm");
+  const result = qs("#gatewayBatchesResult");
+  const payloadTarget = qs("#gatewayBatchesPayload");
+  if (!form || !result) return;
+  const batchId = String(form.elements?.batch_id?.value || "").trim();
+  if (!batchId) {
+    result.textContent = "Batch ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/batches/${encodeURIComponent(batchId)}/results`);
+    result.textContent = `Loaded ${safeText(data.count ?? (data.data || []).length)} result rows for ${safeText(data.id || batchId)}.`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function cancelGatewayBatch() {
+  const form = qs("#gatewayBatchOpsForm");
+  const result = qs("#gatewayBatchesResult");
+  const payloadTarget = qs("#gatewayBatchesPayload");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const batchId = String(raw.batch_id || "").trim();
+  if (!batchId) {
+    result.textContent = "Batch ID is required.";
+    return;
+  }
+  const environment = String(
+    gatewayBatchRows.find((row) => row.id === batchId)?.environment
+      || qs("#gatewayBatchCreateForm")?.elements?.environment?.value
+      || "dev",
+  ).trim().toLowerCase();
+  const headers = environment === "prod" ? getGatewayDualApprovalHeaders("#gatewayBatchOpsForm") : undefined;
+  try {
+    const data = await api(`/v1/batches/${encodeURIComponent(batchId)}/cancel`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    result.textContent = `Cancelled batch ${safeText(data.id)} (${safeText(data.status)}).`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+    await loadGatewayBatches();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function completeGatewayBatch() {
+  const form = qs("#gatewayBatchOpsForm");
+  const result = qs("#gatewayBatchesResult");
+  const payloadTarget = qs("#gatewayBatchesPayload");
+  if (!form || !result) return;
+  const batchId = String(form.elements.batch_id?.value || "").trim();
+  if (!batchId) {
+    result.textContent = "Batch ID is required.";
+    return;
+  }
+  const environment = String(
+    gatewayBatchRows.find((row) => row.id === batchId)?.environment
+      || qs("#gatewayBatchCreateForm")?.elements?.environment?.value
+      || "dev",
+  ).trim().toLowerCase();
+  const headers = environment === "prod" ? getGatewayDualApprovalHeaders("#gatewayBatchOpsForm") : undefined;
+  try {
+    const data = await api(`/v1/batches/${encodeURIComponent(batchId)}/complete`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    result.textContent = `Completed batch ${safeText(data.id)} (${safeText(data.status)}).`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+    await loadGatewayBatches();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function expireGatewayBatch() {
+  const form = qs("#gatewayBatchOpsForm");
+  const result = qs("#gatewayBatchesResult");
+  const payloadTarget = qs("#gatewayBatchesPayload");
+  if (!form || !result) return;
+  const batchId = String(form.elements.batch_id?.value || "").trim();
+  if (!batchId) {
+    result.textContent = "Batch ID is required.";
+    return;
+  }
+  const environment = String(
+    gatewayBatchRows.find((row) => row.id === batchId)?.environment
+      || qs("#gatewayBatchCreateForm")?.elements?.environment?.value
+      || "dev",
+  ).trim().toLowerCase();
+  const headers = environment === "prod" ? getGatewayDualApprovalHeaders("#gatewayBatchOpsForm") : undefined;
+  try {
+    const data = await api(`/v1/batches/${encodeURIComponent(batchId)}/expire`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    result.textContent = `Expired batch ${safeText(data.id)} (${safeText(data.status)}).`;
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+    await loadGatewayBatches();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayCompatConfigs(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCompatConfigsForm");
+  const result = qs("#gatewayCompatConfigsResult");
+  const payloadTarget = qs("#gatewayCompatConfigsPayload");
+  const tbody = qs("#gatewayCompatConfigsTable");
+  if (!form || !result || !payloadTarget || !tbody) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const query = buildQueryString({
+      limit: Number(raw.limit || 50),
+      offset: Number(raw.offset || 0),
+    });
+    const data = await api(`/v1/configs${query}`);
+    const rows = Array.isArray(data) ? data : [];
+    tbody.textContent = "";
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No route configs on ledger.");
+    } else {
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        const id = row.route_policy_id || row.id || "";
+        [id, row.route_name, row.status, row.load_balancing_strategy].forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = safeText(value);
+          tr.appendChild(td);
+        });
+        const actions = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = "Get";
+        btn.addEventListener("click", () => {
+          form.elements.config_id.value = id;
+          void getGatewayCompatConfig(id);
+        });
+        actions.appendChild(btn);
+        tr.appendChild(actions);
+        tbody.appendChild(tr);
+      });
+    }
+    result.textContent = `Loaded ${rows.length} config(s) via /v1/configs.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function getGatewayCompatConfig(configId) {
+  const form = qs("#gatewayCompatConfigsForm");
+  const result = qs("#gatewayCompatConfigsResult");
+  const payloadTarget = qs("#gatewayCompatConfigsPayload");
+  if (!form || !result || !payloadTarget) return;
+  const id = String(configId || form.elements.config_id?.value || "").trim();
+  if (!id) {
+    result.textContent = "Config / route policy ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/configs/${encodeURIComponent(id)}`);
+    form.elements.config_id.value = data.route_policy_id || id;
+    result.textContent = `Loaded config ${safeText(data.route_policy_id || id)}.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayCompatModels(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCompatModelsForm");
+  const result = qs("#gatewayCompatModelsResult");
+  const payloadTarget = qs("#gatewayCompatModelsPayload");
+  const tbody = qs("#gatewayCompatModelsTable");
+  if (!form || !result || !payloadTarget || !tbody) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  setTableMessage(tbody, 4, "Loading...");
+  try {
+    const query = buildQueryString({
+      limit: Number(raw.limit || 50),
+      offset: Number(raw.offset || 0),
+    });
+    const data = await api(`/v1/models${query}`);
+    const rows = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+    tbody.textContent = "";
+    if (!rows.length) {
+      setTableMessage(tbody, 4, "No models on plane inventory.");
+    } else {
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        const id = row.id || row.model || "";
+        [id, row.owned_by, row.created].forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = safeText(value);
+          tr.appendChild(td);
+        });
+        const actions = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = "Get";
+        btn.addEventListener("click", () => {
+          form.elements.model_id.value = id;
+          void getGatewayCompatModel(id);
+        });
+        actions.appendChild(btn);
+        tr.appendChild(actions);
+        tbody.appendChild(tr);
+      });
+    }
+    result.textContent = `Loaded ${rows.length} model(s) via /v1/models.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    setTableMessage(tbody, 4, `Error: ${safeText(err.message)}`);
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function getGatewayCompatModel(modelId) {
+  const form = qs("#gatewayCompatModelsForm");
+  const result = qs("#gatewayCompatModelsResult");
+  const payloadTarget = qs("#gatewayCompatModelsPayload");
+  if (!form || !result || !payloadTarget) return;
+  const id = String(modelId || form.elements.model_id?.value || "").trim();
+  if (!id) {
+    result.textContent = "Model ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/models/${encodeURIComponent(id)}`);
+    form.elements.model_id.value = data.id || id;
+    result.textContent = `Loaded model ${safeText(data.id || id)}.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayCompatGuardrails(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCompatGuardrailsForm");
+  const result = qs("#gatewayCompatGuardrailsResult");
+  const payloadTarget = qs("#gatewayCompatGuardrailsPayload");
+  const tbody = qs("#gatewayCompatGuardrailsTable");
+  if (!form || !result || !payloadTarget || !tbody) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const hasPolicy = String(raw.has_policy || "").trim();
+    const query = buildQueryString({
+      limit: Number(raw.limit || 50),
+      offset: Number(raw.offset || 0),
+      has_policy: hasPolicy === "" ? null : hasPolicy,
+    });
+    const data = await api(`/v1/guardrails${query}`);
+    const rows = Array.isArray(data) ? data : [];
+    tbody.textContent = "";
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No guardrails found.");
+    } else {
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        const id = row.id || row.guardrail_id || "";
+        [id, row.name, row.has_policy, row.status].forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = safeText(value);
+          tr.appendChild(td);
+        });
+        const actions = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = "Get";
+        btn.addEventListener("click", () => {
+          form.elements.guardrail_id.value = id;
+          void getGatewayCompatGuardrail(id);
+        });
+        actions.appendChild(btn);
+        tr.appendChild(actions);
+        tbody.appendChild(tr);
+      });
+    }
+    result.textContent = `Loaded ${rows.length} guardrail(s) via /v1/guardrails.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function getGatewayCompatGuardrail(guardrailId) {
+  const form = qs("#gatewayCompatGuardrailsForm");
+  const result = qs("#gatewayCompatGuardrailsResult");
+  const payloadTarget = qs("#gatewayCompatGuardrailsPayload");
+  if (!form || !result || !payloadTarget) return;
+  const id = String(guardrailId || form.elements.guardrail_id?.value || "").trim();
+  if (!id) {
+    result.textContent = "Guardrail ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/guardrails/${encodeURIComponent(id)}`);
+    form.elements.guardrail_id.value = data.id || id;
+    result.textContent = `Loaded guardrail ${safeText(data.id || id)}.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayCompatVectorStores(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCompatVectorStoresForm");
+  const result = qs("#gatewayCompatVectorStoresResult");
+  const payloadTarget = qs("#gatewayCompatVectorStoresPayload");
+  const tbody = qs("#gatewayCompatVectorStoresTable");
+  if (!result || !payloadTarget || !tbody) return;
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api("/v1/vector_stores");
+    const rows = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+    tbody.textContent = "";
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No vector stores found.");
+    } else {
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        const id = row.id || "";
+        [id, row.name, row.status, row.provider_type].forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = safeText(value);
+          tr.appendChild(td);
+        });
+        const actions = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = "Get";
+        btn.addEventListener("click", () => {
+          if (form?.elements?.store_id) form.elements.store_id.value = id;
+          void getGatewayCompatVectorStore(id);
+        });
+        actions.appendChild(btn);
+        tr.appendChild(actions);
+        tbody.appendChild(tr);
+      });
+    }
+    result.textContent = `Loaded ${rows.length} vector store(s) via /v1/vector_stores.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function getGatewayCompatVectorStore(storeId) {
+  const form = qs("#gatewayCompatVectorStoresForm");
+  const result = qs("#gatewayCompatVectorStoresResult");
+  const payloadTarget = qs("#gatewayCompatVectorStoresPayload");
+  if (!result || !payloadTarget) return;
+  const id = String(storeId || form?.elements?.store_id?.value || "").trim();
+  if (!id) {
+    result.textContent = "Store ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/vector_stores/${encodeURIComponent(id)}`);
+    if (form?.elements?.store_id) form.elements.store_id.value = data.id || id;
+    result.textContent = `Loaded vector store ${safeText(data.id || id)}.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function attemptRegisterGatewayCompatVectorStore() {
+  const form = qs("#gatewayCompatVectorStoresForm");
+  const result = qs("#gatewayCompatVectorStoresResult");
+  const payloadTarget = qs("#gatewayCompatVectorStoresPayload");
+  if (!form || !result || !payloadTarget) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const storeId = String(raw.store_id || "").trim();
+  const collectionName = String(raw.collection_name || "").trim();
+  if (!storeId || !collectionName) {
+    result.textContent = "Store ID and collection name are required to probe register.";
+    return;
+  }
+  try {
+    const data = await api("/v1/vector_stores", {
+      method: "POST",
+      body: JSON.stringify({
+        store_id: storeId,
+        provider_type: String(raw.provider_type || "mcp_bridge").trim() || "mcp_bridge",
+        collection_name: collectionName,
+      }),
+    });
+    result.textContent = "Unexpected success — registry should be read-only.";
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Register probe (expected read-only): ${safeText(err.message)}`;
+    payloadTarget.textContent = safeText(err.message);
+  }
+}
+
+async function loadGatewayCompatLogs(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCompatLogsForm");
+  const result = qs("#gatewayCompatLogsResult");
+  const payloadTarget = qs("#gatewayCompatLogsPayload");
+  const tbody = qs("#gatewayCompatLogsTable");
+  if (!form || !result || !payloadTarget || !tbody) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  setTableMessage(tbody, 6, "Loading...");
+  try {
+    const query = buildQueryString({
+      window_hours: Number(raw.window_hours || 24),
+      limit: Number(raw.limit || 50),
+      model: String(raw.model || "").trim() || null,
+      user_id: String(raw.user_id || "").trim() || null,
+    });
+    const data = await api(`/v1/logs${query}`);
+    const rows = Array.isArray(data?.items) ? data.items : [];
+    tbody.textContent = "";
+    if (!rows.length) {
+      setTableMessage(tbody, 6, "No logs found.");
+    } else {
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        const id = row.request_id || "";
+        [id, row.model_name, row.estimated_cost_cents, row.cache_hit, row.timestamp].forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = safeText(value);
+          tr.appendChild(td);
+        });
+        const actions = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = "Get";
+        btn.addEventListener("click", () => {
+          form.elements.request_id.value = id;
+          void getGatewayCompatLog(id);
+        });
+        actions.appendChild(btn);
+        tr.appendChild(actions);
+        tbody.appendChild(tr);
+      });
+    }
+    result.textContent = `Loaded ${rows.length} log(s) via /v1/logs (${safeText(data?.window_hours || raw.window_hours)}h, ${safeText(data?.total_spend_cents ?? "—")}¢).`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function getGatewayCompatLog(requestId) {
+  const form = qs("#gatewayCompatLogsForm");
+  const result = qs("#gatewayCompatLogsResult");
+  const payloadTarget = qs("#gatewayCompatLogsPayload");
+  if (!form || !result || !payloadTarget) return;
+  const id = String(requestId || form.elements.request_id?.value || "").trim();
+  if (!id) {
+    result.textContent = "Request ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/logs/${encodeURIComponent(id)}`);
+    form.elements.request_id.value = data.request_id || id;
+    result.textContent = `Loaded log ${safeText(data.request_id || id)}.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function exportGatewayCompatLogs() {
+  const form = qs("#gatewayCompatLogsForm");
+  const result = qs("#gatewayCompatLogsResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    limit: String(Math.min(Number(raw.limit || 1000) || 1000, 5000)),
+  });
+  const model = String(raw.model || "").trim();
+  if (model) params.set("model", model);
+  const userId = String(raw.user_id || "").trim();
+  if (userId) params.set("user_id", userId);
+  const url = `${state.apiBase}/v1/logs/export?${params.toString()}`;
+  try {
+    const response = await fetch(url, { headers: ApiClient.buildHeaders(state) });
+    if (!response.ok) throw new Error(`Export failed (${response.status})`);
+    const text = await response.text();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    downloadTextFile(text, `gateway-logs-${stamp}.csv`, "text/csv");
+    result.textContent = "Exported gateway logs CSV via /v1/logs/export.";
+  } catch (err) {
+    result.textContent = `Export error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayCompatVirtualKeys(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCompatVirtualKeysForm");
+  const result = qs("#gatewayCompatVirtualKeysResult");
+  const payloadTarget = qs("#gatewayCompatVirtualKeysPayload");
+  const tbody = qs("#gatewayCompatVirtualKeysTable");
+  if (!form || !result || !payloadTarget || !tbody) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const query = buildQueryString({
+      limit: Number(raw.limit || 50),
+      offset: Number(raw.offset || 0),
+    });
+    const data = await api(`/v1/virtual-keys${query}`);
+    const rows = Array.isArray(data) ? data : [];
+    tbody.textContent = "";
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No virtual keys found.");
+    } else {
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        const id = row.key_id || "";
+        const owner = `${row.owner_scope_type || ""}:${row.owner_scope_id || ""}`;
+        [id, owner, row.status, row.authn_method || "token"].forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = safeText(value);
+          tr.appendChild(td);
+        });
+        const actions = document.createElement("td");
+        const getBtn = document.createElement("button");
+        getBtn.type = "button";
+        getBtn.className = "ghost";
+        getBtn.textContent = "Get";
+        getBtn.addEventListener("click", () => {
+          form.elements.key_id.value = id;
+          void getGatewayCompatVirtualKey(id);
+        });
+        const usageBtn = document.createElement("button");
+        usageBtn.type = "button";
+        usageBtn.className = "ghost";
+        usageBtn.textContent = "Usage";
+        usageBtn.addEventListener("click", () => {
+          form.elements.key_id.value = id;
+          void loadGatewayCompatVirtualKeyUsage(id);
+        });
+        actions.append(getBtn, usageBtn);
+        tr.appendChild(actions);
+        tbody.appendChild(tr);
+      });
+    }
+    result.textContent = `Loaded ${rows.length} virtual key(s) via /v1/virtual-keys.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function getGatewayCompatVirtualKey(keyId) {
+  const form = qs("#gatewayCompatVirtualKeysForm");
+  const result = qs("#gatewayCompatVirtualKeysResult");
+  const payloadTarget = qs("#gatewayCompatVirtualKeysPayload");
+  if (!form || !result || !payloadTarget) return;
+  const id = String(keyId || form.elements.key_id?.value || "").trim();
+  if (!id) {
+    result.textContent = "Key ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/virtual-keys/${encodeURIComponent(id)}`);
+    form.elements.key_id.value = data.key_id || id;
+    result.textContent = `Loaded virtual key ${safeText(data.key_id || id)}.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayCompatVirtualKeyUsage(keyId) {
+  const form = qs("#gatewayCompatVirtualKeysForm");
+  const result = qs("#gatewayCompatVirtualKeysResult");
+  const payloadTarget = qs("#gatewayCompatVirtualKeysPayload");
+  if (!form || !result || !payloadTarget) return;
+  const id = String(keyId || form.elements.key_id?.value || "").trim();
+  if (!id) {
+    result.textContent = "Key ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/virtual-keys/${encodeURIComponent(id)}/usage`);
+    form.elements.key_id.value = id;
+    result.textContent = `Loaded usage for virtual key ${safeText(id)}.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayCompatPrompts(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCompatPromptsForm");
+  const result = qs("#gatewayCompatPromptsResult");
+  const payloadTarget = qs("#gatewayCompatPromptsPayload");
+  const tbody = qs("#gatewayCompatPromptsTable");
+  if (!form || !result || !payloadTarget || !tbody) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const query = buildQueryString({
+      limit: Number(raw.limit || 50),
+      offset: Number(raw.offset || 0),
+      q: String(raw.q || "").trim() || null,
+    });
+    const data = await api(`/v1/prompts${query}`);
+    const rows = Array.isArray(data) ? data : [];
+    tbody.textContent = "";
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No prompts found.");
+    } else {
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        const id = row.prompt_registry_id || "";
+        [id, row.name, row.latest_version, row.status].forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = safeText(value);
+          tr.appendChild(td);
+        });
+        const actions = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = "Get";
+        btn.addEventListener("click", () => {
+          form.elements.prompt_registry_id.value = id;
+          void getGatewayCompatPrompt(id);
+        });
+        actions.appendChild(btn);
+        tr.appendChild(actions);
+        tbody.appendChild(tr);
+      });
+    }
+    result.textContent = `Loaded ${rows.length} prompt(s) via /v1/prompts.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function getGatewayCompatPrompt(promptRegistryId) {
+  const form = qs("#gatewayCompatPromptsForm");
+  const result = qs("#gatewayCompatPromptsResult");
+  const payloadTarget = qs("#gatewayCompatPromptsPayload");
+  if (!form || !result || !payloadTarget) return;
+  const id = String(promptRegistryId || form.elements.prompt_registry_id?.value || "").trim();
+  if (!id) {
+    result.textContent = "Prompt registry ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/v1/prompts/${encodeURIComponent(id)}`);
+    form.elements.prompt_registry_id.value = data.prompt_registry_id || id;
+    result.textContent = `Loaded prompt ${safeText(data.prompt_registry_id || id)}.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayCompatAnalytics(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCompatAnalyticsForm");
+  const result = qs("#gatewayCompatAnalyticsFeedbackResult");
+  const payloadTarget = qs("#gatewayCompatAnalyticsFeedbackPayload");
+  if (!form || !result || !payloadTarget) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  try {
+    const query = buildQueryString({
+      hours: Number(raw.hours || 24),
+      environment: String(raw.environment || "").trim() || null,
+    });
+    const data = await api(`/v1/analytics${query}`);
+    result.textContent = `Analytics ${safeText(data.hours || raw.hours)}h: ${safeText(data.total_events)} events, ${safeText(data.distinct_requests)} requests, ${safeText(data.total_estimated_cost_cents)}¢.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function getGatewayCompatFeedback() {
+  const form = qs("#gatewayCompatFeedbackForm");
+  const result = qs("#gatewayCompatAnalyticsFeedbackResult");
+  const payloadTarget = qs("#gatewayCompatAnalyticsFeedbackPayload");
+  if (!form || !result || !payloadTarget) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const requestId = String(raw.request_id || "").trim();
+  if (!requestId) {
+    result.textContent = "Request ID is required.";
+    return;
+  }
+  try {
+    const query = buildQueryString({
+      request_id: requestId,
+      trace_id: String(raw.trace_id || "").trim() || null,
+    });
+    const data = await api(`/v1/feedback${query}`);
+    result.textContent = `Feedback for ${safeText(requestId)}: has_feedback=${safeText(data.has_feedback)}.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function submitGatewayCompatFeedback(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCompatFeedbackForm");
+  const result = qs("#gatewayCompatAnalyticsFeedbackResult");
+  const payloadTarget = qs("#gatewayCompatAnalyticsFeedbackPayload");
+  if (!form || !result || !payloadTarget) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const requestId = String(raw.request_id || "").trim();
+  if (!requestId) {
+    result.textContent = "Request ID is required.";
+    return;
+  }
+  let scores = null;
+  const scoresRaw = String(raw.scores_json || "").trim();
+  if (scoresRaw) {
+    try {
+      scores = JSON.parse(scoresRaw);
+      if (!scores || typeof scores !== "object" || Array.isArray(scores)) {
+        throw new Error("Scores must be a JSON object.");
+      }
+    } catch (err) {
+      result.textContent = `Error: ${safeText(err.message || "Invalid scores JSON.")}`;
+      return;
+    }
+  }
+  const ratingRaw = String(raw.rating || "").trim();
+  const payload = {
+    request_id: requestId,
+    trace_id: String(raw.trace_id || "").trim() || null,
+    rating: ratingRaw === "" ? null : Number(ratingRaw),
+    comment: String(raw.comment || "").trim() || null,
+    scores,
+  };
+  try {
+    const data = await api("/v1/feedback", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    result.textContent = `Submitted feedback for ${safeText(requestId)}.`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function retrieveKey(keyId) {
+  const form = qs("#keyLifecycleForm");
+  const id = String(keyId || selectedKeyId || form?.elements?.key_id?.value || "").trim();
+  if (!id) {
+    setKeyFeedback("#keyLifecycleResult", "Select or load a key first.", "error");
+    return;
+  }
+  try {
+    const data = await api(`/keys/${encodeURIComponent(id)}`);
+    populateKeyForm(data);
+    populateKeyGuardrailForm(data.key_id);
+    setKeyFeedback("#keyLifecycleResult", `Retrieved key ${safeText(data.key_id)} via GET /keys/{id}.`, "success");
+  } catch (err) {
+    setKeyFeedback("#keyLifecycleResult", `Error: ${safeText(err.message)}`, "error");
+  }
+}
+
+function renderGatewayLogExportsTable(rows) {
+  const tbody = qs("#gatewayLogExportsTable");
+  const form = qs("#gatewayLogExportOpsForm");
+  if (!tbody) return;
+  if (!rows.length) {
+    setTableMessage(tbody, 6, "No log export jobs found.");
+    return;
+  }
+  tbody.textContent = "";
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    const id = row.id || "";
+    [id, row.status, row.row_count, row.description, formatGatewayRecordDate(row.created_at)].forEach((value) => {
+      const td = document.createElement("td");
+      td.textContent = safeText(value);
+      tr.appendChild(td);
+    });
+    const actions = document.createElement("td");
+    const useBtn = document.createElement("button");
+    useBtn.type = "button";
+    useBtn.className = "ghost";
+    useBtn.textContent = "Use";
+    useBtn.addEventListener("click", () => {
+      if (form?.elements?.export_id) form.elements.export_id.value = id;
+    });
+    actions.appendChild(useBtn);
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadGatewayLogExports(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayLogExportOpsForm");
+  const result = qs("#gatewayLogExportsResult");
+  const payloadTarget = qs("#gatewayLogExportsPayload");
+  const tbody = qs("#gatewayLogExportsTable");
+  if (!result || !payloadTarget || !tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  setTableMessage(tbody, 6, "Loading...");
+  try {
+    const query = buildQueryString({
+      limit: Number(raw.limit || 20),
+      offset: Number(raw.offset || 0),
+      status: String(raw.status || "").trim() || null,
+    });
+    const data = await api(`/v1/logs/exports${query}`);
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    renderGatewayLogExportsTable(rows);
+    result.textContent = `Loaded ${rows.length} log export job(s).`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function createGatewayLogExport(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayLogExportCreateForm");
+  const opsForm = qs("#gatewayLogExportOpsForm");
+  const result = qs("#gatewayLogExportsResult");
+  const payloadTarget = qs("#gatewayLogExportsPayload");
+  if (!form || !result || !payloadTarget) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  let filters = {};
+  let requestedData = null;
+  try {
+    filters = parseGatewayJsonInput(raw.filters_json || "{}", "Filters JSON") || {};
+    requestedData = parseGatewayJsonInput(raw.requested_data_json || "[]", "Requested Data JSON");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+    return;
+  }
+  try {
+    const data = await api("/v1/logs/exports", {
+      method: "POST",
+      body: JSON.stringify({
+        description: String(raw.description || "").trim() || null,
+        workspace_id: String(raw.workspace_id || "").trim() || null,
+        filters,
+        requested_data: Array.isArray(requestedData) ? requestedData : null,
+      }),
+    });
+    if (opsForm?.elements?.export_id) opsForm.elements.export_id.value = data.id || "";
+    result.textContent = `Created export ${safeText(data.id)} (${safeText(data.status)}).`;
+    payloadTarget.textContent = JSON.stringify(data, null, 2);
+    await loadGatewayLogExports();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function gatewayLogExportAction(action) {
+  const form = qs("#gatewayLogExportOpsForm");
+  const result = qs("#gatewayLogExportsResult");
+  const payloadTarget = qs("#gatewayLogExportsPayload");
+  if (!form || !result || !payloadTarget) return;
+  const exportId = String(form.elements.export_id?.value || "").trim();
+  if (!exportId) {
+    result.textContent = "Export ID is required.";
+    return;
+  }
+  const encoded = encodeURIComponent(exportId);
+  const map = {
+    get: { method: "GET", path: `/v1/logs/exports/${encoded}`, label: "Loaded" },
+    start: { method: "POST", path: `/v1/logs/exports/${encoded}/start`, label: "Started" },
+    cancel: { method: "POST", path: `/v1/logs/exports/${encoded}/cancel`, label: "Cancelled" },
+    download: { method: "GET", path: `/v1/logs/exports/${encoded}/download`, label: "Download meta" },
+    content: { method: "GET", path: `/v1/logs/exports/${encoded}/content`, label: "Content" },
+    delete: { method: "DELETE", path: `/v1/logs/exports/${encoded}`, label: "Deleted" },
+  };
+  const spec = map[action];
+  if (!spec) {
+    result.textContent = `Unsupported export action: ${safeText(action)}`;
+    return;
+  }
+  try {
+    const options = { method: spec.method };
+    if (spec.method === "POST") options.body = JSON.stringify({});
+    const data = await api(spec.path, options);
+    result.textContent = `${spec.label} export ${safeText(data.id || exportId)} (${safeText(data.status || "ok")}).`;
+    payloadTarget.textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+    if (action !== "get" && action !== "download" && action !== "content") {
+      await loadGatewayLogExports();
+    }
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function submitGatewayPassthroughForm(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#gatewayPassthroughForm");
@@ -12361,6 +14590,12 @@ function populateKeyForm(row) {
   form.elements.guardrail_policy.value = row.guardrail_policy || "{}";
   renderKeyGuardrailPolicySummary(form.elements.guardrail_policy.value);
   form.elements.status.value = row.status || "active";
+  if (form.elements.authn_method) {
+    form.elements.authn_method.value = row.authn_method || "token";
+  }
+  if (form.elements.expires_at) {
+    form.elements.expires_at.value = toDatetimeLocalValue(row.expires_at);
+  }
   syncScopeIdPicker("#keyLifecycleForm", "owner_scope_type", "owner_scope_id", "keyOwnerScopeIdList");
   if (result) result.textContent = `Loaded key ${row.key_id} into the editor.`;
 }
@@ -12392,7 +14627,7 @@ async function loadKeys(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const tbody = qs("#keysTable");
   if (!tbody) return;
-  setTableMessage(tbody, 8, "Loading...");
+  setTableMessage(tbody, 10, "Loading...");
   try {
     const rows = await api("/keys?limit=50&offset=0");
     keyRows = Array.isArray(rows) ? rows : [];
@@ -12402,10 +14637,10 @@ async function loadKeys(evt) {
       populateKeyBudgetIncreaseForm(selectedKeyId);
       populateKeyRotationScheduleForm(selectedKeyId);
     }
-    setKeyFeedback("#keyLifecycleResult", keyRows.length ? `Loaded ${keyRows.length} keys.` : "No keys found.", "success");
+    setKeyFeedback("#keyLifecycleResult", keyRows.length ? `Loaded ${keyRows.length} keys.` : "No virtual keys on ledger.", "success");
   } catch (err) {
     setKeyFeedback("#keyLifecycleResult", `Error: ${safeText(err.message)}`, "error");
-    setTableMessage(tbody, 8, `Error: ${safeText(err.message)}`);
+    setTableMessage(tbody, 10, `Error: ${safeText(err.message)}`);
   }
 }
 
@@ -12414,12 +14649,16 @@ async function saveKey(evt) {
   const form = evt.currentTarget;
   const raw = Object.fromEntries(new FormData(form).entries());
   const keyId = String(raw.key_id || "").trim();
+  const expiresAt = parseOptionalDateTime(raw.expires_at);
+  const authnMethod = String(raw.authn_method || "token").trim() || "token";
   const payload = {
     owner_scope_type: String(raw.owner_scope_type || "").trim().toLowerCase(),
     owner_scope_id: String(raw.owner_scope_id || "").trim(),
     allowed_endpoint_families: String(raw.allowed_endpoint_families || "[]").trim(),
     allowed_models: JSON.stringify(readGatewayModelMultiSelect(form.elements.allowed_models)),
     guardrail_policy: String(raw.guardrail_policy || "{}").trim(),
+    authn_method: authnMethod,
+    expires_at: expiresAt,
   };
   try {
     const parsedPolicy = JSON.parse(payload.guardrail_policy || "{}");
@@ -12442,6 +14681,8 @@ async function saveKey(evt) {
           allowed_models: payload.allowed_models,
           guardrail_policy: payload.guardrail_policy,
           status: String(raw.status || "active").trim(),
+          authn_method: authnMethod,
+          expires_at: expiresAt,
         }),
       });
       setKeyFeedback("#keyLifecycleResult", `Updated key ${data.key_id}.`, "success");
@@ -12639,6 +14880,29 @@ async function saveKeyRotationSchedule(evt) {
     });
     setKeyFeedback("#keyRotationScheduleResult", `Saved schedule ${safeText(data.schedule_id)} for ${safeText(data.environment)}.`, "success");
     await loadKeyRotationSchedules(null, keyId);
+  } catch (err) {
+    setKeyFeedback("#keyRotationScheduleResult", `Error: ${safeText(err.message)}`, "error");
+  }
+}
+
+async function tickKeyRotationSchedules() {
+  const form = qs("#keyRotationScheduleForm");
+  const includeProd = String(form?.elements?.environment?.value || "").trim().toLowerCase() === "prod";
+  try {
+    const query = buildQueryString({ include_prod: includeProd ? "true" : "false" });
+    const headers = includeProd ? getGatewayDualApprovalHeaders("#keyLifecycleForm") || getGatewayDualApprovalHeaders("#keyRotationScheduleForm") : undefined;
+    const data = await api(`/keys/rotation-schedules/tick${query}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    const executed = Array.isArray(data?.executed) ? data.executed.length : Number(data?.executed_count || 0);
+    setKeyFeedback(
+      "#keyRotationScheduleResult",
+      `Rotation tick complete · due ${safeText(data?.due_schedules ?? "--")} · executed ${safeText(executed)} · skipped prod ${safeText(data?.skipped_prod ?? 0)}.`,
+      "success",
+    );
+    if (selectedKeyId) await loadKeyRotationSchedules(null, selectedKeyId);
   } catch (err) {
     setKeyFeedback("#keyRotationScheduleResult", `Error: ${safeText(err.message)}`, "error");
   }
@@ -14078,20 +16342,25 @@ async function importAgentConfigs(evt) {
 async function saveAgentConfig(evt) {
   evt.preventDefault();
   const form = evt.currentTarget;
+  const result = qs("#agentConfigResult");
   syncAgentModelPriorityToField();
   const raw = Object.fromEntries(new FormData(form).entries());
   const existingId = String(raw.config_id || "").trim();
   const nextConfig = normalizeAgentConfig(raw, existingId);
 
   if (!nextConfig.agent_key || !nextConfig.display_name || !nextConfig.model) {
-    qs("#agentConfigResult").textContent = "Agent key, display name, and model are required.";
+    if (result) result.textContent = "Agent key, display name, and model are required.";
     return;
   }
 
-  await saveAgentConfigsToStorage([nextConfig]);
-  await renderAgentConfigTable();
-  await runConfigSecurityReview();
-  resetAgentConfigForm(`Saved configuration for ${nextConfig.agent_key}.`);
+  try {
+    await saveAgentConfigsToStorage([nextConfig]);
+    await renderAgentConfigTable();
+    await runConfigSecurityReview();
+    resetAgentConfigForm(`Saved configuration for ${nextConfig.agent_key}.`);
+  } catch (err) {
+    if (result) result.textContent = `Save failed: ${safeText(err.message)}`;
+  }
 }
 
 function updateContextInputs() {
@@ -14147,7 +16416,9 @@ function renderActiveProfile() {
   const profileLabel = String(state.environmentProfile || "custom").toUpperCase();
   const backendMode = describeBackendMode(state.apiBase);
   const backendTarget = isLoopbackApiBase(state.apiBase) ? "127.0.0.1:8000" : state.apiBase;
-  target.textContent = `Active profile: ${profileLabel} — guardrails apply via ${backendMode} backend (${backendTarget}).`;
+  const gateway = String(state.gatewayApiBase || "").trim();
+  const gatewayNote = gateway ? ` · gateway ${gateway}` : "";
+  target.textContent = `Active profile: ${profileLabel} — guardrails apply via ${backendMode} backend (${backendTarget})${gatewayNote}.`;
   renderProdGuardBanner();
   syncProfileHealthActiveMarkers();
 }
@@ -14227,17 +16498,29 @@ function renderLoggedInUserDetails() {
     overviewSessionBadge.textContent = state.accessToken ? "Signed in" : "Not signed in";
     overviewSessionBadge.className = `status-pill ${state.accessToken ? "success" : "idle"}`;
   }
+  const headerPlaneSeal = qs(".header-plane-seal");
+  if (headerPlaneSeal) {
+    headerPlaneSeal.textContent = state.accessToken ? "Session governed" : "Session idle";
+    headerPlaneSeal.classList.toggle("is-idle", !state.accessToken);
+    headerPlaneSeal.title = state.accessToken
+      ? "Operator session on governance plane"
+      : "Sign in to enter the governance plane";
+  }
   if (headerAvatar) {
+    headerAvatar.textContent = parsed.initials;
     headerAvatar.setAttribute("aria-label", `${parsed.firstName} ${parsed.lastName}`);
   }
   if (headerName) {
     headerName.textContent = `${parsed.firstName} ${parsed.lastName}`;
+    headerName.title = `${parsed.firstName} ${parsed.lastName}`;
   }
   if (headerRole) {
     headerRole.textContent = safeText(state.actorRole);
+    headerRole.title = safeText(state.actorRole);
   }
   if (headerEnv) {
     headerEnv.textContent = safeText(state.environmentProfile).toUpperCase();
+    headerEnv.title = `Environment: ${safeText(state.environmentProfile)}`;
   }
   if (headerSignOut) {
     headerSignOut.hidden = !state.accessToken;
@@ -14303,6 +16586,62 @@ function applyTheme(theme) {
   renderThemeToggle();
 }
 
+function applyDensity(density) {
+  state.density = density === "compact" ? "compact" : "comfortable";
+  document.body.dataset.density = state.density;
+  localStorage.setItem("uiDensity", state.density);
+  const toggle = qs("#densityToggle");
+  if (toggle) {
+    const compact = state.density === "compact";
+    toggle.setAttribute("aria-pressed", compact ? "true" : "false");
+    toggle.setAttribute("aria-label", compact ? "Switch to comfortable density" : "Switch to compact density");
+    toggle.title = compact ? "Comfortable density" : "Compact density";
+    toggle.classList.toggle("is-active", compact);
+  }
+  if (typeof UiKit !== "undefined" && UiKit.announce) {
+    UiKit.announce(`${state.density} density`);
+  }
+}
+
+function updateViewBreadcrumb(viewName) {
+  const group = formatViewDomainKicker(viewName);
+  const page = formatViewTitle(viewName);
+  const groupEl = qs("#viewBreadcrumbGroup");
+  const pageEl = qs("#viewBreadcrumbPage");
+  if (groupEl) groupEl.textContent = group;
+  if (pageEl) pageEl.textContent = page;
+  const crumb = qs("#viewBreadcrumb");
+  if (crumb) crumb.setAttribute("aria-label", `${group} / ${page}`);
+}
+
+function markViewRefreshed(label = "Updated") {
+  const target = qs("#viewLastRefreshed");
+  if (!target) return;
+  const now = new Date();
+  const stamp = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  target.textContent = `${label} · ${stamp}`;
+}
+
+function bindScrollTopFab() {
+  const fab = qs("#scrollTopFab");
+  if (!fab) return;
+  const header = qs(".topbar.app-header");
+  const sync = () => {
+    const main = qs("#mainContent");
+    const scrolled = Math.max(window.scrollY || document.documentElement.scrollTop || 0, main?.scrollTop || 0);
+    fab.hidden = scrolled < 420;
+    header?.classList.toggle("is-scrolled", scrolled > 18);
+  };
+  window.addEventListener("scroll", sync, { passive: true });
+  qs("#mainContent")?.addEventListener("scroll", sync, { passive: true });
+  fab.addEventListener("click", () => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    qs("#mainContent")?.scrollTo({ top: 0, behavior: "smooth" });
+    qs("#viewTitle")?.focus?.({ preventScroll: true });
+  });
+  sync();
+}
+
 function renderProdGuardBanner() {
   const banner = qs("#prodGuardBanner");
   banner.hidden = state.environmentProfile !== "prod";
@@ -14321,6 +16660,7 @@ function applySelectedProfile() {
 
   state.environmentProfile = selected;
   state.apiBase = profile.apiBase;
+  state.gatewayApiBase = profile.gatewayApiBase || "";
   state.actorId = profile.actorId;
   state.actorRole = resolveActorRole(profile.actorId, profile.actorRole);
   updateContextInputs();
@@ -14328,6 +16668,8 @@ function applySelectedProfile() {
 
 function saveContext() {
   state.apiBase = parseApiBaseOrThrow(qs("#apiBase").value.trim());
+  const gatewayRaw = String(qs("#gatewayApiBase")?.value || "").trim();
+  state.gatewayApiBase = gatewayRaw ? parseApiBaseOrThrow(gatewayRaw) : "";
   state.actorId = qs("#actorId").value.trim();
   state.actorRole = resolveActorRole(state.actorId, qs("#actorRole").value);
   state.accessToken = "";
@@ -14338,6 +16680,8 @@ function saveContext() {
       : detectProfileFromBaseUrl(state.apiBase, state.environmentProfile);
   state.mfaVerified = parseBooleanFlag(qs("#mfaVerified")?.value, true);
   localStorage.setItem("apiBase", state.apiBase);
+  if (state.gatewayApiBase) localStorage.setItem("gatewayApiBase", state.gatewayApiBase);
+  else localStorage.removeItem("gatewayApiBase");
   localStorage.setItem("actorRole", state.actorRole);
   localStorage.setItem("actorId", state.actorId);
   localStorage.removeItem("accessToken");
@@ -14468,8 +16812,9 @@ async function api(path, options = {}) {
   const guardExempt = isProdGuardExemptMutation(method, path);
   const isSuperAdmin = isSuperAdminRole(normalizeActorRoleForBackend(state.actorRole));
   if (state.environmentProfile === "prod" && !SAFE_HTTP_METHODS.has(method) && !guardExempt && !isSuperAdmin) {
-    const approved = window.confirm(
+    const approved = await operatorConfirm(
       `Production guard: confirm ${method} ${path} with actor ${state.actorId} (${state.actorRole}).`,
+      { title: "Production mutation", okLabel: "Confirm in prod", danger: true },
     );
     if (!approved) {
       throw new Error("Action canceled by operator.");
@@ -14478,10 +16823,23 @@ async function api(path, options = {}) {
 
   const headers = ApiClient.buildHeaders(state, options);
 
-  const requestUrl = `${state.apiBase}${path}`;
+  const requestBase = resolveApiBaseForPath(path);
+  const requestUrl = `${requestBase}${path}`;
+  let body = options.body;
+  if (
+    body != null &&
+    typeof body === "object" &&
+    !(body instanceof FormData) &&
+    !(body instanceof Blob) &&
+    !(body instanceof ArrayBuffer) &&
+    !(typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams)
+  ) {
+    body = JSON.stringify(body);
+  }
   const requestOptions = {
     ...options,
     headers,
+    body,
   };
 
   const executeRequest = async () => {
@@ -14491,7 +16849,7 @@ async function api(path, options = {}) {
   const shouldTryHeaderIdentityFallback =
     usedBearerToken &&
     (resp.status === 401 || resp.status === 403) &&
-    isLoopbackApiBase(state.apiBase);
+    isLoopbackApiBase(requestBase);
   if (shouldTryHeaderIdentityFallback) {
     const fallbackHeaders = {
       ...headers,
@@ -14650,6 +17008,304 @@ function toggleSidebar() {
   openSidebar();
 }
 
+const SIDEBAR_RAIL_STORAGE_KEY = "agenthub.sidebarRail.v1";
+const SIDEBAR_PINS_STORAGE_KEY = "agenthub.navPins.v1";
+const SIDEBAR_PINS_LIMIT = 8;
+
+function getNavPins() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SIDEBAR_PINS_STORAGE_KEY) || "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.map((id) => String(id || "").trim()).filter(Boolean).slice(0, SIDEBAR_PINS_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function setNavPins(pins) {
+  const next = [...new Set((pins || []).map((id) => String(id || "").trim()).filter(Boolean))].slice(
+    0,
+    SIDEBAR_PINS_LIMIT,
+  );
+  try {
+    localStorage.setItem(SIDEBAR_PINS_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+  return next;
+}
+
+function toggleNavPin(viewName) {
+  const id = String(viewName || "").trim();
+  if (!id) return getNavPins();
+  const current = getNavPins();
+  const next = current.includes(id) ? current.filter((item) => item !== id) : [id, ...current];
+  return setNavPins(next);
+}
+
+function navItemLabel(viewName) {
+  const btn = qsa(".nav-item").find((el) => el.dataset.view === viewName);
+  return (
+    btn?.querySelector(".nav-item-label")?.textContent?.trim() ||
+    formatViewTitle?.(viewName) ||
+    viewName
+  );
+}
+
+function renderNavQuickStrip(kind, viewIds) {
+  const wrap = qs(kind === "pinned" ? "#sidebarNavPinned" : "#sidebarNavRecent");
+  const listEl = qs(kind === "pinned" ? "#sidebarNavPinnedList" : "#sidebarNavRecentList");
+  if (!wrap || !listEl) return;
+  const ids = (viewIds || []).filter((id) => qsa(".nav-item").some((btn) => btn.dataset.view === id));
+  if (!ids.length) {
+    listEl.innerHTML = "";
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  const activeView =
+    currentActiveView || qsa(".nav-item.active").find((btn) => btn.dataset.view)?.dataset.view || "";
+  listEl.innerHTML = ids
+    .map((id) => {
+      const label = navItemLabel(id);
+      const active = id === activeView;
+      const isCore = id === "orchestration";
+      const chipLabel = isCore ? `${label} · CORE` : label;
+      return `<button type="button" class="nav-quick-chip${active ? " active" : ""}${isCore ? " is-core" : ""}" data-view="${safeText(id)}" role="listitem" title="${safeText(chipLabel)}">${safeText(isCore ? "Flow Studio" : label)}</button>`;
+    })
+    .join("");
+  listEl.querySelectorAll(".nav-quick-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const view = btn.dataset.view;
+      if (view) void switchView(view);
+    });
+  });
+}
+
+function refreshNavQuickStrips() {
+  const pins = getNavPins();
+  const recent = getRecentViews().filter((id) => !pins.includes(id)).slice(0, 4);
+  renderNavQuickStrip("pinned", pins);
+  renderNavQuickStrip("recent", recent);
+  qsa(".nav-pin-btn").forEach((btn) => {
+    const view = btn.dataset.pinView;
+    const pinned = pins.includes(view);
+    btn.classList.toggle("is-pinned", pinned);
+    btn.setAttribute("aria-pressed", pinned ? "true" : "false");
+    btn.title = pinned ? "Unpin console" : "Pin console";
+    btn.setAttribute("aria-label", pinned ? `Unpin ${navItemLabel(view)}` : `Pin ${navItemLabel(view)}`);
+    const glyph = btn.querySelector("span");
+    if (glyph) glyph.textContent = pinned ? "★" : "☆";
+  });
+}
+
+function ensureNavItemEnhancements() {
+  qsa("#sidebarNavList .nav-item[data-view]").forEach((item) => {
+    const view = item.dataset.view;
+    const label = item.querySelector(".nav-item-label")?.textContent?.trim() || view;
+    const groupCode = item.closest("[data-nav-group]")?.dataset?.railGroup || "";
+    let flyout = label;
+    if (view === "orchestration") flyout = "Flow Studio · CORE";
+    else if (view === "overview") flyout = "Overview · Control plane";
+    else if (groupCode) flyout = `${label} · ${groupCode}`;
+    item.dataset.navFlyout = flyout;
+    if (item.querySelector(".nav-pin-btn")) return;
+    const pin = document.createElement("button");
+    pin.type = "button";
+    pin.className = "nav-pin-btn";
+    pin.dataset.pinView = view;
+    pin.setAttribute("aria-pressed", "false");
+    pin.title = "Pin console";
+    pin.setAttribute("aria-label", `Pin ${label}`);
+    pin.innerHTML = "<span aria-hidden=\"true\">☆</span>";
+    pin.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleNavPin(view);
+      refreshNavQuickStrips();
+    });
+    item.appendChild(pin);
+  });
+}
+
+function expandAllNavGroups() {
+  qsa("[data-nav-group]").forEach((group) => {
+    if (group.classList.contains("nav-filter-hidden")) return;
+    setNavGroupExpanded(group, true);
+  });
+}
+
+function setNavGroupExpanded(group, expanded) {
+  if (!group) return;
+  const toggle = group.querySelector(".nav-group-toggle");
+  const submenu = group.querySelector(".nav-submenu");
+  if (!toggle || !submenu) return;
+  const next = Boolean(expanded);
+  submenu.hidden = !next;
+  toggle.setAttribute("aria-expanded", next ? "true" : "false");
+  group.classList.toggle("is-expanded", next);
+  refreshNavGroupActiveMeta(group);
+}
+
+function refreshNavGroupActiveMeta(group) {
+  if (!group) return;
+  const meta = group.querySelector(".nav-group-toggle-meta");
+  if (!meta) return;
+  if (!meta.dataset.defaultMeta) {
+    meta.dataset.defaultMeta = meta.textContent.trim() || "";
+  }
+  const activeItem = group.querySelector(".nav-item.active, .nav-item[aria-current='page']");
+  const label = activeItem?.querySelector(".nav-item-label")?.textContent?.trim()
+    || activeItem?.dataset.view
+    || "";
+  if (group.classList.contains("has-active") && !group.classList.contains("is-expanded") && label) {
+    meta.textContent = label;
+    meta.classList.add("is-active-child");
+  } else {
+    meta.textContent = meta.dataset.defaultMeta;
+    meta.classList.remove("is-active-child");
+  }
+}
+
+function syncNavGroupCounts() {
+  qsa("[data-nav-group]").forEach((group) => {
+    const countEl = group.querySelector(".nav-group-count");
+    if (!countEl) return;
+    const n = Array.from(group.querySelectorAll(".nav-submenu .nav-item")).filter(
+      (item) => !item.classList.contains("nav-filter-hidden"),
+    ).length;
+    countEl.textContent = String(n);
+  });
+}
+
+function expandNavGroupForView(viewName, options = {}) {
+  const accordion = Boolean(options?.accordion);
+  const target = qsa(".nav-item").find((btn) => btn.dataset.view === viewName);
+  const owningGroup = target?.closest?.("[data-nav-group]") || null;
+  qsa("[data-nav-group]").forEach((group) => {
+    const ownsTarget = group === owningGroup;
+    group.classList.toggle("has-active", ownsTarget);
+    if (accordion) {
+      setNavGroupExpanded(group, ownsTarget);
+    } else if (ownsTarget) {
+      setNavGroupExpanded(group, true);
+    } else {
+      refreshNavGroupActiveMeta(group);
+    }
+  });
+}
+
+function collapseNavGroupsToActive() {
+  const activeView =
+    qsa(".nav-item.active").find((btn) => btn.dataset.view)?.dataset.view ||
+    currentActiveView ||
+    "overview";
+  expandNavGroupForView(activeView, { accordion: true });
+}
+
+function filterSidebarNav(query) {
+  const q = String(query || "").trim().toLowerCase();
+  const emptyEl = qs("#sidebarNavFilterEmpty");
+  const kickers = qsa("#sidebarNavList .nav-section-kicker");
+  let matchCount = 0;
+
+  qsa("#sidebarNavList .nav-item").forEach((item) => {
+    const hay = [
+      item.dataset.view,
+      item.dataset.railLabel,
+      item.title,
+      item.querySelector(".nav-item-label")?.textContent,
+      item.querySelector(".nav-item-hint")?.textContent,
+      item.querySelector(".nav-item-code")?.textContent,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    const match = !q || hay.includes(q);
+    item.classList.toggle("nav-filter-hidden", !match);
+    if (match) matchCount += 1;
+  });
+
+  qsa("[data-nav-group]").forEach((group) => {
+    const anyVisible = Array.from(group.querySelectorAll(".nav-submenu .nav-item")).some(
+      (item) => !item.classList.contains("nav-filter-hidden"),
+    );
+    group.classList.toggle("nav-filter-hidden", Boolean(q) && !anyVisible);
+    if (q && anyVisible) {
+      setNavGroupExpanded(group, true);
+    }
+  });
+
+  // Hide section kickers when filtering and their following cluster has no visible items.
+  kickers.forEach((kicker) => {
+    let sibling = kicker.nextElementSibling;
+    let any = false;
+    while (sibling && !sibling.classList.contains("nav-section-kicker")) {
+      if (sibling.classList.contains("nav-item") && !sibling.classList.contains("nav-filter-hidden")) {
+        any = true;
+        break;
+      }
+      if (sibling.classList.contains("nav-group") && !sibling.classList.contains("nav-filter-hidden")) {
+        any = true;
+        break;
+      }
+      sibling = sibling.nextElementSibling;
+    }
+    kicker.classList.toggle("nav-filter-hidden", Boolean(q) && !any);
+  });
+
+  if (emptyEl) emptyEl.hidden = matchCount > 0;
+  syncNavGroupCounts();
+  if (!q) collapseNavGroupsToActive();
+}
+
+function setSidebarRail(enabled) {
+  const shell = qs(".app-shell");
+  const toggle = qs("#sidebarRailToggle");
+  if (!shell) return;
+  const next = Boolean(enabled) && window.innerWidth > 1080;
+  const wasRail = shell.classList.contains("sidebar-rail");
+  shell.classList.toggle("sidebar-rail", next);
+  shell.classList.toggle("sidebar-expanded", !next);
+  if (toggle) {
+    toggle.setAttribute("aria-pressed", next ? "true" : "false");
+    toggle.setAttribute("aria-label", next ? "Expand sidebar" : "Minimize sidebar");
+    toggle.title = next ? "Expand sidebar" : "Minimize sidebar";
+  }
+  try {
+    localStorage.setItem(SIDEBAR_RAIL_STORAGE_KEY, next ? "1" : "0");
+  } catch {
+    /* ignore quota / private mode */
+  }
+  const planeSummary = qs("#sidebarPlaneSummary");
+  const planeStatusText = qs("#sidebarPlaneStatusText")?.textContent || "Plane status";
+  if (planeSummary) {
+    planeSummary.title = next
+      ? `${planeStatusText} · click to expand sidebar`
+      : `${planeStatusText} — expand for edition links`;
+  }
+  // Leaving rail: restore a proper accordion so the active console is visible again.
+  if (wasRail && !next) {
+    collapseNavGroupsToActive();
+  }
+  // Entering rail: force submenus present for icon labels (CSS also unhides them).
+  if (!wasRail && next) {
+    qsa("[data-nav-group]").forEach((group) => {
+      const submenu = group.querySelector(".nav-submenu");
+      if (submenu) submenu.hidden = false;
+      group.classList.add("is-expanded");
+      const groupToggle = group.querySelector(".nav-group-toggle");
+      groupToggle?.setAttribute("aria-expanded", "true");
+    });
+  }
+}
+
+function toggleSidebarRail() {
+  const shell = qs(".app-shell");
+  if (!shell) return;
+  setSidebarRail(!shell.classList.contains("sidebar-rail"));
+}
+
 function pauseConsoleAutoRefreshTimers() {
   if (observabilityAutoRefreshTimer) {
     clearInterval(observabilityAutoRefreshTimer);
@@ -14723,6 +17379,7 @@ function initViewConsoleForView(viewName) {
     case "orchestration":
       initViewConsoleTabs("orchestration", (tabName) => {
         renderOrchestrationConsoleSummary();
+        syncOrchestrationHeaderChrome();
         if (tabName === "studio") void loadOrchestrationConsole();
         if (tabName === "flows") void loadOrchestrationFlows();
         if (tabName === "runs") void loadOrchestrationHistoryRuns();
@@ -14837,12 +17494,13 @@ async function switchView(viewName) {
   const targetBtn = qsa(".nav-item").find((btn) => btn.dataset.view === viewName);
   if (!targetBtn || targetBtn.hidden) return;
 
-  const navGroup = targetBtn.closest("[data-nav-group]");
-  if (navGroup) {
-    const toggle = navGroup.querySelector(".nav-group-toggle");
-    const submenu = navGroup.querySelector(".nav-submenu");
-    if (submenu) submenu.hidden = false;
-    if (toggle) toggle.setAttribute("aria-expanded", "true");
+  expandNavGroupForView(viewName, { accordion: true });
+  syncNavGroupCounts();
+
+  const navFilter = qs("#sidebarNavFilter");
+  if (navFilter?.value) {
+    navFilter.value = "";
+    filterSidebarNav("");
   }
 
   qsa(".nav-item").forEach((btn) => {
@@ -14850,28 +17508,73 @@ async function switchView(viewName) {
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-current", isActive ? "page" : "false");
   });
+  qsa("[data-nav-group]").forEach((group) => refreshNavGroupActiveMeta(group));
 
   pauseConsoleAutoRefreshTimers();
 
-  if (typeof ViewLoader !== "undefined") {
-    await ViewLoader.ensureView(viewName);
-    ViewLoader.setActiveView(viewName);
-    initViewShellBindings(viewName);
-  } else {
-    qsa(".view").forEach((section) => {
-      section.classList.toggle("active", section.id === viewName);
-    });
-    initViewConsoleForView(viewName);
+  const previousView = currentActiveView;
+
+  try {
+    if (typeof ViewLoader !== "undefined") {
+      await ViewLoader.ensureView(viewName);
+      ViewLoader.setActiveView(viewName);
+      initViewShellBindings(viewName);
+    } else {
+      qsa(".view").forEach((section) => {
+        section.classList.toggle("active", section.id === viewName);
+      });
+      initViewConsoleForView(viewName);
+    }
+  } catch (err) {
+    console.error(`Failed to switch to view "${viewName}"`, err);
+    if (typeof ViewLoader !== "undefined" && previousView) {
+      ViewLoader.setActiveView(previousView);
+    }
+    throw err;
   }
 
   currentActiveView = viewName;
+  rememberRecentView(viewName);
+  refreshNavQuickStrips();
   resumeConsoleAutoRefreshForView(viewName);
 
   const titleTarget = qs("#viewTitle");
-  if (titleTarget) titleTarget.textContent = formatViewTitle(viewName);
+  const viewTitle = formatViewTitle(viewName);
+  if (titleTarget) {
+    titleTarget.textContent = viewTitle;
+    if (!titleTarget.hasAttribute("tabindex")) titleTarget.setAttribute("tabindex", "-1");
+  }
   const subtitleTarget = qs("#viewSubtitle");
   if (subtitleTarget) subtitleTarget.textContent = formatViewDescription(viewName);
+  const kickerTarget = qs("#viewKicker");
+  if (kickerTarget) kickerTarget.textContent = formatViewDomainKicker(viewName);
+  document.title = `${viewTitle} · AgentHub Governance Plane`;
+  const leavingOrchestration = previousView === "orchestration" && viewName !== "orchestration";
+  const enteringOrchestration = viewName === "orchestration" && previousView !== "orchestration";
+  document.body.dataset.coreView = viewName === "orchestration" ? "orchestration" : "";
+  if (viewName !== "orchestration") {
+    document.body.classList.remove("flow-canvas-expanded", "flow-canvas-focus", "flow-studio-canvas-active");
+    if (leavingOrchestration) exitOrchestrationCanvasChrome();
+  } else if (enteringOrchestration) {
+    restoreOrchestrationCanvasChromeFromStorage();
+  }
+  updateViewBreadcrumb(viewName);
+  syncOrchestrationHeaderChrome();
+  markViewRefreshed("Opened");
   closeSidebar();
+  const activeSection = qs(`#${viewName}`);
+  if (activeSection) {
+    activeSection.classList.remove("view-enter");
+    // force reflow so enter animation retriggers
+    void activeSection.offsetWidth;
+    activeSection.classList.add("view-enter");
+  }
+  if (titleTarget && document.activeElement && document.activeElement.closest?.(".nav-item, .nav-group-toggle, .quick-start-chip, [data-view]")) {
+    window.requestAnimationFrame(() => titleTarget.focus({ preventScroll: true }));
+  }
+  if (typeof UiKit !== "undefined" && UiKit.announce) {
+    UiKit.announce(`${viewTitle} console`);
+  }
   if (viewName === "routing-gateway") {
     renderGatewayMcpSummary();
     renderCursorGatewayOpsMatrix();
@@ -14931,6 +17634,7 @@ async function switchView(viewName) {
     void loadBenchmarkScanHistory();
     startBenchmarkScanCostPolling();
   } else if (viewName === "orchestration") {
+    ensureOrchestrationStudioPanelVisible();
     void loadOrchestrationConsole();
   } else if (viewName === "agentic") {
     void loadAgenticConsole();
@@ -14949,10 +17653,16 @@ async function switchView(viewName) {
     TableSearch.init(viewRoot);
     viewRoot.dataset.tableSearchBound = "true";
   }
+  if (viewRoot && typeof UiKit !== "undefined") {
+    UiKit.collapseCardHelp?.(viewRoot);
+    UiKit.enhanceFormValidation?.(viewRoot);
+    UiKit.enhancePageSurfaces?.(viewRoot);
+  }
   if (viewName === "security") {
     void loadSecurityConsole();
     switchSecurityConsole("users");
   }
+  prefetchLikelyViews(viewName);
 }
 
 function buildQueryString(raw) {
@@ -14977,9 +17687,16 @@ async function loadOverview() {
 
   if (healthResult.status === "fulfilled") {
     const health = healthResult.value;
-    qs("#healthStatus").textContent = `Backend: ${health?.status || "unknown"}`;
+    const plane = health?.plane || {};
+    const planeMode = String(plane.app_plane || "all");
+    qs("#healthStatus").textContent = `Backend: ${health?.status || "unknown"} · plane ${planeMode}`;
+    if (qs("#overviewReadyHealth")) {
+      qs("#overviewReadyHealth").textContent = String(health?.status || "ok").toLowerCase() === "ok" ? "healthy" : String(health?.status || "check");
+    }
+    applyOverviewPlanePosture(plane);
   } else {
     qs("#healthStatus").textContent = `Error: ${safeText(healthResult.reason?.message || "Failed to fetch")}`;
+    if (qs("#overviewReadyHealth")) qs("#overviewReadyHealth").textContent = "down";
   }
 
   if (costResult.status === "fulfilled") {
@@ -15039,7 +17756,693 @@ async function loadOverview() {
     loadSpendBreakdown(),
     loadOverviewUiCoverage(),
     loadOverviewOrchestrationSummary(),
+    loadOverviewLeadershipReadiness(),
+    loadOverviewControlPlane(),
   ]);
+  // Prefetch Flow Studio HTML only — do not bind console/events while Overview is active
+  // (ensureView + initViewConsole previously stole .active and restored Focus chrome globally).
+  if (typeof ViewLoader !== "undefined" && typeof ViewLoader.prefetchView === "function") {
+    void ViewLoader.prefetchView("orchestration");
+  }
+}
+
+function applyOverviewPlanePosture(plane) {
+  if (!plane || typeof plane !== "object") return;
+  const mode = String(plane.app_plane || "--");
+  const isolation = String(plane.isolation_mode || "--");
+  const coverage = plane.on_plane_coverage || {};
+  const pct = coverage.on_plane_coverage_percent;
+  const generation = plane.policy_generation || {};
+  const fingerprint = generation.fingerprint || generation.generation || "--";
+  const drift = String(plane.drift_status || "--");
+  const gate = plane.gate || {};
+  if (qs("#overviewPlaneMode")) qs("#overviewPlaneMode").textContent = mode;
+  if (qs("#overviewPlaneIsolation")) qs("#overviewPlaneIsolation").textContent = isolation.replace(/_/g, " ");
+  if (qs("#overviewPlaneCoverage")) {
+    qs("#overviewPlaneCoverage").textContent =
+      pct == null || pct === "" ? "n/a" : `${Number(pct).toFixed(1)}%`;
+  }
+  if (qs("#overviewPlaneSchedulers")) {
+    qs("#overviewPlaneSchedulers").textContent = plane.control_schedulers_enabled ? "on" : "off";
+  }
+  if (qs("#overviewPlaneGeneration")) qs("#overviewPlaneGeneration").textContent = String(fingerprint);
+  if (qs("#overviewPlaneDrift")) qs("#overviewPlaneDrift").textContent = drift.replace(/_/g, " ");
+  if (qs("#overviewPlaneGate")) {
+    const allowed = gate.inference_allowed;
+    const modeLabel = gate.fail_closed_mode || "off";
+    qs("#overviewPlaneGate").textContent =
+      allowed === false ? `blocked (${modeLabel})` : `allow (${modeLabel})`;
+  }
+  if (qs("#overviewPlaneWatcher")) {
+    qs("#overviewPlaneWatcher").textContent = gate.watcher_enabled
+      ? `on (${gate.watcher_ticks || 0})`
+      : "off";
+  }
+  const slos = plane.slos || {};
+  if (qs("#overviewPlaneSlos")) {
+    qs("#overviewPlaneSlos").textContent =
+      slos.overall_within_slo == null ? "n/a" : slos.overall_within_slo ? "ok" : "breach";
+  }
+  const published = plane.published_policy_generation || {};
+  if (qs("#overviewPlanePublished")) {
+    qs("#overviewPlanePublished").textContent = published.fingerprint
+      ? String(published.fingerprint)
+      : "none";
+  }
+  const desiredObserved = plane.desired_observed || {};
+  if (qs("#overviewPlaneDesiredObserved")) {
+    const synced = desiredObserved.generation_in_sync;
+    qs("#overviewPlaneDesiredObserved").textContent =
+      synced == null ? "n/a" : synced ? "in sync" : "diverged";
+  }
+  const lkg = desiredObserved.last_known_good || {};
+  if (qs("#overviewPlaneLkg")) {
+    qs("#overviewPlaneLkg").textContent = lkg.fingerprint
+      ? String(lkg.fingerprint).slice(0, 12)
+      : "none";
+  }
+  const contract = plane.contract || {};
+  if (qs("#overviewPlaneContract")) {
+    qs("#overviewPlaneContract").textContent = contract.contract_version || plane.leadership_summary?.contract_version || "n/a";
+  }
+  if (qs("#overviewPlaneReadonly")) {
+    const readonly = plane.control_readonly ?? plane.leadership_summary?.control_readonly;
+    qs("#overviewPlaneReadonly").textContent = readonly == null ? "n/a" : readonly ? "frozen" : "off";
+  }
+  if (qs("#overviewPlaneReady")) {
+    const ready = plane.leadership_summary?.ready;
+    qs("#overviewPlaneReady").textContent = ready == null ? "n/a" : ready ? "ready" : "not ready";
+  }
+  if (qs("#overviewPlaneAlive")) {
+    const alive = plane.leadership_summary?.alive;
+    qs("#overviewPlaneAlive").textContent = alive == null ? "yes" : alive ? "yes" : "no";
+  }
+  if (qs("#overviewPlanePeerAck")) {
+    const ack = plane.leadership_summary?.peer_ack_matches_published;
+    qs("#overviewPlanePeerAck").textContent =
+      ack == null ? "none" : ack ? "matched" : "stale";
+  }
+  if (qs("#overviewPlaneNotes") && plane.notes) {
+    const peer = plane.peer || {};
+    const peerNote = peer.peer_url
+      ? ` Peer ${peer.reachable === false ? "unreachable" : peer.reachable ? "ok" : "n/a"} (${peer.peer_url}).`
+      : "";
+    const rejectTotal = plane.rejection_stats?.total;
+    const rejectNote = rejectTotal != null ? ` Rejections: ${rejectTotal}.` : "";
+    qs("#overviewPlaneNotes").textContent = `${String(plane.notes)}${peerNote}${rejectNote}`;
+  }
+  const eventsBody = qs("#overviewPlaneDriftEvents");
+  if (eventsBody) {
+    const events = Array.isArray(plane.drift_events_recent) ? plane.drift_events_recent : [];
+    if (!events.length) {
+      eventsBody.innerHTML = `<tr><td colspan="5" class="mono">No drift events yet.</td></tr>`;
+    } else {
+      eventsBody.innerHTML = events
+        .slice(0, 8)
+        .map((ev) => {
+          const when = ev.recorded_at_unix
+            ? new Date(Number(ev.recorded_at_unix) * 1000).toISOString()
+            : "--";
+          const peerFp = ev.peer_fingerprint || (ev.peer_reachable === false ? "unreachable" : "--");
+          return `<tr>
+            <td class="mono">${safeText(when)}</td>
+            <td>${safeText(String(ev.drift_status || "--").replace(/_/g, " "))}</td>
+            <td class="mono">${safeText(ev.source || "--")}</td>
+            <td class="mono">${safeText(ev.fingerprint || "--")}</td>
+            <td class="mono">${safeText(peerFp)}</td>
+          </tr>`;
+        })
+        .join("");
+    }
+  }
+  const badge = qs("#overviewPlaneBadge");
+  if (badge) {
+    const drifted = drift === "drift_detected" || drift === "peer_unreachable";
+    const blocked = gate.inference_allowed === false;
+    badge.textContent = blocked ? "gated" : drifted ? "drift" : mode === "all" ? "combined" : "isolated";
+    badge.classList.toggle("ok", mode !== "all" && !drifted && !blocked);
+    badge.classList.toggle("idle", mode === "all" && !drifted && !blocked);
+  }
+}
+
+async function loadOverviewControlPlane() {
+  try {
+    const [plane, leadership] = await Promise.all([
+      api("/platform/control-plane?window_hours=24&probe_peer=true"),
+      api("/platform/control-plane/leadership?window_hours=24&probe_peer=false").catch(() => null),
+    ]);
+    applyOverviewPlanePosture(plane);
+    applyOverviewPlaneLeadership(leadership);
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Control plane posture unavailable: ${safeText(error?.message || "error")}`;
+    }
+  }
+}
+
+function applyOverviewPlaneLeadership(leadership) {
+  if (!leadership || typeof leadership !== "object") return;
+  if (qs("#overviewPlaneCpli")) {
+    const pts = leadership.points_to_leader_band;
+    const base = `${leadership.score ?? "--"}/${leadership.max_score ?? 20}`;
+    qs("#overviewPlaneCpli").textContent =
+      pts != null && pts > 0 ? `${base} (−${pts})` : base;
+  }
+  if (qs("#overviewPlaneCpliBand")) {
+    qs("#overviewPlaneCpliBand").textContent = String(leadership.band || "--").replace(/_/g, " ");
+  }
+  const trend = leadership.score_trend || {};
+  if (qs("#overviewPlaneTrend")) {
+    if (trend.delta == null) {
+      qs("#overviewPlaneTrend").textContent = trend.direction || "n/a";
+    } else {
+      const sign = trend.delta > 0 ? `+${trend.delta}` : String(trend.delta);
+      qs("#overviewPlaneTrend").textContent = `${sign} (${trend.direction || "flat"})`;
+    }
+  }
+  const fresh = leadership.attestation_freshness || {};
+  if (qs("#overviewPlaneAttestAge")) {
+    qs("#overviewPlaneAttestAge").textContent =
+      fresh.age_hours == null ? "none" : `${fresh.age_hours}h${fresh.fresh ? "" : " stale"}`;
+  }
+  const gate = leadership.release_gate || {};
+  if (qs("#overviewPlaneReleaseGate")) {
+    qs("#overviewPlaneReleaseGate").textContent = gate.passed ? "pass" : "fail";
+  }
+  const promo = leadership.promotion_readiness || {};
+  if (qs("#overviewPlanePromotion")) {
+    qs("#overviewPlanePromotion").textContent = promo.ready
+      ? "ready"
+      : promo.ready === false
+        ? "blocked"
+        : "--";
+  }
+  if (qs("#overviewPlaneGateStreak")) {
+    const streak = promo.streak;
+    const required = promo.streak_required;
+    qs("#overviewPlaneGateStreak").textContent =
+      streak == null ? "--" : `${streak}/${required ?? "?"}`;
+  }
+  const blockers = qs("#overviewPlaneBlockers");
+  if (blockers) {
+    const items = Array.isArray(leadership.next_actions) && leadership.next_actions.length
+      ? leadership.next_actions.map((a) => a.action || a)
+      : Array.isArray(leadership.blockers)
+        ? leadership.blockers
+        : [];
+    if (!items.length) {
+      blockers.innerHTML = `<li class="mono">No CPLI blockers — eng band ${safeText(leadership.band || "--")} (marketing still blocked).</li>`;
+    } else {
+      blockers.innerHTML = items.map((b) => `<li>${safeText(b)}</li>`).join("");
+    }
+  }
+  const dimsBody = qs("#overviewPlaneDimensions");
+  if (dimsBody) {
+    const dims = Array.isArray(leadership.dimensions) ? leadership.dimensions : [];
+    if (!dims.length) {
+      dimsBody.innerHTML = `<tr><td colspan="3" class="mono">Load CPLI to see dimensions.</td></tr>`;
+    } else {
+      dimsBody.innerHTML = dims
+        .map(
+          (d) => `<tr>
+            <td>${safeText(d.label || d.id || "--")}</td>
+            <td class="mono">${safeText(`${d.score ?? 0}/${d.max ?? 0}`)}</td>
+            <td class="mono">${safeText(d.note || "")}</td>
+          </tr>`,
+        )
+        .join("");
+    }
+  }
+  const gateBody = qs("#overviewPlaneGateChecks");
+  if (gateBody) {
+    const checks = Array.isArray(gate.checks) ? gate.checks : [];
+    if (!checks.length) {
+      gateBody.innerHTML = `<tr><td colspan="3" class="mono">No release-gate checks.</td></tr>`;
+    } else {
+      gateBody.innerHTML = checks
+        .map((c) => {
+          const severity = c.severity === "advisory" ? "advisory" : c.passed ? "pass" : "fail";
+          return `<tr>
+            <td>${safeText(c.label || c.id || "--")}</td>
+            <td class="mono">${safeText(severity)}</td>
+            <td class="mono">${safeText(c.detail || "")}</td>
+          </tr>`;
+        })
+        .join("");
+    }
+  }
+  const histBody = qs("#overviewPlaneAttestHistory");
+  if (histBody) {
+    const history = Array.isArray(leadership.attestation_history) ? leadership.attestation_history : [];
+    if (!history.length) {
+      histBody.innerHTML = `<tr><td colspan="5" class="mono">No attestation history yet.</td></tr>`;
+    } else {
+      histBody.innerHTML = history
+        .slice(0, 8)
+        .map(
+          (h) => `<tr>
+            <td class="mono">${safeText(h.attested_at || "--")}</td>
+            <td class="mono">${safeText(h.attestation_id || "--")}</td>
+            <td class="mono">${safeText(h.score ?? "--")}</td>
+            <td>${safeText(String(h.band || "--").replace(/_/g, " "))}</td>
+            <td class="mono">${h.signed ? "yes" : "hash"}</td>
+          </tr>`,
+        )
+        .join("");
+    }
+  }
+  const gateHistBody = qs("#overviewPlaneGateHistory");
+  if (gateHistBody) {
+    const history = Array.isArray(leadership.release_gate_history)
+      ? leadership.release_gate_history
+      : Array.isArray(gate.release_gate_history)
+        ? gate.release_gate_history
+        : [];
+    if (!history.length) {
+      gateHistBody.innerHTML = `<tr><td colspan="5" class="mono">No release-gate evaluations yet.</td></tr>`;
+    } else {
+      gateHistBody.innerHTML = history
+        .slice(0, 8)
+        .map(
+          (h) => `<tr>
+            <td class="mono">${safeText(h.evaluated_at || "--")}</td>
+            <td class="mono">${safeText(h.evaluation_id || "--")}</td>
+            <td class="mono">${h.passed ? "pass" : "fail"}</td>
+            <td class="mono">${safeText(h.score ?? "--")}</td>
+            <td class="mono">${safeText((h.failed_checks || []).join(",") || "—")}</td>
+          </tr>`,
+        )
+        .join("");
+    }
+  }
+  const meta = qs("#overviewPlaneAttestMeta");
+  if (meta) {
+    const last = leadership.last_attestation;
+    const ver = leadership.last_attestation_verification || {};
+    if (last && last.attestation_id) {
+      const signed = last.signature?.signed ? "signed" : "hashed";
+      const valid = ver.valid === true ? "valid" : ver.valid === false ? "invalid" : "n/a";
+      meta.textContent = `${last.attestation_id} · ${signed} · ${valid} · ${last.attested_at || "--"}`;
+    } else {
+      meta.textContent = "No attestation yet";
+    }
+  }
+  const badge = qs("#overviewPlaneBadge");
+  if (badge && promo.ready) {
+    badge.textContent = "promo ready";
+    badge.classList.add("ok");
+    badge.classList.remove("idle");
+  } else if (badge && gate.passed) {
+    badge.textContent = "gate pass";
+    badge.classList.add("ok");
+    badge.classList.remove("idle");
+  } else if (badge && leadership.engineering_leader_ready) {
+    badge.textContent = "cpli ready";
+    badge.classList.add("ok");
+    badge.classList.remove("idle");
+  } else if (badge && leadership.band) {
+    badge.textContent = String(leadership.band).replace(/_/g, " ");
+  }
+  window.__overviewLastPlaneAttestation = leadership.last_attestation || null;
+}
+
+async function forceOverviewPlaneReconcile() {
+  const button = qs("#overviewPlaneReconcile");
+  if (button) button.disabled = true;
+  try {
+    const ceremony = Boolean(qs("#overviewPlaneReconcileCeremony")?.checked);
+    const qsParams = ceremony
+      ? "/platform/control-plane/reconcile?window_hours=24&attest=true&evaluate_gate=true"
+      : "/platform/control-plane/reconcile?window_hours=24";
+    const data = await api(qsParams, { method: "POST" });
+    applyOverviewPlanePosture(data);
+    const leadership = await api("/platform/control-plane/leadership?window_hours=24&probe_peer=false").catch(() => null);
+    applyOverviewPlaneLeadership(leadership);
+    const ceremonyNote = ceremony
+      ? ` · attest ${safeText(data?.leadership_attestation?.attestation_id || "n/a")} · gate ${
+          data?.release_gate?.passed ? "pass" : data?.release_gate ? "fail" : "n/a"
+        }`
+      : "";
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Reconcile ok · drift ${safeText(data?.drift_status || "--")} · fingerprint ${safeText(
+        data?.policy_generation?.fingerprint || "--",
+      )}${ceremonyNote}`;
+    }
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Reconcile failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function attestOverviewPlaneLeadership() {
+  const button = qs("#overviewPlaneAttest");
+  if (button) button.disabled = true;
+  try {
+    const bundle = await api("/platform/control-plane/attest?window_hours=24&probe_peer=true", { method: "POST" });
+    const score = bundle?.scorecard?.score;
+    const max = bundle?.scorecard?.max_score || 20;
+    const signed = bundle?.signature?.signed ? "signed" : "hashed";
+    const valid = bundle?.verification?.valid ? "valid" : "check";
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Attested ${safeText(bundle?.attestation_id || "")} · CPLI ${score}/${max} · ${signed}/${valid} · marketing claim blocked`;
+    }
+    window.__overviewLastPlaneAttestation = bundle;
+    const leadership = await api("/platform/control-plane/leadership?window_hours=24&probe_peer=false").catch(() => null);
+    if (leadership) {
+      applyOverviewPlaneLeadership(leadership);
+    } else {
+      applyOverviewPlaneLeadership({
+        score,
+        max_score: max,
+        band: bundle?.scorecard?.band,
+        engineering_leader_ready: bundle?.scorecard?.engineering_leader_ready,
+        blockers: bundle?.scorecard?.blockers || [],
+        dimensions: bundle?.scorecard?.dimensions || [],
+        last_attestation: bundle,
+        last_attestation_verification: bundle?.verification,
+      });
+    }
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Attest failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function verifyOverviewPlaneAttestation() {
+  const button = qs("#overviewPlaneVerifyAttest");
+  if (button) button.disabled = true;
+  try {
+    const result = await api("/platform/control-plane/attest/verify");
+    const ver = result?.verification || {};
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Verify ${safeText(result?.attestation_id || "none")} · ${
+        ver.valid ? "valid" : "invalid"
+      } · ${safeText(ver.reason || "--")} · marketing blocked`;
+    }
+    if (qs("#overviewPlaneAttestMeta") && result?.attestation_id) {
+      qs("#overviewPlaneAttestMeta").textContent = `${result.attestation_id} · ${
+        ver.valid ? "valid" : "invalid"
+      } · score ${result.score ?? "--"}`;
+    }
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Verify failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function exportOverviewPlaneAttestation() {
+  const bundle = window.__overviewLastPlaneAttestation;
+  if (!bundle) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = "No attestation loaded — Attest CPLI first.";
+    }
+    return;
+  }
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${bundle.attestation_id || "cpli-attestation"}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  if (qs("#overviewPlaneNotes")) {
+    qs("#overviewPlaneNotes").textContent = `Exported ${safeText(bundle.attestation_id || "attestation")}`;
+  }
+}
+
+async function exportOverviewPlaneEvidencePack() {
+  const button = qs("#overviewPlaneExportEvidence");
+  if (button) button.disabled = true;
+  try {
+    const pack = await api("/platform/control-plane/evidence-pack?window_hours=24&probe_peer=true");
+    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${pack.pack_id || "cpli-evidence-pack"}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    const passed = pack?.release_gate?.passed ? "pass" : "fail";
+    const signed = pack?.signature?.signed ? "signed" : "hashed";
+    const promo = pack?.promotion_readiness?.ready ? "promo ready" : "promo blocked";
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Evidence pack ${safeText(pack.pack_id || "")} · gate ${passed} · ${signed} · ${promo} · marketing blocked`;
+    }
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Evidence pack failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function mintOverviewPlaneEvidencePack() {
+  const button = qs("#overviewPlaneMintEvidence");
+  if (button) button.disabled = true;
+  try {
+    const pack = await api("/platform/control-plane/evidence-pack?window_hours=24&probe_peer=true", { method: "POST" });
+    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${pack.pack_id || "cpli-evidence-pack"}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    const passed = pack?.release_gate?.passed ? "pass" : "fail";
+    const promo = pack?.promotion_readiness?.ready ? "promo ready" : "promo blocked";
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Minted ${safeText(pack.pack_id || "")} · gate ${passed} · ${promo} · marketing blocked`;
+    }
+    const leadership = await api("/platform/control-plane/leadership?window_hours=24&probe_peer=false").catch(() => null);
+    if (leadership) applyOverviewPlaneLeadership(leadership);
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Mint evidence pack failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function exportOverviewPlaneSnapshot() {
+  const button = qs("#overviewPlaneExportSnapshot");
+  if (button) button.disabled = true;
+  try {
+    const snap = await api("/platform/control-plane/snapshot");
+    const blob = new Blob([JSON.stringify(snap, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${snap.snapshot_id || "control-plane-snapshot"}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Snapshot ${safeText(snap.snapshot_id || "")} · ready ${
+        snap?.readiness?.ready ? "yes" : "no"
+      } · ${safeText(snap.contract_version || "")}`;
+    }
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Export snapshot failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function mintOverviewPlaneSnapshot() {
+  const button = qs("#overviewPlaneMintSnapshot");
+  if (button) button.disabled = true;
+  try {
+    const snap = await api("/platform/control-plane/snapshot", { method: "POST" });
+    const blob = new Blob([JSON.stringify(snap, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${snap.snapshot_id || "control-plane-snapshot"}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    window.__overviewLastPlaneSnapshot = {
+      snapshot_id: snap.snapshot_id,
+      canonical_sha256: snap.canonical_sha256,
+    };
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Minted snapshot ${safeText(snap.snapshot_id || "")} · sha ${safeText(
+        String(snap.canonical_sha256 || "").slice(0, 12),
+      )} · marketing blocked`;
+    }
+    await loadOverviewControlPlane();
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Mint snapshot failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function applyOverviewPlaneSnapshot() {
+  const button = qs("#overviewPlaneApplySnapshot");
+  if (button) button.disabled = true;
+  try {
+    let snap = window.__overviewLastPlaneSnapshot;
+    if (!snap?.snapshot_id || !snap?.canonical_sha256) {
+      const minted = await api("/platform/control-plane/snapshot", { method: "POST" });
+      snap = { snapshot_id: minted.snapshot_id, canonical_sha256: minted.canonical_sha256 };
+      window.__overviewLastPlaneSnapshot = snap;
+    }
+    const result = await api(
+      `/platform/control-plane/snapshot/apply?snapshot_id=${encodeURIComponent(snap.snapshot_id)}&canonical_sha256=${encodeURIComponent(
+        snap.canonical_sha256,
+      )}&reason=overview-operator`,
+      { method: "POST" },
+    );
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Applied snapshot ${safeText(result?.snapshot_id || "")} · ${safeText(
+        result?.from_fingerprint || "?",
+      )} → ${safeText(result?.to_fingerprint || "?")}`;
+    }
+    await loadOverviewControlPlane();
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Apply snapshot failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function setOverviewPlaneFreeze(enabled) {
+  const button = qs(enabled ? "#overviewPlaneFreeze" : "#overviewPlaneUnfreeze");
+  if (button) button.disabled = true;
+  try {
+    const reason = enabled ? "operator-freeze" : "operator-unfreeze";
+    const result = await api(
+      `/platform/control-plane/freeze?enabled=${enabled ? "true" : "false"}&reason=${encodeURIComponent(reason)}`,
+      { method: "POST" },
+    );
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Freeze ${enabled ? "on" : "off"} · frozen=${result?.control_readonly ? "yes" : "no"}`;
+    }
+    await loadOverviewControlPlane();
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Freeze update failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function rollbackOverviewPlaneLkg() {
+  const button = qs("#overviewPlaneRollbackLkg");
+  if (button) button.disabled = true;
+  try {
+    const result = await api(
+      "/platform/control-plane/rollback-lkg?reason=overview-operator",
+      { method: "POST" },
+    );
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `LKG rollback ${safeText(result?.rollback_id || "")} · ${safeText(
+        result?.from_fingerprint || "?",
+      )} → ${safeText(result?.to_fingerprint || "?")}${
+        result?.desired_still_diverges ? " · desired still diverges" : ""
+      }`;
+    }
+    await loadOverviewControlPlane();
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `LKG rollback failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function ackOverviewPlanePublished() {
+  const button = qs("#overviewPlanePeerAck");
+  if (button) button.disabled = true;
+  try {
+    const plane = await api("/platform/control-plane?window_hours=24&probe_peer=false");
+    const fp =
+      plane?.published_policy_generation?.fingerprint ||
+      plane?.policy_generation?.fingerprint ||
+      "";
+    if (!fp) {
+      throw new Error("No published fingerprint to ack");
+    }
+    const result = await api(
+      `/platform/control-plane/peer-ack?fingerprint=${encodeURIComponent(fp)}&note=overview-operator`,
+      { method: "POST" },
+    );
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Peer ack ${safeText(fp).slice(0, 12)} · ${
+        result?.matches_published ? "matches published" : "mismatch"
+      }`;
+    }
+    await loadOverviewControlPlane();
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Peer ack failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function evaluateOverviewPlaneReleaseGate() {
+  const button = qs("#overviewPlaneEvaluateGate");
+  if (button) button.disabled = true;
+  try {
+    const gate = await api("/platform/control-plane/release-gate/evaluate?window_hours=24", { method: "POST" });
+    const passed = gate?.passed ? "pass" : "fail";
+    const ci = gate?.ci?.go_no_go || "--";
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Gate ${safeText(gate?.evaluation_id || "")} · ${passed} · CI ${ci} · marketing blocked`;
+    }
+    const leadership = await api("/platform/control-plane/leadership?window_hours=24&probe_peer=false").catch(() => null);
+    if (leadership) applyOverviewPlaneLeadership(leadership);
+  } catch (error) {
+    if (qs("#overviewPlaneNotes")) {
+      qs("#overviewPlaneNotes").textContent = `Gate evaluate failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function loadOverviewLeadershipReadiness() {
+  const nhiEl = qs("#overviewReadyNhi");
+  const rtEl = qs("#overviewReadyRt");
+  const claimEl = qs("#overviewReadyClaim");
+  // Platform health (#overviewReadyHealth) is owned by GET /health in loadOverview — never overwrite it here.
+  if (!nhiEl && !rtEl && !claimEl) return;
+  try {
+    const data = await api("/gateway/governance/qbr-snapshot?hours=24");
+    if (nhiEl) {
+      nhiEl.textContent = data?.clocks?.prod_unmanaged_zero_ok ? "zero-ok" : "review";
+    }
+    if (rtEl) {
+      rtEl.textContent = data?.drills?.rt_01_02_within_90d ? "fresh" : "due";
+    }
+    if (claimEl) {
+      claimEl.textContent = data?.honesty?.leader_claim_allowed ? "allowed" : "blocked";
+    }
+  } catch {
+    if (nhiEl) nhiEl.textContent = "--";
+    if (rtEl) rtEl.textContent = "--";
+    if (claimEl) claimEl.textContent = "blocked";
+  }
 }
 
 async function loadOverviewOrchestrationSummary() {
@@ -15708,6 +19111,7 @@ function editDiscoveryConnection(row) {
   form.elements.source_id.value = row.source_id || "";
   if (form.elements.enabled) form.elements.enabled.value = row.enabled ? "true" : "false";
   if (form.elements.credential_binding_id) form.elements.credential_binding_id.value = row.credential_binding_id || "";
+  void loadDiscoveryCredentialBindingOptions(row.credential_binding_id || "");
   if (form.elements.secret_provider_id) form.elements.secret_provider_id.value = row.secret_provider_id || "";
   if (form.elements.secret_ref) form.elements.secret_ref.value = row.secret_ref || "";
   if (form.elements.base_url) form.elements.base_url.value = row.base_url || "";
@@ -15814,12 +19218,18 @@ function renderDiscoveryConnections() {
     editBtn.className = "ghost";
     editBtn.textContent = "Edit";
     editBtn.addEventListener("click", () => editDiscoveryConnection(row));
+    const refreshBtn = document.createElement("button");
+    refreshBtn.type = "button";
+    refreshBtn.className = "ghost";
+    refreshBtn.textContent = "Refresh";
+    refreshBtn.title = "GET /discovery/connections/{id}";
+    refreshBtn.addEventListener("click", () => loadDiscoveryConnectionById(row.connection_id));
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "ghost";
     deleteBtn.textContent = "Delete";
     deleteBtn.addEventListener("click", () => deleteDiscoveryConnection(row.connection_id));
-    actions.append(editBtn, testBtn, syncBtn, deleteBtn);
+    actions.append(editBtn, refreshBtn, testBtn, syncBtn, deleteBtn);
     tr.appendChild(actions);
     tbody.appendChild(tr);
   });
@@ -15833,10 +19243,69 @@ async function loadDiscoveryConnections() {
     const rows = await api("/discovery/connections", { headers: { "X-Actor-Role": "Auditor" } });
     discoveryConnectionRows = Array.isArray(rows) ? rows : [];
     renderDiscoveryConnections();
+    await loadDiscoveryCredentialBindingOptions(
+      qs("#discoveryConnectionForm")?.elements?.credential_binding_id?.value || "",
+    );
     if (result) result.textContent = discoveryConnectionRows.length ? `Loaded ${discoveryConnectionRows.length} live connections.` : "No live connections configured.";
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
     setTableMessage(tbody, 8, `Error: ${safeText(err.message)}`);
+  }
+}
+
+async function loadDiscoveryConnectionById(connectionId) {
+  const result = qs("#discoveryConnectionResult");
+  const id = String(connectionId || "").trim();
+  if (!id) {
+    if (result) result.textContent = "Connection ID is required.";
+    return;
+  }
+  try {
+    const row = await api(`/discovery/connections/${encodeURIComponent(id)}`, {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    discoveryConnectionRows = discoveryConnectionRows.some((entry) => entry.connection_id === row.connection_id)
+      ? discoveryConnectionRows.map((entry) => (entry.connection_id === row.connection_id ? row : entry))
+      : [row, ...discoveryConnectionRows];
+    renderDiscoveryConnections();
+    editDiscoveryConnection(row);
+    if (result) {
+      result.textContent = `Refreshed connection ${safeText(row.connection_name)} (${safeText(row.connection_id)}) via GET /discovery/connections/{id}.`;
+    }
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadDiscoveryCredentialBindingOptions(selectedValue = "") {
+  const select = qs("#discoveryConnectionCredentialBindingSelect");
+  if (!select) return;
+  const current = String(selectedValue || select.value || "").trim();
+  try {
+    const rows = await api("/providers/credential-bindings?status=active&limit=200", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const options = (Array.isArray(rows) ? rows : []).filter((row) => row?.binding_id);
+    select.textContent = "";
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = options.length ? "None — optional binding" : "No bindings — create in Providers";
+    select.appendChild(empty);
+    options.forEach((row) => {
+      const option = document.createElement("option");
+      option.value = row.binding_id;
+      option.textContent = `${row.binding_name || row.binding_id}${row.credential_plane ? ` · ${row.credential_plane}` : ""}`;
+      select.appendChild(option);
+    });
+    if (current && !options.some((row) => row.binding_id === current)) {
+      const orphan = document.createElement("option");
+      orphan.value = current;
+      orphan.textContent = `${current} (saved)`;
+      select.appendChild(orphan);
+    }
+    select.value = current || "";
+  } catch {
+    /* keep existing options */
   }
 }
 
@@ -15925,8 +19394,9 @@ async function mergeDiscoveryDuplicateGroup(row) {
   const memberSummary = (Array.isArray(row.members) ? row.members : [])
     .map((member) => `${member.source_system} (${member.discovery_confidence}%)`)
     .join(", ");
-  const approved = window.confirm(
-    `Merge duplicate group "${row.canonical_agent_key}" into ${canonical.source_system || "selected"} record ${canonical.discovered_agent_id}? Other records will be marked merged.\n\nMembers: ${memberSummary || "n/a"}`
+  const approved = await operatorConfirm(
+    `Merge duplicate group "${row.canonical_agent_key}" into ${canonical.source_system || "selected"} record ${canonical.discovered_agent_id}? Other records will be marked merged.\n\nMembers: ${memberSummary || "n/a"}`,
+    { title: "Merge discovery duplicates", okLabel: "Merge", danger: true },
   );
   if (!approved) return;
   try {
@@ -15951,8 +19421,9 @@ async function mergeDiscoveryDuplicateGroup(row) {
 
 async function dismissDiscoveryDuplicateMember(discoveredAgentId, canonicalKey) {
   const result = qs("#discoveryDuplicatesResult");
-  const approved = window.confirm(
-    `Dismiss ${discoveredAgentId} from duplicate group "${canonicalKey}" as a false positive?`
+  const approved = await operatorConfirm(
+    `Dismiss ${discoveredAgentId} from duplicate group "${canonicalKey}" as a false positive?`,
+    { title: "Dismiss duplicate", okLabel: "Dismiss", danger: true },
   );
   if (!approved) return;
   try {
@@ -16928,6 +20399,49 @@ async function deleteSupportedModel(supportedModelId) {
   }
 }
 
+async function seedTrendingSupportedModels(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const trigger = evt?.currentTarget instanceof Element ? evt.currentTarget : qs("#seedTrendingSupportedModels");
+  const packsRaw = String(trigger?.getAttribute("data-seed-packs") || "trending").trim() || "trending";
+  const packs = packsRaw.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
+  const result = qs("#seedTrendingModelsResult") || qs("#supportedModelsResult");
+  const buttons = [
+    qs("#seedTrendingSupportedModels"),
+    qs("#seedBedrockSupportedModels"),
+    qs("#seedAzureSupportedModels"),
+    qs("#seedGcpSupportedModels"),
+    qs("#seedAllCloudSupportedModels"),
+  ].filter(Boolean);
+  buttons.forEach((button) => {
+    button.disabled = true;
+  });
+  try {
+    if (result) result.textContent = `Seeding model pack(s): ${packs.join(", ")}…`;
+    const data = await api("/providers/models/seed-trending", {
+      method: "POST",
+      body: JSON.stringify({ overwrite: false, auto_approve: true, packs }),
+    });
+    if (result) {
+      result.textContent =
+        `Seeded [${safeText((data?.packs || packs).join(", "))}] — created ${safeText(String(data?.created ?? 0))}, ` +
+        `updated ${safeText(String(data?.updated ?? 0))}, skipped ${safeText(String(data?.skipped ?? 0))} ` +
+        `(${safeText(String(data?.pack_size ?? 0))} rows in selection).`;
+    }
+    await Promise.all([
+      loadSupportedModels(),
+      loadSupportedModelOptions(),
+      loadPlatformAvailableModels({ force: true }),
+      loadPlatformModelAvailabilityRegister(),
+    ]);
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  } finally {
+    buttons.forEach((button) => {
+      button.disabled = false;
+    });
+  }
+}
+
 async function loadTenantModelEntitlements(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#tenantModelEntitlementFilters");
@@ -17518,12 +21032,39 @@ function countVisibleTableRows(tableSelector) {
 function initViewConsoleTabs(viewId, onChange) {
   const view = qs(`#${viewId}`);
   if (!view || typeof UiKit === "undefined") return null;
-  return UiKit.bindTabGroup(view, {
+  const storageKey = "agenthub.consoleTabs.v1";
+  const readSaved = () => {
+    try {
+      const raw = JSON.parse(sessionStorage.getItem(storageKey) || "{}");
+      return typeof raw === "object" && raw ? String(raw[viewId] || "").trim() : "";
+    } catch {
+      return "";
+    }
+  };
+  const writeSaved = (tabName) => {
+    try {
+      const raw = JSON.parse(sessionStorage.getItem(storageKey) || "{}");
+      const next = typeof raw === "object" && raw ? raw : {};
+      next[viewId] = tabName;
+      sessionStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  };
+  const api = UiKit.bindTabGroup(view, {
     tabSelector: "[data-console-tab]",
     panelSelector: "[data-console-panel]",
-    onChange,
+    onChange: (tabName) => {
+      writeSaved(tabName);
+      if (typeof onChange === "function") onChange(tabName);
+    },
     suppressInitialChange: true,
   });
+  const saved = readSaved();
+  if (saved && api?.activate && view.querySelector(`[data-console-tab="${saved}"]`)) {
+    api.activate(saved);
+  }
+  return api;
 }
 
 function bindConsoleTabJumps(viewId) {
@@ -17616,7 +21157,8 @@ function renderCostConsoleSummary() {
   const hour = qs("#costOverviewHour")?.textContent || qs("#costHour")?.textContent || "--";
   const day = qs("#costOverviewDay")?.textContent || qs("#costDay")?.textContent || "--";
   const events = qs("#costOverviewEvents")?.textContent || qs("#costEvents")?.textContent || "--";
-  target.textContent = `Spend: ${hour} (1h) · ${day} (24h) · ${events} events · ${budgets} budget${budgets === 1 ? "" : "s"} · ${anomalies} anomal${anomalies === 1 ? "y" : "ies"} · ${models} model${models === 1 ? "" : "s"} in catalog`;
+  const hierarchyAlerts = Number(latestCostHierarchyAlerts?.soft_alert_count || 0) + Number(latestCostHierarchyAlerts?.blocking_count || 0);
+  target.textContent = `Spend: ${hour} (1h) · ${day} (24h) · ${events} events · ${budgets} budget${budgets === 1 ? "" : "s"} · ${anomalies} anomal${anomalies === 1 ? "y" : "ies"} · ${hierarchyAlerts} hierarchy alert${hierarchyAlerts === 1 ? "" : "s"} · ${models} model${models === 1 ? "" : "s"} in catalog`;
 }
 
 function syncCostOverviewMetrics() {
@@ -17629,7 +21171,13 @@ function syncCostOverviewMetrics() {
   if (qs("#costOverviewEvents") && events) qs("#costOverviewEvents").textContent = events;
   if (qs("#costOverviewGateway") && gateway) qs("#costOverviewGateway").textContent = gateway;
   if (qs("#costOverviewBudgets")) qs("#costOverviewBudgets").textContent = String(costBudgetRows.length || 0);
-  if (qs("#costOverviewAnomalies")) qs("#costOverviewAnomalies").textContent = String(countVisibleTableRows("#costAnomaliesTable"));
+  if (qs("#costOverviewAnomalies")) {
+    qs("#costOverviewAnomalies").textContent = String(
+      Array.isArray(latestCostAnomalies) ? latestCostAnomalies.length : countVisibleTableRows("#costAnomaliesTable")
+    );
+  }
+  const hierarchyAlerts = Number(latestCostHierarchyAlerts?.soft_alert_count || 0) + Number(latestCostHierarchyAlerts?.blocking_count || 0);
+  if (qs("#costOverviewHierarchyAlerts")) qs("#costOverviewHierarchyAlerts").textContent = String(hierarchyAlerts);
 }
 
 function bindCostWorkspaceSelect() {
@@ -17667,15 +21215,34 @@ function bindCostPricingSectionSelect() {
 function bindCostBudgetSectionSelect() {
   const select = qs("#costBudgetSectionSelect");
   const view = qs("#cost");
-  if (!select || !view || select.dataset.bound === "true") return;
-  select.dataset.bound = "true";
+  if (!select || !view) return;
   const showSection = (value) => {
+    const next = String(value || "track").trim() || "track";
     qsa("[data-cost-budget-section]", view).forEach((section) => {
-      section.hidden = section.dataset.costBudgetSection !== value;
+      section.hidden = section.dataset.costBudgetSection !== next;
     });
+    if (select.value !== next) select.value = next;
   };
-  select.addEventListener("change", () => showSection(String(select.value || "track")));
+  if (select.dataset.bound !== "true") {
+    select.dataset.bound = "true";
+    select.addEventListener("change", () => showSection(String(select.value || "track")));
+  }
   showSection(String(select.value || "track"));
+
+  if (view.dataset.budgetJumpBound !== "true") {
+    view.dataset.budgetJumpBound = "true";
+    view.addEventListener("click", (evt) => {
+      const target = evt.target?.closest?.("[data-cost-budget-jump]");
+      if (!target || !view.contains(target)) return;
+      const section = String(target.getAttribute("data-cost-budget-jump") || "").trim();
+      if (!section) return;
+      const budgetsTab = view.querySelector('[data-console-tab="budgets"]');
+      if (budgetsTab) budgetsTab.click();
+      showSection(section);
+      if (section === "hierarchy") void loadCostHierarchy();
+      if (section === "anomalies") void loadCostAnomalies();
+    });
+  }
 }
 
 function bindCostSpendBreakdownControls() {
@@ -17753,7 +21320,13 @@ async function loadCostComparison() {
 }
 
 async function prepareCostOverviewPanel() {
-  await Promise.all([loadCost(), loadSpendBreakdown("cost"), loadCostComparison(), loadGatewayAnalytics()]);
+  await Promise.all([
+    loadCost(),
+    loadSpendBreakdown("cost"),
+    loadCostComparison(),
+    loadGatewayAnalytics(),
+    loadCostHierarchyAlerts(),
+  ]);
   syncCostOverviewMetrics();
   renderCostConsoleSummary();
 }
@@ -19491,7 +23064,22 @@ async function loadAgenticConsole() {
 
 function normalizeSpendBreakdownDimension(value) {
   const normalized = String(value || "all").trim().toLowerCase();
-  if (["all", "user", "group", "team", "request_tag"].includes(normalized)) return normalized;
+  if (
+    [
+      "all",
+      "user",
+      "group",
+      "team",
+      "request_tag",
+      "cache_hit",
+      "session_path",
+      "has_feedback",
+      "user_id",
+      "scores",
+    ].includes(normalized)
+  ) {
+    return normalized;
+  }
   return "all";
 }
 
@@ -19618,6 +23206,15 @@ function updateSpendFilterControls(scope = "overview") {
     team: { label: "Team Name", placeholder: "Filter by team name", disabled: false },
     group: { label: "Group Name", placeholder: "Filter by group name", disabled: false },
     request_tag: { label: "Request Tag", placeholder: "Filter by request tag", disabled: false },
+    cache_hit: { label: "Cache", placeholder: "Helicone-style cache hit/miss buckets", disabled: true },
+    session_path: { label: "Session path", placeholder: "Filter by Helicone session_path substring" },
+    has_feedback: {
+      label: "Feedback",
+      placeholder: "Filter has_feedback / no_feedback",
+      disabled: false,
+    },
+    user_id: { label: "User id", placeholder: "Filter by Helicone user / user_id", disabled: false },
+    scores: { label: "Score key", placeholder: "Filter by feedback score key", disabled: false },
   };
   const scopeSettings = scopeMap[dimension] || scopeMap.all;
   scopeLabel.textContent = scopeSettings.label;
@@ -19906,6 +23503,164 @@ async function loadCost() {
   }
 }
 
+async function loadLeadershipQbrSnapshot(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#leadershipQbrResult");
+  try {
+    const data = await api("/gateway/governance/qbr-snapshot?hours=2160");
+    const clocks = data?.clocks || {};
+    const gates = data?.gates || {};
+    const drills = data?.drills || {};
+    if (qs("#qbrProdUnmanagedOk")) {
+      qs("#qbrProdUnmanagedOk").textContent = clocks.prod_unmanaged_zero_ok ? "yes" : "no";
+    }
+    if (qs("#qbrBreakGlass")) qs("#qbrBreakGlass").textContent = safeText(gates.active_break_glass ?? "--");
+    if (qs("#qbrRtFresh")) {
+      qs("#qbrRtFresh").textContent = drills.rt_01_02_within_90d ? "fresh" : "due";
+    }
+    if (qs("#qbrTabletopFresh")) {
+      qs("#qbrTabletopFresh").textContent = drills.tabletop_within_180d ? "fresh" : "due";
+    }
+    if (qs("#qbrLeaderClaim")) {
+      qs("#qbrLeaderClaim").textContent = data?.honesty?.leader_claim_allowed ? "allowed" : "blocked";
+    }
+    if (qs("#qbrCpliScore")) {
+      const cpli = data?.control_plane_leadership || {};
+      qs("#qbrCpliScore").textContent =
+        cpli.score != null ? `${cpli.score}/${cpli.max_score || 20} · ${String(cpli.band || "").replace(/_/g, " ")}` : "--";
+    }
+    if (qs("#qbrCpliGate")) {
+      const cpli = data?.control_plane_leadership || {};
+      qs("#qbrCpliGate").textContent =
+        cpli.release_gate_passed == null ? "--" : cpli.release_gate_passed ? "pass" : "fail";
+    }
+    if (qs("#qbrCpliGateCi")) {
+      const cpli = data?.control_plane_leadership || {};
+      qs("#qbrCpliGateCi").textContent =
+        cpli.release_gate_passed == null ? "--" : cpli.release_gate_passed ? "go" : "no_go";
+    }
+    if (qs("#qbrCpliPromotion")) {
+      const cpli = data?.control_plane_leadership || {};
+      qs("#qbrCpliPromotion").textContent =
+        cpli.promotion_ready == null
+          ? "--"
+          : cpli.promotion_ready
+            ? `ready (${cpli.gate_streak || 0}/${cpli.gate_streak_required || 2})`
+            : `blocked (${cpli.gate_streak || 0}/${cpli.gate_streak_required || 2})`;
+    }
+    if (qs("#qbrCpliReady")) {
+      const cpli = data?.control_plane_leadership || {};
+      qs("#qbrCpliReady").textContent = cpli.control_ready == null ? "--" : cpli.control_ready ? "ready" : "not ready";
+    }
+    if (qs("#qbrCpliContract")) {
+      const cpli = data?.control_plane_leadership || {};
+      qs("#qbrCpliContract").textContent = cpli.contract_version || "--";
+    }
+    if (qs("#qbrCpliLkg")) {
+      const cpli = data?.control_plane_leadership || {};
+      qs("#qbrCpliLkg").textContent = cpli.last_known_good_fingerprint
+        ? String(cpli.last_known_good_fingerprint).slice(0, 12)
+        : "none";
+    }
+    if (qs("#qbrCpliReadonly")) {
+      const cpli = data?.control_plane_leadership || {};
+      qs("#qbrCpliReadonly").textContent =
+        cpli.control_readonly == null ? "--" : cpli.control_readonly ? "frozen" : "off";
+    }
+    const notes = Array.isArray(data?.readiness_notes) ? data.readiness_notes.slice(0, 2).join(" · ") : "";
+    if (result) {
+      result.textContent = `QBR snapshot ${safeText(data?.generated_at || "")}${notes ? ` — ${safeText(notes)}` : ""}`;
+    }
+  } catch (err) {
+    ["#qbrProdUnmanagedOk", "#qbrBreakGlass", "#qbrRtFresh", "#qbrTabletopFresh", "#qbrLeaderClaim", "#qbrCpliScore", "#qbrCpliGate", "#qbrCpliGateCi", "#qbrCpliPromotion", "#qbrCpliReady", "#qbrCpliContract", "#qbrCpliLkg", "#qbrCpliReadonly"].forEach((id) => {
+      if (qs(id)) qs(id).textContent = "--";
+    });
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function renderLeadershipDrillRunsTable() {
+  const table = qs("#leadershipDrillRunsTable");
+  if (!table) return;
+  if (!leadershipDrillRunRows.length) {
+    setTableMessage(table, 7, "No drill runs recorded.");
+    return;
+  }
+  table.textContent = "";
+  leadershipDrillRunRows.forEach((row) => {
+    appendTableRow(table, [
+      row.run_id || "--",
+      row.drill_id || "--",
+      row.performed_on || "--",
+      row.outcome || "--",
+      row.duration_seconds ?? "--",
+      row.recorded_by || "--",
+      row.evidence_ref || "--",
+    ]);
+  });
+}
+
+async function loadLeadershipDrillRuns(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#leadershipDrillRunsResult");
+  const table = qs("#leadershipDrillRunsTable");
+  const form = qs("#leadershipDrillRunFilters");
+  if (table) setTableMessage(table, 7, "Loading...");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const query = buildQueryString({
+    drill_id: raw.drill_id,
+    limit: raw.limit || 50,
+  });
+  try {
+    const data = await api(`/gateway/governance/drill-runs${query}`);
+    leadershipDrillRunRows = Array.isArray(data?.items) ? data.items : [];
+    renderLeadershipDrillRunsTable();
+    const freshness = data?.freshness || {};
+    if (result) {
+      result.textContent = `Loaded ${leadershipDrillRunRows.length} drill runs. RT 90d: ${
+        freshness.rt_01_02_within_90d ? "fresh" : "due"
+      }; tabletop 180d: ${freshness.tabletop_within_180d ? "fresh" : "due"}.`;
+    }
+  } catch (err) {
+    leadershipDrillRunRows = [];
+    renderLeadershipDrillRunsTable();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function createLeadershipDrillRun(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#leadershipDrillRunForm");
+  const result = qs("#leadershipDrillRunsResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const performedOn = String(raw.performed_on || "").trim();
+  if (!performedOn) {
+    result.textContent = "Performed on date is required.";
+    return;
+  }
+  const durationRaw = String(raw.duration_seconds || "").trim();
+  const payload = {
+    drill_id: String(raw.drill_id || "").trim(),
+    performed_on: performedOn,
+    outcome: String(raw.outcome || "pass").trim() || "pass",
+    notes: String(raw.notes || "").trim(),
+    evidence_ref: String(raw.evidence_ref || "").trim(),
+  };
+  if (durationRaw !== "") payload.duration_seconds = Number(durationRaw);
+  try {
+    const data = await api("/gateway/governance/drill-runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    result.textContent = `Recorded drill run ${safeText(data.run_id)} for ${safeText(data.drill_id)}.`;
+    await loadLeadershipDrillRuns();
+    await loadLeadershipQbrSnapshot();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function loadGatewayAnalytics(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#gatewayAnalyticsFilters");
@@ -19932,7 +23687,20 @@ async function loadGatewayAnalytics(evt) {
     qs("#gatewayAvgInput").textContent = Number(data?.avg_input_tokens || 0).toFixed(1);
     qs("#gatewayAvgOutput").textContent = Number(data?.avg_output_tokens || 0).toFixed(1);
     qs("#gatewayWindowHours").textContent = safeText(data?.hours);
-    result.textContent = `Loaded gateway analytics for ${safeText(data?.environment || "all environments")} in ${safeText(data?.hours)}h window.`;
+    const onPlanePct = data?.on_plane_coverage_percent;
+    if (qs("#gatewayOnPlaneCoverage")) {
+      qs("#gatewayOnPlaneCoverage").textContent =
+        onPlanePct == null || onPlanePct === "" ? "--" : `${Number(onPlanePct).toFixed(1)}%`;
+    }
+    if (qs("#gatewayOnPlaneEvents")) qs("#gatewayOnPlaneEvents").textContent = safeText(data?.on_plane_events ?? "--");
+    if (qs("#gatewayOffPlaneDetected")) {
+      qs("#gatewayOffPlaneDetected").textContent = safeText(data?.off_plane_detected ?? "--");
+    }
+    const coverageNote =
+      onPlanePct == null || onPlanePct === ""
+        ? "on-plane coverage n/a (no events)"
+        : `on-plane ${Number(onPlanePct).toFixed(1)}%`;
+    result.textContent = `Loaded gateway analytics for ${safeText(data?.environment || "all environments")} in ${safeText(data?.hours)}h window (${coverageNote}).`;
 
     const modelRows = Array.isArray(data?.top_models) ? data.top_models : [];
     if (!modelRows.length) {
@@ -19956,6 +23724,9 @@ async function loadGatewayAnalytics(evt) {
     qs("#gatewayAvgInput").textContent = "--";
     qs("#gatewayAvgOutput").textContent = "--";
     qs("#gatewayWindowHours").textContent = "--";
+    if (qs("#gatewayOnPlaneCoverage")) qs("#gatewayOnPlaneCoverage").textContent = "--";
+    if (qs("#gatewayOnPlaneEvents")) qs("#gatewayOnPlaneEvents").textContent = "--";
+    if (qs("#gatewayOffPlaneDetected")) qs("#gatewayOffPlaneDetected").textContent = "--";
     result.textContent = `Error: ${safeText(err.message)}`;
     setTableMessage(topModels, 3, `Error: ${safeText(err.message)}`);
     setTableMessage(topEndpoints, 3, `Error: ${safeText(err.message)}`);
@@ -19966,20 +23737,39 @@ function renderCostBudgetRows() {
   const tbody = qs("#costBudgetTable");
   if (!tbody) return;
   if (!costBudgetRows.length) {
-    setTableMessage(tbody, 8, "No budget policies found.");
+    setTableMessage(tbody, 13, "No budget policies found.");
+    return;
+  }
+  const filter = String(costBudgetDecisionFilter || "all").toLowerCase();
+  const sorted = [...costBudgetRows].sort(
+    (a, b) => Number(b.utilization_percent || 0) - Number(a.utilization_percent || 0)
+  );
+  const visible = sorted.filter((row) => {
+    if (filter === "all") return true;
+    if (filter === "soft") return Boolean(row.soft_alert_active);
+    return String(row.decision || "allow").toLowerCase() === filter;
+  });
+  if (!visible.length) {
+    setTableMessage(tbody, 13, "No budget policies match this decision filter.");
     return;
   }
   tbody.textContent = "";
-  costBudgetRows.forEach((row) => {
+  visible.forEach((row) => {
     const tr = document.createElement("tr");
     const effectiveBudget = Number(row.effective_budget_cents || row.budget_amount_cents || 0);
+    const spendCents = Number(row.current_spend_cents || 0);
+    const hoursSpend = Number(row.hours_spend_cents || 0);
+    const utilPercent = Number(row.utilization_percent || 0);
     const temporaryIncrease = Number(row.temporary_increase_cents || 0);
     const resetTimezone = String(row.reset_timezone || "UTC");
     const resetHour = Number(row.reset_hour_local ?? 0);
     const controlsSummary = [
       `reset ${resetTimezone}@${String(resetHour).padStart(2, "0")}:00`,
-      temporaryIncrease > 0 ? `temp +${temporaryIncrease}c` : "temp none",
+      temporaryIncrease > 0
+        ? `temp +${temporaryIncrease}c${row.temporary_increase_active ? " active" : " expired"}`
+        : "temp none",
       row.soft_alert_enabled ? "soft alert on" : "soft alert off",
+      row.soft_alert_active ? "soft active" : "soft inactive",
       row.rate_limit_tpm ? `tpm ${row.rate_limit_tpm}` : "tpm --",
       row.rate_limit_rpm ? `rpm ${row.rate_limit_rpm}` : "rpm --",
       row.session_iteration_cap ? `iter ${row.session_iteration_cap}` : "iter --",
@@ -19990,7 +23780,12 @@ function renderCostBudgetRows() {
       `${row.scope_type}:${row.scope_id}`,
       `${row.budget_amount_cents}c`,
       row.window_type,
-      `${row.soft_limit_percent}% / ${row.hard_limit_percent}% (effective ${effectiveBudget}c)`,
+      `${spendCents}c`,
+      `${hoursSpend}c`,
+      `${utilPercent}%`,
+      row.decision || "allow",
+      row.recommended_action || "--",
+      `${row.soft_limit_percent}% / ${row.hard_limit_percent}% (eff ${effectiveBudget}c)`,
       controlsSummary,
       row.status,
     ].forEach((value) => {
@@ -19998,6 +23793,8 @@ function renderCostBudgetRows() {
       td.textContent = safeText(value);
       tr.appendChild(td);
     });
+    fillCostUtilCell(tr.children[6], utilPercent);
+    fillCostDecisionCell(tr.children[7], row.decision || "allow");
 
     const actions = document.createElement("td");
     actions.className = "cell-actions";
@@ -20007,28 +23804,22 @@ function renderCostBudgetRows() {
     useBtn.className = "ghost";
     useBtn.textContent = "Use";
     useBtn.addEventListener("click", () => {
-      const form = qs("#costBudgetForm");
-      const result = qs("#costBudgetResult");
-      if (!form) return;
-      form.elements.budget_policy_id.value = row.budget_policy_id || "";
-      form.elements.scope_type.value = row.scope_type || "actor";
-      form.elements.scope_id.value = row.scope_id || "";
-      form.elements.budget_amount_cents.value = Number(row.budget_amount_cents || 0);
-      form.elements.window_type.value = row.window_type || "daily";
-      form.elements.soft_limit_percent.value = Number(row.soft_limit_percent || 75);
-      form.elements.hard_limit_percent.value = Number(row.hard_limit_percent || 95);
-      form.elements.action_on_soft_limit.value = row.action_on_soft_limit || "notify";
-      form.elements.action_on_hard_limit.value = row.action_on_hard_limit || "block";
-      form.elements.reset_timezone.value = String(row.reset_timezone || "UTC");
-      form.elements.reset_hour_local.value = Number(row.reset_hour_local ?? 0);
-      form.elements.temporary_increase_cents.value = Number(row.temporary_increase_cents || 0);
-      form.elements.temporary_increase_expires_at.value = toDatetimeLocalValue(row.temporary_increase_expires_at);
-      form.elements.soft_alert_enabled.value = row.soft_alert_enabled ? "true" : "false";
-      form.elements.rate_limit_tpm.value = row.rate_limit_tpm ?? "";
-      form.elements.rate_limit_rpm.value = row.rate_limit_rpm ?? "";
-      form.elements.session_iteration_cap.value = row.session_iteration_cap ?? "";
-      form.elements.session_budget_cents.value = row.session_budget_cents ?? "";
-      if (result) result.textContent = `Loaded budget policy ${row.budget_policy_id} into form.`;
+      fillCostBudgetFormFromRow(row);
+    });
+
+    const explainBtn = document.createElement("button");
+    explainBtn.type = "button";
+    explainBtn.className = "ghost";
+    explainBtn.textContent = "Explain";
+    explainBtn.addEventListener("click", () => {
+      const select = qs("#costBudgetSectionSelect");
+      if (select) {
+        select.value = "hierarchy";
+        select.dispatchEvent(new Event("change"));
+      }
+      const form = qs("#costHierarchyForm");
+      if (form?.elements?.window_mode) form.elements.window_mode.value = "budget";
+      void loadCostHierarchyExplain(row.scope_type, row.scope_id);
     });
 
     const deleteBtn = document.createElement("button");
@@ -20037,7 +23828,11 @@ function renderCostBudgetRows() {
     deleteBtn.textContent = "Delete";
     deleteBtn.addEventListener("click", async () => {
       const result = qs("#costBudgetResult");
-      const approved = window.confirm(`Delete budget policy ${row.budget_policy_id}?`);
+      const approved = await operatorConfirm(`Delete budget policy ${row.budget_policy_id}?`, {
+        title: "Delete budget policy",
+        okLabel: "Delete",
+        danger: true,
+      });
       if (!approved) return;
       if (result) result.textContent = `Deleting budget policy ${row.budget_policy_id}...`;
       try {
@@ -20049,9 +23844,218 @@ function renderCostBudgetRows() {
       }
     });
 
-    actions.append(useBtn, deleteBtn);
+    actions.append(useBtn, explainBtn, deleteBtn);
+    const env = String(qs("#costBudgetListFilters")?.elements?.environment?.value || "").trim();
+    appendCostBudgetRemediationActions(actions, row, {
+      environment: env,
+      resultSelector: "#costBudgetResult",
+      onDone: () => void loadCostBudgetPolicies(),
+    });
     tr.appendChild(actions);
     tbody.appendChild(tr);
+  });
+}
+
+async function openCostBudgetPolicyEditor(ref = {}) {
+  const budgetsTab = qs('[data-console-tab="budgets"]');
+  if (budgetsTab) budgetsTab.click();
+  const select = qs("#costBudgetSectionSelect");
+  if (select) {
+    select.value = "policies";
+    select.dispatchEvent(new Event("change"));
+  }
+  const environment = String(ref.environment || "").trim();
+  const listFilters = qs("#costBudgetListFilters");
+  if (listFilters?.elements?.environment && environment) {
+    listFilters.elements.environment.value = environment;
+  }
+  if (!costBudgetRows.length || environment) {
+    await loadCostBudgetPolicies();
+  }
+  const policyId = String(ref.budget_policy_id || "").trim();
+  const scopeType = String(ref.scope_type || "").trim();
+  const scopeId = String(ref.scope_id || "").trim();
+  const match =
+    (policyId && costBudgetRows.find((item) => item.budget_policy_id === policyId)) ||
+    costBudgetRows.find((item) => item.scope_type === scopeType && item.scope_id === scopeId) ||
+    null;
+  if (match) {
+    fillCostBudgetFormFromRow(match);
+    return;
+  }
+  const form = qs("#costBudgetForm");
+  const result = qs("#costBudgetResult");
+  if (form) {
+    if (policyId) form.elements.budget_policy_id.value = policyId;
+    if (scopeType) form.elements.scope_type.value = scopeType;
+    if (scopeId) form.elements.scope_id.value = scopeId;
+  }
+  if (result) {
+    result.textContent = policyId
+      ? `Opened policy ${policyId}. Load budgets if fields are incomplete.`
+      : `Opened scope ${scopeType}:${scopeId}. Load budgets to edit.`;
+  }
+}
+
+function openCostPolicyEvaluate(ref = {}) {
+  const budgetsTab = qs('[data-console-tab="budgets"]');
+  if (budgetsTab) budgetsTab.click();
+  const select = qs("#costBudgetSectionSelect");
+  if (select) {
+    select.value = "evaluate";
+    select.dispatchEvent(new Event("change"));
+  }
+  const form = qs("#costPolicyEvalForm");
+  if (!form) return;
+  if (ref.scope_type) form.elements.scope_type.value = ref.scope_type;
+  if (ref.scope_id) form.elements.scope_id.value = ref.scope_id;
+  if (form.elements.environment) {
+    form.elements.environment.value = String(ref.environment || "").trim();
+  }
+  if (ref.window_type && form.elements.window_type) {
+    form.elements.window_type.value = ref.window_type;
+  }
+  void evaluateCostPolicy();
+}
+
+async function applyCostBudgetTemporaryIncrease(policyId, options = {}) {
+  const id = String(policyId || "").trim();
+  if (!id) return null;
+  const centsRaw = options.increase_cents ?? window.prompt("Temporary increase (cents)", "500");
+  if (centsRaw == null) return null;
+  const increaseCents = Number(centsRaw);
+  if (!Number.isFinite(increaseCents) || increaseCents < 1) {
+    throw new Error("Increase must be a positive cents amount.");
+  }
+  const minutesRaw = options.duration_minutes ?? window.prompt("Duration (minutes)", "60");
+  if (minutesRaw == null) return null;
+  const durationMinutes = Number(minutesRaw);
+  if (!Number.isFinite(durationMinutes) || durationMinutes < 1) {
+    throw new Error("Duration must be at least 1 minute.");
+  }
+  const reason = options.reason || "operator-temporary-increase";
+  return api(`/cost/budgets/${encodeURIComponent(id)}/increase-temporary`, {
+    method: "POST",
+    body: JSON.stringify({
+      increase_cents: increaseCents,
+      duration_minutes: durationMinutes,
+      reason,
+    }),
+  });
+}
+
+async function clearCostBudgetTemporaryIncrease(policyId) {
+  const id = String(policyId || "").trim();
+  if (!id) return null;
+  return api(`/cost/budgets/${encodeURIComponent(id)}/increase-temporary/clear`, { method: "POST", body: "{}" });
+}
+
+async function acknowledgeCostBudgetSoftAlert(policyId, reason = "operator-acknowledged") {
+  const id = String(policyId || "").trim();
+  if (!id) return null;
+  return api(`/cost/budgets/${encodeURIComponent(id)}/soft-alert/acknowledge`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+function appendCostBudgetRemediationActions(actionCell, row, context = {}) {
+  if (!actionCell || !row?.budget_policy_id) return;
+  const environment = String(context.environment || "").trim();
+  const tempBtn = document.createElement("button");
+  tempBtn.type = "button";
+  tempBtn.className = "ghost";
+  tempBtn.textContent = "Temp +";
+  tempBtn.title = "Apply temporary budget increase";
+  tempBtn.addEventListener("click", async () => {
+    const result = qs(context.resultSelector || "#costBudgetResult");
+    try {
+      await applyCostBudgetTemporaryIncrease(row.budget_policy_id);
+      if (result) result.textContent = `Applied temporary increase to ${row.budget_policy_id}.`;
+      await loadCostBudgetPolicies();
+      if (typeof context.onDone === "function") context.onDone();
+    } catch (err) {
+      if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    }
+  });
+  const clearTempBtn = document.createElement("button");
+  clearTempBtn.type = "button";
+  clearTempBtn.className = "ghost";
+  clearTempBtn.textContent = "Clear temp";
+  clearTempBtn.addEventListener("click", async () => {
+    const result = qs(context.resultSelector || "#costBudgetResult");
+    try {
+      await clearCostBudgetTemporaryIncrease(row.budget_policy_id);
+      if (result) result.textContent = `Cleared temporary increase on ${row.budget_policy_id}.`;
+      await loadCostBudgetPolicies();
+      if (typeof context.onDone === "function") context.onDone();
+    } catch (err) {
+      if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    }
+  });
+  const ackBtn = document.createElement("button");
+  ackBtn.type = "button";
+  ackBtn.className = "ghost";
+  ackBtn.textContent = "Ack soft";
+  ackBtn.title = "Acknowledge soft alert for this budget window";
+  ackBtn.addEventListener("click", async () => {
+    const result = qs(context.resultSelector || "#costBudgetResult");
+    try {
+      await acknowledgeCostBudgetSoftAlert(row.budget_policy_id);
+      if (result) result.textContent = `Acknowledged soft alert for ${row.budget_policy_id}.`;
+      if (typeof context.onDone === "function") context.onDone();
+      else {
+        await loadCostAnomalies();
+        await loadCostBudgetPolicies();
+      }
+    } catch (err) {
+      if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    }
+  });
+  const evalBtn = document.createElement("button");
+  evalBtn.type = "button";
+  evalBtn.className = "ghost";
+  evalBtn.textContent = "Evaluate";
+  evalBtn.addEventListener("click", () => {
+    openCostPolicyEvaluate({
+      scope_type: row.scope_type,
+      scope_id: row.scope_id,
+      window_type: row.window_type,
+      environment,
+    });
+  });
+  actionCell.append(tempBtn, clearTempBtn, ackBtn, evalBtn);
+}
+
+function fillCostBudgetFormFromRow(row) {
+  const form = qs("#costBudgetForm");
+  const result = qs("#costBudgetResult");
+  if (!form || !row) return;
+  form.elements.budget_policy_id.value = row.budget_policy_id || "";
+  form.elements.scope_type.value = row.scope_type || "actor";
+  form.elements.scope_id.value = row.scope_id || "";
+  form.elements.budget_amount_cents.value = Number(row.budget_amount_cents || 0);
+  form.elements.window_type.value = row.window_type || "daily";
+  form.elements.soft_limit_percent.value = Number(row.soft_limit_percent || 75);
+  form.elements.hard_limit_percent.value = Number(row.hard_limit_percent || 95);
+  form.elements.action_on_soft_limit.value = row.action_on_soft_limit || "notify";
+  form.elements.action_on_hard_limit.value = row.action_on_hard_limit || "block";
+  form.elements.reset_timezone.value = String(row.reset_timezone || "UTC");
+  form.elements.reset_hour_local.value = Number(row.reset_hour_local ?? 0);
+  form.elements.temporary_increase_cents.value = Number(row.temporary_increase_cents || 0);
+  form.elements.temporary_increase_expires_at.value = toDatetimeLocalValue(row.temporary_increase_expires_at);
+  form.elements.soft_alert_enabled.value = row.soft_alert_enabled ? "true" : "false";
+  form.elements.rate_limit_tpm.value = row.rate_limit_tpm ?? "";
+  form.elements.rate_limit_rpm.value = row.rate_limit_rpm ?? "";
+  form.elements.session_iteration_cap.value = row.session_iteration_cap ?? "";
+  form.elements.session_budget_cents.value = row.session_budget_cents ?? "";
+  if (result) result.textContent = `Loaded budget policy ${row.budget_policy_id} into form.`;
+}
+
+function syncCostBudgetFilterChips() {
+  document.querySelectorAll("[data-cost-budget-filter]").forEach((chip) => {
+    const value = String(chip.getAttribute("data-cost-budget-filter") || "all");
+    chip.classList.toggle("is-active", value === costBudgetDecisionFilter);
   });
 }
 
@@ -20193,22 +24197,479 @@ async function trackSpendEvent(evt) {
   }
 }
 
+async function submitCostEventFeedback(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costEventFeedbackForm");
+  const result = qs("#costEventFeedbackResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  let scores = null;
+  const scoresRaw = String(raw.scores_json || "").trim();
+  if (scoresRaw) {
+    try {
+      const parsed = JSON.parse(scoresRaw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("scores JSON must be an object");
+      }
+      scores = parsed;
+    } catch (err) {
+      result.textContent = `Error: ${safeText(err.message)}`;
+      return;
+    }
+  }
+  const ratingRaw = String(raw.rating || "").trim();
+  const body = {
+    request_id: String(raw.request_id || "").trim(),
+    trace_id: String(raw.trace_id || "").trim() || null,
+    rating: ratingRaw ? Number(ratingRaw) : null,
+    scores,
+    comment: String(raw.comment || "").trim() || null,
+  };
+  result.textContent = "Submitting feedback...";
+  try {
+    const data = await api("/cost/events/feedback", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    result.textContent = `Updated ${data.updated_events} event(s) for ${data.request_id}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostScoreStats(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costScoreStatsForm");
+  const result = qs("#costScoreStatsResult");
+  const tbody = qs("#costScoreStatsTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    limit: String(raw.limit || "50"),
+  });
+  const scoreKey = String(raw.score_key || "").trim();
+  if (scoreKey) params.set("score_key", scoreKey);
+  if (result) result.textContent = "Loading score stats...";
+  setTableMessage(tbody, 6, "Loading...");
+  try {
+    const data = await api(`/cost/scores/stats?${params.toString()}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) {
+      setTableMessage(tbody, 6, "No scored events found.");
+      if (result) result.textContent = "No feedback scores found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    items.forEach((row) => {
+      appendTableRow(tbody, [
+        row.key,
+        row.count,
+        row.avg,
+        row.min,
+        row.max,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${items.length} score key(s) across ${data.total_scored_events ?? 0} scored event(s).`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostScoreTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costScoreTimeseriesForm");
+  const result = qs("#costScoreTimeseriesResult");
+  const tbody = qs("#costScoreTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_keys: String(raw.top_keys || "8"),
+  });
+  const scoreKey = String(raw.score_key || "").trim();
+  if (scoreKey) params.set("score_key", scoreKey);
+  if (result) result.textContent = "Loading score timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/scores/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter((point) => Number(point?.count || 0) > 0);
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          key: item.key,
+          hour_start: point.hour_start,
+          count: point.count,
+          avg: point.avg,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No score timeseries points found.");
+      if (result) result.textContent = "No hourly score points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.key,
+        formatComplianceDate(row.hour_start),
+        row.count,
+        row.avg,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)) across ${data.total_scored_events ?? 0} scored event(s).`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostLatencyTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costLatencyTimeseriesForm");
+  const result = qs("#costLatencyTimeseriesResult");
+  const tbody = qs("#costLatencyTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_models: String(raw.top_models || "8"),
+  });
+  const modelFilter = String(raw.model_filter || "").trim();
+  if (modelFilter) params.set("model_filter", modelFilter);
+  if (result) result.textContent = "Loading latency timeseries...";
+  setTableMessage(tbody, 6, "Loading...");
+  try {
+    const data = await api(`/cost/latency/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter((point) => Number(point?.count || 0) > 0);
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          model_name: item.model_name,
+          hour_start: point.hour_start,
+          count: point.count,
+          avg_ms: point.avg_ms,
+          p95_ms: point.p95_ms,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 6, "No latency timeseries points found.");
+      if (result) result.textContent = "No hourly latency points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.model_name,
+        formatComplianceDate(row.hour_start),
+        row.count,
+        row.avg_ms,
+        row.p95_ms,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); avg=${data.avg_ms ?? 0}ms, p95=${data.p95_ms ?? 0}ms.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostCacheTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costCacheTimeseriesForm");
+  const result = qs("#costCacheTimeseriesResult");
+  const tbody = qs("#costCacheTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_models: String(raw.top_models || "8"),
+  });
+  const modelFilter = String(raw.model_filter || "").trim();
+  if (modelFilter) params.set("model_filter", modelFilter);
+  if (result) result.textContent = "Loading cache timeseries...";
+  setTableMessage(tbody, 6, "Loading...");
+  try {
+    const data = await api(`/cost/cache/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.hit_count || 0) + Number(point?.miss_count || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          model_name: item.model_name,
+          hour_start: point.hour_start,
+          hit_count: point.hit_count,
+          miss_count: point.miss_count,
+          hit_rate: point.hit_rate,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 6, "No cache timeseries points found.");
+      if (result) result.textContent = "No hourly cache points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.model_name,
+        formatComplianceDate(row.hour_start),
+        row.hit_count,
+        row.miss_count,
+        row.hit_rate,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); hit_rate=${data.hit_rate ?? 0} (${data.hit_count ?? 0}/${data.total_events ?? 0}).`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostRatingTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costRatingTimeseriesForm");
+  const result = qs("#costRatingTimeseriesResult");
+  const tbody = qs("#costRatingTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_labels: String(raw.top_labels || "6"),
+  });
+  const ratingFilter = String(raw.rating_filter || "").trim();
+  if (ratingFilter) params.set("rating_filter", ratingFilter);
+  if (String(raw.include_unrated || "") === "true") params.set("include_unrated", "true");
+  if (result) result.textContent = "Loading rating timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/ratings/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter((point) => Number(point?.count || 0) > 0);
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          rating_label: item.rating_label,
+          hour_start: point.hour_start,
+          count: point.count,
+          avg: point.avg,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No rating timeseries points found.");
+      if (result) result.textContent = "No hourly rating points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.rating_label,
+        formatComplianceDate(row.hour_start),
+        row.count,
+        row.avg,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)) across ${data.total_rated_events ?? 0} rated event(s).`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostPropertyStats(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costPropertyStatsForm");
+  const result = qs("#costPropertyStatsResult");
+  const tbody = qs("#costPropertyStatsTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const propertyKey = String(raw.property_key || "").trim();
+  if (!propertyKey) {
+    if (result) result.textContent = "Property key is required.";
+    return;
+  }
+  const params = new URLSearchParams({
+    property_key: propertyKey,
+    window_hours: String(raw.window_hours || "24"),
+    limit: String(raw.limit || "50"),
+  });
+  if (result) result.textContent = "Loading property stats...";
+  setTableMessage(tbody, 3, "Loading...");
+  try {
+    const data = await api(`/cost/properties/stats?${params.toString()}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) {
+      setTableMessage(tbody, 3, "No property values found.");
+      if (result) result.textContent = `No values found for property "${propertyKey}".`;
+      return;
+    }
+    tbody.textContent = "";
+    items.forEach((row) => {
+      appendTableRow(tbody, [row.value, row.event_count, row.spend_cents]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${items.length} value(s) for "${data.property_key || propertyKey}" across ${data.total_events_with_key ?? 0} event(s).`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 3, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostPropertyTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costPropertyTimeseriesForm");
+  const result = qs("#costPropertyTimeseriesResult");
+  const tbody = qs("#costPropertyTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const propertyKey = String(raw.property_key || "").trim();
+  if (!propertyKey) {
+    if (result) result.textContent = "Property key is required.";
+    return;
+  }
+  const params = new URLSearchParams({
+    property_key: propertyKey,
+    window_hours: String(raw.window_hours || "24"),
+    top_values: String(raw.top_values || "8"),
+  });
+  const valueFilter = String(raw.value_filter || "").trim();
+  if (valueFilter) params.set("value_filter", valueFilter);
+  if (result) result.textContent = "Loading property timeseries...";
+  setTableMessage(tbody, 4, "Loading...");
+  try {
+    const data = await api(`/cost/properties/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter((point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0);
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          value: item.value,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 4, "No timeseries points found.");
+      if (result) result.textContent = `No hourly points found for property "${propertyKey}".`;
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.value,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢, events=${data.total_event_count ?? 0}.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 4, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function lookupCostEventFeedback(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costEventFeedbackForm");
+  const result = qs("#costEventFeedbackResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const requestId = String(raw.request_id || "").trim();
+  if (!requestId) {
+    result.textContent = "Request ID is required for lookup.";
+    return;
+  }
+  const params = new URLSearchParams({ request_id: requestId });
+  const traceId = String(raw.trace_id || "").trim();
+  if (traceId) params.set("trace_id", traceId);
+  result.textContent = "Looking up feedback...";
+  try {
+    const data = await api(`/cost/events/feedback?${params.toString()}`);
+    if (!data.has_feedback) {
+      result.textContent = `No feedback found for ${requestId}.`;
+      return;
+    }
+    if (form.elements.rating && data.rating != null) {
+      form.elements.rating.value = String(data.rating);
+    }
+    if (form.elements.scores_json && data.scores && typeof data.scores === "object") {
+      form.elements.scores_json.value = JSON.stringify(data.scores);
+    }
+    if (form.elements.comment && data.comment != null) {
+      form.elements.comment.value = String(data.comment);
+    }
+    result.textContent = `Found feedback for ${requestId}: rating=${data.rating ?? "—"}, events=${data.count ?? 0}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function loadCostBudgetPolicies() {
   const tbody = qs("#costBudgetTable");
   const result = qs("#costBudgetResult");
   if (!tbody) return;
-  setTableMessage(tbody, 8, "Loading...");
+  setTableMessage(tbody, 13, "Loading...");
   if (result) result.textContent = "Loading budget policies...";
+  const filterForm = qs("#costBudgetListFilters");
+  const raw = filterForm ? Object.fromEntries(new FormData(filterForm).entries()) : {};
+  const params = new URLSearchParams({ status: "active", limit: "100", offset: "0" });
+  const environment = String(raw.environment || "").trim();
+  if (environment) params.set("environment", environment);
   try {
-    const rows = await api("/cost/budgets?status=active&limit=100&offset=0");
+    const rows = await api(`/cost/budgets?${params.toString()}`);
     costBudgetRows = Array.isArray(rows) ? rows : [];
     renderCostBudgetRows();
-    if (result) result.textContent = `Loaded ${costBudgetRows.length} active budget policies.`;
+    if (result) {
+      result.textContent = `Loaded ${costBudgetRows.length} active budget policies${environment ? ` · env=${environment}` : ""}.`;
+    }
     syncCostOverviewMetrics();
     renderCostConsoleSummary();
   } catch (err) {
     costBudgetRows = [];
-    setTableMessage(tbody, 8, `Error: ${safeText(err.message)}`);
+    setTableMessage(tbody, 13, `Error: ${safeText(err.message)}`);
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
   }
 }
@@ -20258,21 +24719,82 @@ async function evaluateCostPolicy(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#costPolicyEvalForm");
   const result = qs("#costPolicyEvalResult");
+  const tbody = qs("#costPolicyEvalTable");
   if (!form || !result) return;
   const raw = Object.fromEntries(new FormData(form).entries());
   result.textContent = "Evaluating policy...";
+  if (tbody) setTableMessage(tbody, 2, "Loading...");
   try {
+    const environment = String(raw.environment || "").trim();
+    const body = {
+      scope_type: String(raw.scope_type || "actor").trim(),
+      scope_id: String(raw.scope_id || "").trim(),
+      window_type: String(raw.window_type || "daily").trim(),
+    };
+    if (environment) body.environment = environment;
     const data = await api("/cost/policies/evaluate", {
       method: "POST",
-      body: JSON.stringify({
-        scope_type: String(raw.scope_type || "actor").trim(),
-        scope_id: String(raw.scope_id || "").trim(),
-        window_type: String(raw.window_type || "daily").trim(),
-      }),
+      body: JSON.stringify(body),
     });
+    latestCostPolicyEval = data;
     const softAlertText = data.soft_limit_alert ? " Soft alert triggered." : "";
-    result.textContent = `Decision ${data.decision} (${data.window_type || "daily"} window). Utilization ${data.utilization_percent}% (${data.spend_cents}/${data.effective_budget_cents || data.budget_cents} cents effective). Projected window spend ${data.projected_window_spend_cents}c (${data.projection_basis}, prior avg ${data.historical_window_spend_cents}c over ${data.prior_periods_considered} period(s), projected util ${data.projected_utilization_percent}%). Recommended action: ${data.recommended_action}.${softAlertText}`;
+    result.textContent = `Decision ${data.decision} (${data.window_type || "daily"} window${environment ? ` · env=${environment}` : ""}). Utilization ${data.utilization_percent}% (${data.spend_cents}/${data.effective_budget_cents || data.budget_cents} cents effective). Hours spend ${data.hours_spend_cents ?? "--"}c. Projected ${data.projected_window_spend_cents}c (${data.projection_basis}). Recommended action: ${data.recommended_action}.${softAlertText}`;
+    if (tbody) {
+      tbody.textContent = "";
+      const rows = [
+        ["Scope", `${data.scope_type}:${data.scope_id}`],
+        ["Policy", data.budget_policy_id || "--"],
+        ["Resolved budget scope", data.resolved_budget_scope_type || "--"],
+        ["Environment", data.environment || "all"],
+        ["Decision", data.decision || "--"],
+        ["Recommended action", data.recommended_action || "--"],
+        ["Spend / hours", `${data.spend_cents ?? 0}¢ / ${data.hours_spend_cents ?? 0}¢`],
+        ["Budget / effective", `${data.budget_cents ?? "--"} / ${data.effective_budget_cents ?? "--"}`],
+        ["Utilization", `${data.utilization_percent ?? "--"}%`],
+        ["Projected util", `${data.projected_utilization_percent ?? "--"}%`],
+        ["Projected window spend", `${data.projected_window_spend_cents ?? 0}¢ (${data.projection_basis || "n/a"})`],
+        ["Soft alert", data.soft_limit_alert ? "yes" : "no"],
+        ["Preemptive throttle", data.preemptive_throttle ? "yes" : "no"],
+      ];
+      rows.forEach(([field, value]) => {
+        const tr = appendTableRow(tbody, [field, value]);
+        if (field === "Decision") fillCostDecisionCell(tr?.children?.[1], data.decision);
+        if (field === "Utilization") fillCostUtilCell(tr?.children?.[1], data.utilization_percent);
+      });
+      const actionRow = document.createElement("tr");
+      const labelTd = document.createElement("td");
+      labelTd.textContent = "Actions";
+      const actionTd = document.createElement("td");
+      const explainBtn = document.createElement("button");
+      explainBtn.type = "button";
+      explainBtn.className = "ghost";
+      explainBtn.textContent = "Explain";
+      explainBtn.addEventListener("click", () => {
+        const select = qs("#costBudgetSectionSelect");
+        if (select) {
+          select.value = "hierarchy";
+          select.dispatchEvent(new Event("change"));
+        }
+        void loadCostHierarchyExplain(data.scope_type, data.scope_id);
+      });
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "ghost";
+      editBtn.textContent = "Edit policy";
+      editBtn.addEventListener("click", () => {
+        void openCostBudgetPolicyEditor({
+          budget_policy_id: data.budget_policy_id,
+          scope_type: data.resolved_budget_scope_type || data.scope_type,
+          scope_id: data.scope_id,
+        });
+      });
+      actionTd.append(explainBtn, editBtn);
+      actionRow.append(labelTd, actionTd);
+      tbody.appendChild(actionRow);
+    }
   } catch (err) {
+    latestCostPolicyEval = null;
+    if (tbody) setTableMessage(tbody, 2, `Error: ${safeText(err.message)}`);
     result.textContent = `Error: ${safeText(err.message)}`;
   }
 }
@@ -20281,15 +24803,17 @@ function renderCostLimitRows() {
   const tbody = qs("#costLimitTable");
   if (!tbody) return;
   if (!latestCostLimitRows.length) {
-    setTableMessage(tbody, 11, "No limit evaluation results yet.");
+    setTableMessage(tbody, 13, "No limit evaluation results yet.");
     return;
   }
   tbody.textContent = "";
+  const environment = String(qs("#costLimitEvalForm")?.elements?.environment?.value || "").trim();
   latestCostLimitRows.forEach((row) => {
-    appendTableRow(tbody, [
+    const tr = appendTableRow(tbody, [
       `${row.scope_type}:${row.scope_id}`,
       row.policy_id || "--",
       row.spend_cents,
+      row.hours_spend_cents ?? "--",
       row.budget_cents,
       row.effective_budget_cents,
       row.utilization_percent,
@@ -20298,7 +24822,58 @@ function renderCostLimitRows() {
       row.decision,
       row.recommended_action,
       row.soft_limit_alert ? "yes" : "no",
+      "",
     ]);
+    const cells = tr?.children || [];
+    fillCostUtilCell(cells[6], row.utilization_percent);
+    fillCostDecisionCell(cells[9], row.decision);
+    const scopeCell = cells[0];
+    if (scopeCell && row.scope_type && row.scope_id) {
+      scopeCell.textContent = "";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cost-member-link";
+      btn.textContent = `${row.scope_type}:${row.scope_id}`;
+      btn.title = "Explain hierarchy scope";
+      btn.addEventListener("click", () => {
+        const select = qs("#costBudgetSectionSelect");
+        if (select) {
+          select.value = "hierarchy";
+          select.dispatchEvent(new Event("change"));
+        }
+        void loadCostHierarchyExplain(row.scope_type, row.scope_id);
+      });
+      scopeCell.appendChild(btn);
+    }
+    const actionCell = cells[12];
+    if (actionCell) {
+      actionCell.textContent = "";
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "ghost";
+      editBtn.textContent = "Edit policy";
+      editBtn.addEventListener("click", () => {
+        void openCostBudgetPolicyEditor({
+          budget_policy_id: row.policy_id,
+          scope_type: row.scope_type,
+          scope_id: row.scope_id,
+          environment,
+        });
+      });
+      actionCell.appendChild(editBtn);
+      if (row.policy_id) {
+        appendCostBudgetRemediationActions(actionCell, {
+          budget_policy_id: row.policy_id,
+          scope_type: row.scope_type,
+          scope_id: row.scope_id,
+          window_type: qs("#costLimitEvalForm")?.elements?.window_type?.value,
+        }, {
+          environment,
+          resultSelector: "#costLimitEvalResult",
+          onDone: () => void evaluateCostLimits(),
+        });
+      }
+    }
   });
 }
 
@@ -20310,52 +24885,7071 @@ async function evaluateCostLimits(evt) {
   const raw = Object.fromEntries(new FormData(form).entries());
   result.textContent = "Evaluating aggregated limits...";
   try {
+    const teamIds = parseListInput(raw.team_ids);
+    const groupIds = parseListInput(raw.group_ids);
     const data = await api("/cost/limits/evaluate", {
       method: "POST",
       body: JSON.stringify({
         actor_id: String(raw.actor_id || "").trim() || undefined,
-        team_ids: parseListInput(raw.team_ids),
-        group_ids: parseListInput(raw.group_ids),
+        team_ids: teamIds,
+        group_ids: groupIds,
         agent_ids: parseListInput(raw.agent_ids),
         window_type: String(raw.window_type || "daily").trim(),
         projected_additional_cost_cents: Number(raw.projected_additional_cost_cents || 0),
+        environment: String(raw.environment || "").trim() || undefined,
       }),
     });
     latestCostLimitRows = Array.isArray(data?.scopes_evaluated) ? data.scopes_evaluated : [];
     renderCostLimitRows();
     const softAlerts = Array.isArray(data.soft_alert_scopes) && data.soft_alert_scopes.length ? data.soft_alert_scopes.join(", ") : "none";
-    result.textContent = `Aggregated decision: ${data.aggregated_decision}. Blocking scopes: ${Array.isArray(data.blocking_scopes) && data.blocking_scopes.length ? data.blocking_scopes.join(", ") : "none"}. Soft-alert scopes: ${softAlerts}.`;
+    const env = data.environment ? ` Env=${data.environment}.` : "";
+    result.textContent = `Aggregated decision: ${data.aggregated_decision}.${env} Blocking scopes: ${Array.isArray(data.blocking_scopes) && data.blocking_scopes.length ? data.blocking_scopes.join(", ") : "none"}. Soft-alert scopes: ${softAlerts}.`;
   } catch (err) {
     result.textContent = `Error: ${safeText(err.message)}`;
   }
 }
 
-async function loadCostAnomalies() {
-  const tbody = qs("#costAnomaliesTable");
+function useCostLimitDirectoryMemberships() {
+  const form = qs("#costLimitEvalForm");
+  if (!form) return;
+  const teamInput = form.querySelector('[name="team_ids"]');
+  const groupInput = form.querySelector('[name="group_ids"]');
+  if (teamInput) teamInput.value = "";
+  if (groupInput) groupInput.value = "";
+  const result = qs("#costLimitEvalResult");
+  if (result) {
+    result.textContent = "Cleared team/group IDs. Evaluate to auto-resolve directory memberships.";
+  }
+}
+
+function costDecisionClass(decision) {
+  const value = String(decision || "").trim().toLowerCase();
+  if (value === "deny") return "cost-decision-badge is-deny";
+  if (value === "warn") return "cost-decision-badge is-warn";
+  if (value === "allow") return "cost-decision-badge is-allow";
+  return "cost-decision-badge is-none";
+}
+
+function costDecisionLabel(decision) {
+  const value = String(decision || "").trim().toLowerCase();
+  if (!value || value === "--") return "none";
+  return value;
+}
+
+function fillCostDecisionCell(td, decision) {
+  if (!td) return;
+  td.textContent = "";
+  const badge = document.createElement("span");
+  badge.className = costDecisionClass(decision);
+  badge.textContent = costDecisionLabel(decision);
+  td.appendChild(badge);
+}
+
+function fillCostUtilCell(td, utilization) {
+  if (!td) return;
+  const raw = utilization == null || utilization === "--" ? null : Number(utilization);
+  td.textContent = "";
+  if (raw == null || Number.isNaN(raw)) {
+    td.textContent = "--";
+    return;
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "cost-util-cell";
+  const label = document.createElement("span");
+  label.className = "cost-util-label";
+  label.textContent = `${raw}%`;
+  const track = document.createElement("div");
+  track.className = "cost-util-track";
+  track.setAttribute("role", "progressbar");
+  track.setAttribute("aria-valuemin", "0");
+  track.setAttribute("aria-valuemax", "100");
+  track.setAttribute("aria-valuenow", String(Math.max(0, Math.min(100, Math.round(raw)))));
+  const fill = document.createElement("div");
+  fill.className = "cost-util-fill";
+  if (raw >= 100) fill.classList.add("is-hard");
+  else if (raw >= 80) fill.classList.add("is-soft");
+  fill.style.width = `${Math.max(0, Math.min(100, raw))}%`;
+  track.appendChild(fill);
+  wrap.appendChild(label);
+  wrap.appendChild(track);
+  td.appendChild(wrap);
+}
+
+function fillCostMemberLinks(td, members, onMemberClick) {
+  if (!td) return;
+  td.textContent = "";
+  if (!Array.isArray(members) || !members.length) {
+    td.textContent = "--";
+    return;
+  }
+  members.forEach((item, index) => {
+    if (index) td.appendChild(document.createTextNode("; "));
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "linkish cost-member-link";
+    btn.textContent = `${item.user_id}:${item.spend_cents}¢ (${item.share_percent ?? 0}%)`;
+    btn.title = `Explain user:${item.user_id}`;
+    btn.addEventListener("click", () => onMemberClick(item.user_id));
+    td.appendChild(btn);
+  });
+}
+
+function renderCostHierarchyRows(data) {
+  const tbody = qs("#costHierarchyTable");
+  const softAlert = qs("#costHierarchySoftAlert");
   if (!tbody) return;
-  setTableMessage(tbody, 7, "Loading...");
+  tbody.textContent = "";
+  if (softAlert) softAlert.textContent = "";
+  latestCostHierarchyData = data || null;
+  const colCount = 17;
+  const rows = [];
+  const formatSessionRate = (row) => {
+    const parts = [];
+    if (row.session_budget_cents) parts.push(`session ${row.session_budget_cents}c`);
+    if (row.session_iteration_cap) parts.push(`iter ${row.session_iteration_cap}`);
+    if (row.rate_limit_rpm) parts.push(`rpm ${row.rate_limit_rpm}`);
+    if (row.rate_limit_tpm) parts.push(`tpm ${row.rate_limit_tpm}`);
+    return parts.length ? parts.join("; ") : "--";
+  };
+  const formatTemp = (row) => {
+    const cents = Number(row.temporary_increase_cents || 0);
+    if (!cents) return "--";
+    return row.temporary_increase_active ? `+${cents}c active` : `+${cents}c expired`;
+  };
+  if (data) {
+    const userBudget = data.user_budget || {};
+    rows.push({
+      scope: `user:${data.actor_id}`,
+      scope_type: "user",
+      scope_id: data.actor_id,
+      budget_policy_id: userBudget.budget_policy_id || "",
+      members: 1,
+      spend_cents: data.user_spend_cents,
+      hours_spend_cents: data.user_hours_spend_cents ?? userBudget.hours_spend_cents ?? data.user_spend_cents,
+      tagged_spend_cents: data.user_spend_cents,
+      member_spend_cents: 0,
+      budget_window_spend_cents: userBudget.budget_window_spend_cents ?? "--",
+      budget_cents: userBudget.budget_cents ?? "--",
+      effective_budget_cents: userBudget.effective_budget_cents ?? "--",
+      utilization_percent: userBudget.utilization_percent ?? "--",
+      decision: userBudget.decision || "",
+      recommended_action: userBudget.recommended_action || "--",
+      window_type: userBudget.window_type || "--",
+      temp: formatTemp(userBudget),
+      session_rate: formatSessionRate(userBudget),
+      top_members: [],
+    });
+    const pushScopeRows = (items) => {
+      (Array.isArray(items) ? items : []).forEach((row) => {
+        rows.push({
+          scope: `${row.scope_type}:${row.scope_id}`,
+          scope_type: row.scope_type,
+          scope_id: row.scope_id,
+          budget_policy_id: row.budget_policy_id || "",
+          members: row.member_count ?? 0,
+          spend_cents: row.spend_cents,
+          hours_spend_cents: row.hours_spend_cents ?? row.spend_cents,
+          tagged_spend_cents: row.tagged_spend_cents ?? 0,
+          member_spend_cents: row.member_spend_cents ?? 0,
+          budget_window_spend_cents: row.budget_window_spend_cents ?? "--",
+          budget_cents: row.budget_cents ?? "--",
+          effective_budget_cents: row.effective_budget_cents ?? "--",
+          utilization_percent: row.utilization_percent ?? "--",
+          decision: row.decision || "",
+          recommended_action: row.recommended_action || "--",
+          window_type: row.window_type || "--",
+          temp: formatTemp(row),
+          session_rate: formatSessionRate(row),
+          top_members: Array.isArray(row.top_members) ? row.top_members : [],
+        });
+      });
+    };
+    pushScopeRows(data.teams);
+    pushScopeRows(data.groups);
+    const softScopes = Array.isArray(data.soft_alert_scopes) ? data.soft_alert_scopes : [];
+    const blockScopes = Array.isArray(data.blocking_scopes) ? data.blocking_scopes : [];
+    if (softAlert && (softScopes.length || blockScopes.length)) {
+      softAlert.textContent = [
+        blockScopes.length ? `Blocking: ${blockScopes.join(", ")}` : "",
+        softScopes.length ? `Soft alerts: ${softScopes.join(", ")}` : "",
+      ]
+        .filter(Boolean)
+        .join(" | ");
+    }
+  }
+  const filter = String(costHierarchyDecisionFilter || "all").toLowerCase();
+  const visible = rows.filter((row) => {
+    const decision = String(row.decision || "").toLowerCase();
+    if (filter === "all") return true;
+    if (filter === "none") return !decision;
+    return decision === filter;
+  });
+  if (!visible.length) {
+    setTableMessage(tbody, colCount, rows.length ? "No hierarchy rows match this decision filter." : "No hierarchy rows yet.");
+    return;
+  }
+  visible.forEach((row) => {
+    const tr = appendTableRow(tbody, [
+      row.scope,
+      row.members,
+      row.spend_cents,
+      row.hours_spend_cents,
+      row.tagged_spend_cents,
+      row.member_spend_cents,
+      row.budget_window_spend_cents,
+      row.budget_cents,
+      row.effective_budget_cents,
+      row.utilization_percent,
+      row.decision || "--",
+      row.recommended_action,
+      row.window_type,
+      row.temp,
+      row.session_rate,
+      "",
+      "",
+    ]);
+    const cells = tr?.children || [];
+    fillCostUtilCell(cells[9], row.utilization_percent);
+    fillCostDecisionCell(cells[10], row.decision);
+    fillCostMemberLinks(cells[15], row.top_members, (userId) => {
+      void loadCostHierarchyExplain("user", userId);
+    });
+    const actionCell = cells[16];
+    if (actionCell) {
+      actionCell.textContent = "";
+      const explainBtn = document.createElement("button");
+      explainBtn.type = "button";
+      explainBtn.className = "ghost";
+      explainBtn.textContent = "Explain";
+      explainBtn.addEventListener("click", () => {
+        void loadCostHierarchyExplain(row.scope_type, row.scope_id);
+      });
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "ghost";
+      editBtn.textContent = "Edit policy";
+      editBtn.addEventListener("click", () => {
+        void openCostBudgetPolicyEditor({
+          budget_policy_id: row.budget_policy_id,
+          scope_type: row.scope_type,
+          scope_id: row.scope_id,
+          environment: String(qs("#costHierarchyForm")?.elements?.environment?.value || "").trim(),
+        });
+      });
+      actionCell.append(explainBtn, editBtn);
+      if (row.budget_policy_id) {
+        appendCostBudgetRemediationActions(actionCell, row, {
+          environment: String(qs("#costHierarchyForm")?.elements?.environment?.value || "").trim(),
+          resultSelector: "#costHierarchyResult",
+          onDone: () => void loadCostHierarchy(),
+        });
+      }
+    }
+  });
+}
+
+function syncCostHierarchyFilterChips() {
+  document.querySelectorAll("[data-cost-hierarchy-filter]").forEach((chip) => {
+    const value = String(chip.getAttribute("data-cost-hierarchy-filter") || "all");
+    chip.classList.toggle("is-active", value === costHierarchyDecisionFilter);
+  });
+}
+
+async function loadCostHierarchyExplain(scopeType, scopeId) {
+  const result = qs("#costHierarchyExplainResult");
+  const tbody = qs("#costHierarchyExplainTable");
+  const metaBody = qs("#costHierarchyExplainMetaTable");
+  if (result) result.textContent = `Explaining ${scopeType}:${scopeId}...`;
+  if (tbody) setTableMessage(tbody, 3, "Loading...");
+  if (metaBody) setTableMessage(metaBody, 2, "Loading...");
+  const form = qs("#costHierarchyForm");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    scope_type: String(scopeType || "").trim(),
+    scope_id: String(scopeId || "").trim(),
+    window_hours: String(raw.window_hours || "24").trim() || "24",
+    top_members: String(raw.top_members || "10").trim() || "10",
+    window_mode: String(raw.window_mode || "hours").trim() || "hours",
+  });
+  const environment = String(raw.environment || "").trim();
+  if (environment) params.set("environment", environment);
   try {
-    const rows = await api("/cost/anomalies");
+    const data = await api(`/cost/hierarchy/explain?${params.toString()}`);
+    latestCostHierarchyExplain = data;
+    if (metaBody) {
+      metaBody.textContent = "";
+      const metaRows = [
+        ["Decision", data.decision || "n/a"],
+        ["Recommended action", data.recommended_action || "--"],
+        ["Window mode", data.window_mode || "--"],
+        ["Environment", data.environment || "all"],
+        ["Policy window", data.window_type || "--"],
+        ["Spend", `${data.spend_cents ?? 0}¢`],
+        ["Hours spend", `${data.hours_spend_cents ?? "--"}¢`],
+        ["Tagged / member", `${data.tagged_spend_cents ?? 0}¢ / ${data.member_spend_cents ?? 0}¢`],
+        ["Budget / effective", `${data.budget_cents ?? "--"} / ${data.effective_budget_cents ?? "--"}`],
+        ["Utilization", `${data.utilization_percent ?? "--"}%`],
+        ["Soft / hard %", `${data.soft_limit_percent ?? "--"} / ${data.hard_limit_percent ?? "--"}`],
+        ["Projected window spend", `${data.projected_window_spend_cents ?? 0}¢ (${data.projection_basis || "n/a"})`],
+        ["Historical window spend", `${data.historical_window_spend_cents ?? 0}¢`],
+        ["Temp increase", data.temporary_increase_active ? `+${data.temporary_increase_cents || 0}c active` : `${data.temporary_increase_cents || 0}c`],
+        ["Resolved budget scope", data.resolved_budget_scope_type || "--"],
+        ["Session caps", `budget ${data.session_budget_cents ?? "--"}c · iter ${data.session_iteration_cap ?? "--"}`],
+        ["Rate limits", `rpm ${data.rate_limit_rpm ?? "--"} · tpm ${data.rate_limit_tpm ?? "--"}`],
+        ["Owner scopes counted", Array.isArray(data.owner_scopes_counted) ? data.owner_scopes_counted.join(", ") : "--"],
+      ];
+      metaRows.forEach(([field, value]) => {
+        const tr = appendTableRow(metaBody, [field, value]);
+        if (field === "Decision") fillCostDecisionCell(tr?.children?.[1], data.decision);
+        if (field === "Utilization") fillCostUtilCell(tr?.children?.[1], data.utilization_percent);
+      });
+    }
+    if (tbody) {
+      tbody.textContent = "";
+      const members = Array.isArray(data?.top_members) ? data.top_members : [];
+      if (!members.length) {
+        setTableMessage(tbody, 3, "No member contributions in this window.");
+      } else {
+        members.forEach((member) => {
+          const tr = appendTableRow(tbody, [member.user_id, member.spend_cents, `${member.share_percent ?? 0}%`]);
+          const userCell = tr?.children?.[0];
+          if (userCell) {
+            userCell.textContent = "";
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "linkish cost-member-link";
+            btn.textContent = member.user_id;
+            btn.addEventListener("click", () => {
+              void loadCostHierarchyExplain("user", member.user_id);
+            });
+            userCell.appendChild(btn);
+          }
+        });
+      }
+    }
+    if (result) {
+      const reasons = Array.isArray(data?.reasons) ? data.reasons.join(" ") : "";
+      const mode = data.window_mode || "hours";
+      const env = data.environment ? ` env=${data.environment}` : "";
+      result.textContent = `${data.scope_type}:${data.scope_id} [${mode}${env}] decision=${data.decision || "n/a"} action=${data.recommended_action || "--"} utilization=${data.utilization_percent ?? "--"}% spend=${data.spend_cents}¢ hours=${data.hours_spend_cents ?? "--"}¢ (tagged ${data.tagged_spend_cents}¢ / members ${data.member_spend_cents}¢; projected ${data.projected_window_spend_cents ?? 0}¢). ${reasons}`;
+    }
+  } catch (err) {
+    latestCostHierarchyExplain = null;
+    if (metaBody) setTableMessage(metaBody, 2, `Error: ${safeText(err.message)}`);
+    if (tbody) setTableMessage(tbody, 3, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function copyCostHierarchyExplain() {
+  const result = qs("#costHierarchyExplainResult");
+  if (!latestCostHierarchyExplain) {
+    if (result) result.textContent = "Load an Explain row before copying.";
+    return;
+  }
+  const payload = JSON.stringify(latestCostHierarchyExplain, null, 2);
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(payload);
+    } else {
+      throw new Error("Clipboard unavailable");
+    }
+    if (result) result.textContent = `Copied explain JSON for ${latestCostHierarchyExplain.scope_type}:${latestCostHierarchyExplain.scope_id}.`;
+  } catch (err) {
+    if (result) result.textContent = `Copy failed: ${safeText(err.message)}`;
+  }
+}
+
+function exportCostHierarchyJson() {
+  const result = qs("#costHierarchyResult");
+  if (!latestCostHierarchyData) {
+    if (result) result.textContent = "Load hierarchy before exporting.";
+    return;
+  }
+  const blob = new Blob([JSON.stringify(latestCostHierarchyData, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `cost-hierarchy-${latestCostHierarchyData.actor_id || "actor"}-${Date.now()}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  if (result) result.textContent = "Hierarchy JSON exported.";
+}
+
+async function loadCostHierarchyAlerts(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const tbody = qs("#costOverviewHierarchyAlertsTable");
+  const status = qs("#costOverviewHierarchyAlertStatus");
+  if (status) status.textContent = "Loading hierarchy alerts...";
+  const form = qs("#costOverviewHierarchyAlertsForm");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24").trim() || "24",
+    window_mode: String(raw.window_mode || "budget").trim() || "budget",
+  });
+  const environment = String(raw.environment || "").trim();
+  if (environment) params.set("environment", environment);
+  try {
+    const data = await api(`/cost/hierarchy/alerts?${params.toString()}`);
+    latestCostHierarchyAlerts = data;
+    if (qs("#costOverviewHierarchyAlerts")) {
+      qs("#costOverviewHierarchyAlerts").textContent = String(
+        Number(data?.soft_alert_count || 0) + Number(data?.blocking_count || 0)
+      );
+    }
+    if (tbody) {
+      tbody.textContent = "";
+      const alerts = Array.isArray(data?.alerts) ? data.alerts : [];
+      const filter = String(costOverviewAlertDecisionFilter || "all").toLowerCase();
+      const visible = alerts.filter((row) => {
+        if (filter === "all") return true;
+        return String(row.decision || "").toLowerCase() === filter;
+      });
+      if (!visible.length) {
+        setTableMessage(tbody, 10, alerts.length ? "No hierarchy alerts match this decision filter." : "No hierarchy soft/hard alerts.");
+      } else {
+        visible.forEach((row) => {
+          const tr = appendTableRow(tbody, [
+            `${row.scope_type}:${row.scope_id}`,
+            row.decision,
+            row.severity || (row.decision === "deny" ? "critical" : "high"),
+            row.spend_cents,
+            row.hours_spend_cents ?? "--",
+            row.utilization_percent ?? "--",
+            row.effective_budget_cents ?? "--",
+            row.recommended_action || "--",
+            row.window_type || "--",
+            "",
+          ]);
+          const cells = tr?.children || [];
+          fillCostDecisionCell(cells[1], row.decision);
+          const severityCell = cells[2];
+          if (severityCell) {
+            severityCell.textContent = "";
+            const badge = document.createElement("span");
+            const sev = String(row.severity || (row.decision === "deny" ? "critical" : "high")).toLowerCase();
+            badge.className = `cost-severity-badge is-${sev}`;
+            badge.textContent = sev;
+            severityCell.appendChild(badge);
+          }
+          fillCostUtilCell(cells[5], row.utilization_percent);
+          const actionCell = cells[9];
+          if (actionCell) {
+            actionCell.textContent = "";
+            const explainBtn = document.createElement("button");
+            explainBtn.type = "button";
+            explainBtn.className = "ghost";
+            explainBtn.textContent = "Explain";
+            explainBtn.addEventListener("click", () => {
+              const budgetsTab = qs('[data-console-tab="budgets"]');
+              if (budgetsTab) budgetsTab.click();
+              const select = qs("#costBudgetSectionSelect");
+              if (select) {
+                select.value = "hierarchy";
+                select.dispatchEvent(new Event("change"));
+              }
+              const hierarchyForm = qs("#costHierarchyForm");
+              if (hierarchyForm?.elements?.window_mode) {
+                hierarchyForm.elements.window_mode.value = String(raw.window_mode || "budget");
+              }
+              if (hierarchyForm?.elements?.environment) {
+                hierarchyForm.elements.environment.value = String(raw.environment || "");
+              }
+              void loadCostHierarchyExplain(row.scope_type, row.scope_id);
+            });
+            const editBtn = document.createElement("button");
+            editBtn.type = "button";
+            editBtn.className = "ghost";
+            editBtn.textContent = "Edit policy";
+            editBtn.addEventListener("click", () => {
+              void openCostBudgetPolicyEditor({
+                budget_policy_id: row.budget_policy_id,
+                scope_type: row.scope_type,
+                scope_id: row.scope_id,
+                environment: String(raw.environment || "").trim(),
+              });
+            });
+            actionCell.append(explainBtn, editBtn);
+            if (row.budget_policy_id) {
+              appendCostBudgetRemediationActions(actionCell, row, {
+                environment: String(raw.environment || "").trim(),
+                resultSelector: "#costOverviewHierarchyAlertStatus",
+                onDone: () => void loadCostHierarchyAlerts(),
+              });
+            }
+          }
+        });
+      }
+    }
+    if (status) {
+      const mode = data.window_mode || params.get("window_mode") || "budget";
+      const env = data.environment ? ` · env=${data.environment}` : "";
+      status.textContent = `Soft alerts: ${data.soft_alert_count || 0}. Blocking: ${data.blocking_count || 0}. Mode=${mode}${env}.`;
+    }
+    renderCostConsoleSummary();
+  } catch (err) {
+    latestCostHierarchyAlerts = null;
+    if (tbody) setTableMessage(tbody, 10, `Error: ${safeText(err.message)}`);
+    if (status) status.textContent = `Error: ${safeText(err.message)}`;
+    if (qs("#costOverviewHierarchyAlerts")) qs("#costOverviewHierarchyAlerts").textContent = "--";
+  }
+}
+
+async function loadCostHierarchy(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costHierarchyForm");
+  const result = qs("#costHierarchyResult");
+  if (!result) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams();
+  const actorId = String(raw.actor_id || "").trim();
+  const windowHours = String(raw.window_hours || "24").trim();
+  const topMembers = String(raw.top_members || "5").trim();
+  const windowMode = String(raw.window_mode || "hours").trim() || "hours";
+  const environment = String(raw.environment || "").trim();
+  const includeMembers = form?.querySelector('[name="include_members"]')?.checked !== false;
+  if (actorId) params.set("actor_id", actorId);
+  if (windowHours) params.set("window_hours", windowHours);
+  params.set("window_mode", windowMode);
+  if (environment) params.set("environment", environment);
+  params.set("include_members", includeMembers ? "true" : "false");
+  if (topMembers) params.set("top_members", topMembers);
+  result.textContent = "Loading spend hierarchy...";
+  try {
+    const data = await api(`/cost/hierarchy?${params.toString()}`);
+    renderCostHierarchyRows(data);
+    const teamCount = Array.isArray(data?.teams) ? data.teams.length : 0;
+    const groupCount = Array.isArray(data?.groups) ? data.groups.length : 0;
+    const mode = data.window_mode || windowMode;
+    const env = data.environment ? ` env=${data.environment}` : "";
+    const hoursSpend = data.user_hours_spend_cents ?? data.user_spend_cents;
+    result.textContent = `Actor ${safeText(data.actor_id)}: spend ${data.user_spend_cents}¢ (hours ${hoursSpend}¢) across ${teamCount} team(s) and ${groupCount} group(s) [${mode}/${data.window_hours}h${env}].`;
+  } catch (err) {
+    renderCostHierarchyRows(null);
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostAnomalies(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const tbody = qs("#costAnomaliesTable");
+  const result = qs("#costAnomaliesResult");
+  if (!tbody) return;
+  setTableMessage(tbody, 13, "Loading...");
+  if (result) result.textContent = "Loading anomalies...";
+  const form = qs("#costAnomaliesForm");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams();
+  const environment = String(raw.environment || "").trim();
+  const severity = String(raw.severity || "").trim();
+  const scopeType = String(raw.scope_type || "").trim();
+  const minUtilization = String(raw.min_utilization || "").trim();
+  if (environment) params.set("environment", environment);
+  if (severity) params.set("severity", severity);
+  if (scopeType) params.set("scope_type", scopeType);
+  if (minUtilization) params.set("min_utilization", minUtilization);
+  try {
+    const rows = await api(`/cost/anomalies${params.toString() ? `?${params.toString()}` : ""}`);
+    latestCostAnomalies = Array.isArray(rows) ? rows : [];
     if (!rows?.length) {
-      setTableMessage(tbody, 7, "No anomalies detected.");
+      setTableMessage(tbody, 13, "No anomalies detected.");
+      if (result) result.textContent = "No soft/hard budget anomalies for the selected filter.";
+      syncCostOverviewMetrics();
+      renderCostConsoleSummary();
       return;
     }
     tbody.textContent = "";
     rows.forEach((row) => {
-      appendTableRow(tbody, [
-        row.anomaly_id,
+      const decision = row.decision || (String(row.anomaly_type || "").includes("hard") ? "deny" : "warn");
+      const tr = appendTableRow(tbody, [
         row.anomaly_type,
         row.severity,
+        decision,
         `${row.scope_type}:${row.scope_id}`,
         row.observed_cost_cents,
+        row.hours_spend_cents ?? "--",
         row.threshold_cents,
+        row.utilization_percent ?? "--",
+        row.effective_budget_cents ?? "--",
+        row.recommended_action || "--",
+        row.window_type || "--",
         formatComplianceDate(row.detected_at),
+        "",
       ]);
+      const cells = tr?.children || [];
+      fillCostDecisionCell(cells[2], decision);
+      fillCostUtilCell(cells[7], row.utilization_percent);
+      const severityCell = cells[1];
+      if (severityCell) {
+        severityCell.textContent = "";
+        const badge = document.createElement("span");
+        const sev = String(row.severity || "").toLowerCase();
+        badge.className = `cost-severity-badge is-${sev || "unknown"}`;
+        badge.textContent = row.severity || "--";
+        severityCell.appendChild(badge);
+      }
+      const actionCell = cells[12];
+      if (actionCell) {
+        actionCell.textContent = "";
+        const explainBtn = document.createElement("button");
+        explainBtn.type = "button";
+        explainBtn.className = "ghost";
+        explainBtn.textContent = "Explain";
+        explainBtn.addEventListener("click", () => {
+          const select = qs("#costBudgetSectionSelect");
+          if (select) {
+            select.value = "hierarchy";
+            select.dispatchEvent(new Event("change"));
+          }
+          const hierarchyForm = qs("#costHierarchyForm");
+          if (hierarchyForm?.elements?.window_mode) hierarchyForm.elements.window_mode.value = "budget";
+          if (hierarchyForm?.elements?.environment) hierarchyForm.elements.environment.value = environment;
+          void loadCostHierarchyExplain(row.scope_type, row.scope_id);
+        });
+        const editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "ghost";
+        editBtn.textContent = "Edit policy";
+        editBtn.addEventListener("click", () => {
+          void openCostBudgetPolicyEditor({
+            budget_policy_id: row.budget_policy_id,
+            scope_type: row.scope_type,
+            scope_id: row.scope_id,
+            environment,
+          });
+        });
+        actionCell.append(explainBtn, editBtn);
+        appendCostBudgetRemediationActions(actionCell, row, {
+          environment,
+          resultSelector: "#costAnomaliesResult",
+          onDone: () => void loadCostAnomalies(),
+        });
+      }
     });
+    if (result) {
+      const hard = rows.filter((row) => String(row.anomaly_type || "").includes("hard")).length;
+      const soft = rows.length - hard;
+      const filters = [
+        environment ? `env=${environment}` : "",
+        severity ? `severity=${severity}` : "",
+        scopeType ? `scope=${scopeType}` : "",
+        minUtilization ? `min_util=${minUtilization}` : "",
+      ].filter(Boolean).join(" · ");
+      result.textContent = `Loaded ${rows.length} anomal${rows.length === 1 ? "y" : "ies"} (${hard} hard, ${soft} soft)${filters ? ` · ${filters}` : ""}.`;
+    }
     syncCostOverviewMetrics();
     renderCostConsoleSummary();
   } catch (err) {
+    latestCostAnomalies = null;
+    setTableMessage(tbody, 13, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function exportCostAnomaliesCsv() {
+  const result = qs("#costAnomaliesResult");
+  if (!Array.isArray(latestCostAnomalies) || !latestCostAnomalies.length) {
+    if (result) result.textContent = "Load anomalies before exporting.";
+    return;
+  }
+  const headers = [
+    "anomaly_id",
+    "anomaly_type",
+    "severity",
+    "decision",
+    "scope_type",
+    "scope_id",
+    "observed_cost_cents",
+    "hours_spend_cents",
+    "threshold_cents",
+    "utilization_percent",
+    "effective_budget_cents",
+    "recommended_action",
+    "window_type",
+    "budget_policy_id",
+    "detected_at",
+  ];
+  const escape = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const lines = [headers.join(",")];
+  latestCostAnomalies.forEach((row) => {
+    lines.push(headers.map((key) => escape(row[key])).join(","));
+  });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `cost-anomalies-${Date.now()}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  if (result) result.textContent = `Exported ${latestCostAnomalies.length} anomal${latestCostAnomalies.length === 1 ? "y" : "ies"} to CSV.`;
+}
+
+function exportCostBudgetsCsv() {
+  const result = qs("#costBudgetResult");
+  if (!Array.isArray(costBudgetRows) || !costBudgetRows.length) {
+    if (result) result.textContent = "Load budgets before exporting.";
+    return;
+  }
+  const headers = [
+    "budget_policy_id",
+    "scope_type",
+    "scope_id",
+    "budget_amount_cents",
+    "window_type",
+    "current_spend_cents",
+    "hours_spend_cents",
+    "utilization_percent",
+    "decision",
+    "recommended_action",
+    "soft_alert_active",
+    "temporary_increase_cents",
+    "temporary_increase_active",
+    "status",
+  ];
+  const escape = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const lines = [headers.join(",")];
+  costBudgetRows.forEach((row) => {
+    lines.push(headers.map((key) => escape(row[key])).join(","));
+  });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `cost-budgets-${Date.now()}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  if (result) result.textContent = `Exported ${costBudgetRows.length} budget polic${costBudgetRows.length === 1 ? "y" : "ies"} to CSV.`;
+}
+
+async function loadCostUsers(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costUsersForm");
+  const result = qs("#costUsersResult");
+  const tbody = qs("#costUsersTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    limit: String(raw.limit || "50"),
+  });
+  const userFilter = String(raw.user_filter || "").trim();
+  if (userFilter) params.set("user_filter", userFilter);
+  if (result) result.textContent = "Loading users...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/users?${params.toString()}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) {
+      setTableMessage(tbody, 5, "No users found.");
+      if (result) result.textContent = "No users found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    items.forEach((row) => {
+      appendTableRow(tbody, [
+        row.user_id,
+        row.session_count,
+        row.event_count,
+        row.spend_cents,
+        formatComplianceDate(row.last_seen_at),
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${items.length} user(s); spend=${data.total_spend_cents ?? 0}¢, events=${data.total_event_count ?? 0}.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostModelStats(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costModelStatsForm");
+  const result = qs("#costModelStatsResult");
+  const tbody = qs("#costModelStatsTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    limit: String(raw.limit || "50"),
+  });
+  const modelFilter = String(raw.model_filter || "").trim();
+  if (modelFilter) params.set("model_filter", modelFilter);
+  if (result) result.textContent = "Loading model stats...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/models/stats?${params.toString()}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) {
+      setTableMessage(tbody, 5, "No models on plane inventory.");
+      if (result) result.textContent = "No model spend found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    items.forEach((row) => {
+      appendTableRow(tbody, [
+        row.model_name,
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+        formatComplianceDate(row.last_seen_at),
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${items.length} model(s); spend=${data.total_spend_cents ?? 0}¢, events=${data.total_event_count ?? 0}.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostUserTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costUserTimeseriesForm");
+  const result = qs("#costUserTimeseriesResult");
+  const tbody = qs("#costUserTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_users: String(raw.top_users || "8"),
+  });
+  const userFilter = String(raw.user_filter || "").trim();
+  if (userFilter) params.set("user_filter", userFilter);
+  if (result) result.textContent = "Loading user timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/users/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          user_id: item.user_id,
+          hour_start: point.hour_start,
+          session_count: point.session_count,
+          event_count: point.event_count,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No user timeseries points found.");
+      if (result) result.textContent = "No hourly user points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.user_id,
+        formatComplianceDate(row.hour_start),
+        row.session_count,
+        row.event_count,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostModelTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costModelTimeseriesForm");
+  const result = qs("#costModelTimeseriesResult");
+  const tbody = qs("#costModelTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_models: String(raw.top_models || "8"),
+  });
+  const modelFilter = String(raw.model_filter || "").trim();
+  if (modelFilter) params.set("model_filter", modelFilter);
+  if (result) result.textContent = "Loading model timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/models/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          model_name: item.model_name,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No timeseries points found.");
+      if (result) result.textContent = "No hourly model points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.model_name,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢, tokens=${data.total_tokens ?? 0}.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostTagTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costTagTimeseriesForm");
+  const result = qs("#costTagTimeseriesResult");
+  const tbody = qs("#costTagTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_tags: String(raw.top_tags || "8"),
+  });
+  const tagFilter = String(raw.tag_filter || "").trim();
+  if (tagFilter) params.set("tag_filter", tagFilter);
+  if (result) result.textContent = "Loading request tag timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/tags/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          request_tag: item.request_tag,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No tag timeseries points found.");
+      if (result) result.textContent = "No hourly request-tag points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.request_tag,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostEndpointTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costEndpointTimeseriesForm");
+  const result = qs("#costEndpointTimeseriesResult");
+  const tbody = qs("#costEndpointTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_endpoints: String(raw.top_endpoints || "8"),
+  });
+  const endpointFilter = String(raw.endpoint_filter || "").trim();
+  if (endpointFilter) params.set("endpoint_filter", endpointFilter);
+  if (result) result.textContent = "Loading endpoint family timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/endpoints/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          endpoint_family: item.endpoint_family,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No endpoint timeseries points found.");
+      if (result) result.textContent = "No hourly endpoint-family points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.endpoint_family,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostAgentTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costAgentTimeseriesForm");
+  const result = qs("#costAgentTimeseriesResult");
+  const tbody = qs("#costAgentTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_agents: String(raw.top_agents || "8"),
+  });
+  const agentFilter = String(raw.agent_filter || "").trim();
+  if (agentFilter) params.set("agent_filter", agentFilter);
+  if (result) result.textContent = "Loading agent timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/agents/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          agent_id: item.agent_id,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No agent timeseries points found.");
+      if (result) result.textContent = "No hourly agent points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.agent_id,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostEnvironmentTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costEnvironmentTimeseriesForm");
+  const result = qs("#costEnvironmentTimeseriesResult");
+  const tbody = qs("#costEnvironmentTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_environments: String(raw.top_environments || "8"),
+  });
+  const environmentFilter = String(raw.environment_filter || "").trim();
+  if (environmentFilter) params.set("environment_filter", environmentFilter);
+  if (result) result.textContent = "Loading environment timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/environments/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          environment: item.environment,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No environment timeseries points found.");
+      if (result) result.textContent = "No hourly environment points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.environment,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostOwnerTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costOwnerTimeseriesForm");
+  const result = qs("#costOwnerTimeseriesResult");
+  const tbody = qs("#costOwnerTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_owners: String(raw.top_owners || "8"),
+  });
+  const ownerFilter = String(raw.owner_filter || "").trim();
+  if (ownerFilter) params.set("owner_filter", ownerFilter);
+  if (result) result.textContent = "Loading owner scope timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/owners/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          owner_scope: item.owner_scope,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No owner timeseries points found.");
+      if (result) result.textContent = "No hourly owner-scope points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.owner_scope,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostCurrencyTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costCurrencyTimeseriesForm");
+  const result = qs("#costCurrencyTimeseriesResult");
+  const tbody = qs("#costCurrencyTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_currencies: String(raw.top_currencies || "8"),
+  });
+  const currencyFilter = String(raw.currency_filter || "").trim();
+  if (currencyFilter) params.set("currency_filter", currencyFilter);
+  if (result) result.textContent = "Loading currency timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/currencies/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          currency: item.currency,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No currency timeseries points found.");
+      if (result) result.textContent = "No hourly currency points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.currency,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostProviderTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costProviderTimeseriesForm");
+  const result = qs("#costProviderTimeseriesResult");
+  const tbody = qs("#costProviderTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_providers: String(raw.top_providers || "8"),
+  });
+  const providerFilter = String(raw.provider_filter || "").trim();
+  if (providerFilter) params.set("provider_filter", providerFilter);
+  if (result) result.textContent = "Loading provider timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/providers/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          provider: item.provider,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No provider timeseries points found.");
+      if (result) result.textContent = "No hourly provider points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.provider,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostTeamTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costTeamTimeseriesForm");
+  const result = qs("#costTeamTimeseriesResult");
+  const tbody = qs("#costTeamTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_teams: String(raw.top_teams || "8"),
+  });
+  const teamFilter = String(raw.team_filter || "").trim();
+  if (teamFilter) params.set("team_filter", teamFilter);
+  if (result) result.textContent = "Loading team timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/teams/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          team: item.team,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No team timeseries points found.");
+      if (result) result.textContent = "No hourly team points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.team,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostGroupTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costGroupTimeseriesForm");
+  const result = qs("#costGroupTimeseriesResult");
+  const tbody = qs("#costGroupTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_groups: String(raw.top_groups || "8"),
+  });
+  const groupFilter = String(raw.group_filter || "").trim();
+  if (groupFilter) params.set("group_filter", groupFilter);
+  if (result) result.textContent = "Loading group timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/groups/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          group: item.group,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No group timeseries points found.");
+      if (result) result.textContent = "No hourly group points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.group,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostProjectTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costProjectTimeseriesForm");
+  const result = qs("#costProjectTimeseriesResult");
+  const tbody = qs("#costProjectTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_projects: String(raw.top_projects || "8"),
+  });
+  const projectFilter = String(raw.project_filter || "").trim();
+  if (projectFilter) params.set("project_filter", projectFilter);
+  if (result) result.textContent = "Loading project timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/projects/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          project: item.project,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No project timeseries points found.");
+      if (result) result.textContent = "No hourly project points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.project,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostFeedbackTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costFeedbackTimeseriesForm");
+  const result = qs("#costFeedbackTimeseriesResult");
+  const tbody = qs("#costFeedbackTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+  });
+  const feedbackFilter = String(raw.feedback_filter || "").trim();
+  if (feedbackFilter) params.set("feedback_filter", feedbackFilter);
+  if (result) result.textContent = "Loading feedback timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/feedback/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          feedback_state: item.feedback_state,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No feedback timeseries points found.");
+      if (result) result.textContent = "No hourly feedback points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.feedback_state,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostSessionPathTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costSessionPathTimeseriesForm");
+  const result = qs("#costSessionPathTimeseriesResult");
+  const tbody = qs("#costSessionPathTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_paths: String(raw.top_paths || "8"),
+  });
+  const pathFilter = String(raw.path_filter || "").trim();
+  if (pathFilter) params.set("path_filter", pathFilter);
+  if (result) result.textContent = "Loading session path timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/session-paths/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          session_path: item.session_path,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No session path timeseries points found.");
+      if (result) result.textContent = "No hourly session path points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.session_path,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostSessionNameTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costSessionNameTimeseriesForm");
+  const result = qs("#costSessionNameTimeseriesResult");
+  const tbody = qs("#costSessionNameTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_names: String(raw.top_names || "8"),
+  });
+  const nameFilter = String(raw.name_filter || "").trim();
+  if (nameFilter) params.set("name_filter", nameFilter);
+  if (result) result.textContent = "Loading session name timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/session-names/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          session_name: item.session_name,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No session name timeseries points found.");
+      if (result) result.textContent = "No hourly session name points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.session_name,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostPromptIdTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costPromptIdTimeseriesForm");
+  const result = qs("#costPromptIdTimeseriesResult");
+  const tbody = qs("#costPromptIdTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_prompts: String(raw.top_prompts || "8"),
+  });
+  const promptFilter = String(raw.prompt_filter || "").trim();
+  if (promptFilter) params.set("prompt_filter", promptFilter);
+  if (result) result.textContent = "Loading prompt id timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/prompt-ids/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          prompt_id: item.prompt_id,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No prompt id timeseries points found.");
+      if (result) result.textContent = "No hourly prompt id points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.prompt_id,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostApplicationTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costApplicationTimeseriesForm");
+  const result = qs("#costApplicationTimeseriesResult");
+  const tbody = qs("#costApplicationTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_applications: String(raw.top_applications || "8"),
+  });
+  const applicationFilter = String(raw.application_filter || "").trim();
+  if (applicationFilter) params.set("application_filter", applicationFilter);
+  if (result) result.textContent = "Loading application timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/applications/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          application: item.application,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No application timeseries points found.");
+      if (result) result.textContent = "No hourly application points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.application,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostCustomerTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costCustomerTimeseriesForm");
+  const result = qs("#costCustomerTimeseriesResult");
+  const tbody = qs("#costCustomerTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_customers: String(raw.top_customers || "8"),
+  });
+  const customerFilter = String(raw.customer_filter || "").trim();
+  if (customerFilter) params.set("customer_filter", customerFilter);
+  if (result) result.textContent = "Loading customer timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/customers/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          customer: item.customer,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No customer timeseries points found.");
+      if (result) result.textContent = "No hourly customer points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.customer,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostDepartmentTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costDepartmentTimeseriesForm");
+  const result = qs("#costDepartmentTimeseriesResult");
+  const tbody = qs("#costDepartmentTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_departments: String(raw.top_departments || "8"),
+  });
+  const departmentFilter = String(raw.department_filter || "").trim();
+  if (departmentFilter) params.set("department_filter", departmentFilter);
+  if (result) result.textContent = "Loading department timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/departments/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          department: item.department,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No department timeseries points found.");
+      if (result) result.textContent = "No hourly department points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.department,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostFeatureTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costFeatureTimeseriesForm");
+  const result = qs("#costFeatureTimeseriesResult");
+  const tbody = qs("#costFeatureTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_features: String(raw.top_features || "8"),
+  });
+  const featureFilter = String(raw.feature_filter || "").trim();
+  if (featureFilter) params.set("feature_filter", featureFilter);
+  if (result) result.textContent = "Loading feature timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/features/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          feature: item.feature,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No feature timeseries points found.");
+      if (result) result.textContent = "No hourly feature points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.feature,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostRegionTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costRegionTimeseriesForm");
+  const result = qs("#costRegionTimeseriesResult");
+  const tbody = qs("#costRegionTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_regions: String(raw.top_regions || "8"),
+  });
+  const regionFilter = String(raw.region_filter || "").trim();
+  if (regionFilter) params.set("region_filter", regionFilter);
+  if (result) result.textContent = "Loading region timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/regions/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          region: item.region,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No region timeseries points found.");
+      if (result) result.textContent = "No hourly region points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.region,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostWorkspaceTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costWorkspaceTimeseriesForm");
+  const result = qs("#costWorkspaceTimeseriesResult");
+  const tbody = qs("#costWorkspaceTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_workspaces: String(raw.top_workspaces || "8"),
+  });
+  const workspaceFilter = String(raw.workspace_filter || "").trim();
+  if (workspaceFilter) params.set("workspace_filter", workspaceFilter);
+  if (result) result.textContent = "Loading workspace timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/workspaces/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          workspace: item.workspace,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No workspace timeseries points found.");
+      if (result) result.textContent = "No hourly workspace points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.workspace,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostProductTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costProductTimeseriesForm");
+  const result = qs("#costProductTimeseriesResult");
+  const tbody = qs("#costProductTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_products: String(raw.top_products || "8"),
+  });
+  const productFilter = String(raw.product_filter || "").trim();
+  if (productFilter) params.set("product_filter", productFilter);
+  if (result) result.textContent = "Loading product timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/products/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          product: item.product,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No product timeseries points found.");
+      if (result) result.textContent = "No hourly product points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.product,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostServiceTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costServiceTimeseriesForm");
+  const result = qs("#costServiceTimeseriesResult");
+  const tbody = qs("#costServiceTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_services: String(raw.top_services || "8"),
+  });
+  const serviceFilter = String(raw.service_filter || "").trim();
+  if (serviceFilter) params.set("service_filter", serviceFilter);
+  if (result) result.textContent = "Loading service timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/services/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          service: item.service,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No service timeseries points found.");
+      if (result) result.textContent = "No hourly service points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.service,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostTenantTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costTenantTimeseriesForm");
+  const result = qs("#costTenantTimeseriesResult");
+  const tbody = qs("#costTenantTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_tenants: String(raw.top_tenants || "8"),
+  });
+  const tenantFilter = String(raw.tenant_filter || "").trim();
+  if (tenantFilter) params.set("tenant_filter", tenantFilter);
+  if (result) result.textContent = "Loading tenant timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/tenants/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          tenant: item.tenant,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No tenant timeseries points found.");
+      if (result) result.textContent = "No hourly tenant points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.tenant,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostChannelTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costChannelTimeseriesForm");
+  const result = qs("#costChannelTimeseriesResult");
+  const tbody = qs("#costChannelTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_channels: String(raw.top_channels || "8"),
+  });
+  const channelFilter = String(raw.channel_filter || "").trim();
+  if (channelFilter) params.set("channel_filter", channelFilter);
+  if (result) result.textContent = "Loading channel timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/channels/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          channel: item.channel,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No channel timeseries points found.");
+      if (result) result.textContent = "No hourly channel points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.channel,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostCampaignTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costCampaignTimeseriesForm");
+  const result = qs("#costCampaignTimeseriesResult");
+  const tbody = qs("#costCampaignTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_campaigns: String(raw.top_campaigns || "8"),
+  });
+  const campaignFilter = String(raw.campaign_filter || "").trim();
+  if (campaignFilter) params.set("campaign_filter", campaignFilter);
+  if (result) result.textContent = "Loading campaign timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/campaigns/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          campaign: item.campaign,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No campaign timeseries points found.");
+      if (result) result.textContent = "No hourly campaign points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.campaign,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostBrandTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costBrandTimeseriesForm");
+  const result = qs("#costBrandTimeseriesResult");
+  const tbody = qs("#costBrandTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_brands: String(raw.top_brands || "8"),
+  });
+  const brandFilter = String(raw.brand_filter || "").trim();
+  if (brandFilter) params.set("brand_filter", brandFilter);
+  if (result) result.textContent = "Loading brand timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/brands/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          brand: item.brand,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No brand timeseries points found.");
+      if (result) result.textContent = "No hourly brand points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.brand,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostMarketTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costMarketTimeseriesForm");
+  const result = qs("#costMarketTimeseriesResult");
+  const tbody = qs("#costMarketTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_markets: String(raw.top_markets || "8"),
+  });
+  const marketFilter = String(raw.market_filter || "").trim();
+  if (marketFilter) params.set("market_filter", marketFilter);
+  if (result) result.textContent = "Loading market timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/markets/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          market: item.market,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No market timeseries points found.");
+      if (result) result.textContent = "No hourly market points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.market,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostSegmentTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costSegmentTimeseriesForm");
+  const result = qs("#costSegmentTimeseriesResult");
+  const tbody = qs("#costSegmentTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_segments: String(raw.top_segments || "8"),
+  });
+  const segmentFilter = String(raw.segment_filter || "").trim();
+  if (segmentFilter) params.set("segment_filter", segmentFilter);
+  if (result) result.textContent = "Loading segment timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/segments/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          segment: item.segment,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No segment timeseries points found.");
+      if (result) result.textContent = "No hourly segment points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.segment,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostAccountTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costAccountTimeseriesForm");
+  const result = qs("#costAccountTimeseriesResult");
+  const tbody = qs("#costAccountTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_accounts: String(raw.top_accounts || "8"),
+  });
+  const accountFilter = String(raw.account_filter || "").trim();
+  if (accountFilter) params.set("account_filter", accountFilter);
+  if (result) result.textContent = "Loading account timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/accounts/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          account: item.account,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No account timeseries points found.");
+      if (result) result.textContent = "No hourly account points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.account,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostOrgTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costOrgTimeseriesForm");
+  const result = qs("#costOrgTimeseriesResult");
+  const tbody = qs("#costOrgTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_orgs: String(raw.top_orgs || "8"),
+  });
+  const orgFilter = String(raw.org_filter || "").trim();
+  if (orgFilter) params.set("org_filter", orgFilter);
+  if (result) result.textContent = "Loading org timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/orgs/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          org: item.org,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No org timeseries points found.");
+      if (result) result.textContent = "No hourly org points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.org,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostCostCenterTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costCostCenterTimeseriesForm");
+  const result = qs("#costCostCenterTimeseriesResult");
+  const tbody = qs("#costCostCenterTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_cost_centers: String(raw.top_cost_centers || "8"),
+  });
+  const costCenterFilter = String(raw.cost_center_filter || "").trim();
+  if (costCenterFilter) params.set("cost_center_filter", costCenterFilter);
+  if (result) result.textContent = "Loading cost center timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/cost-centers/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          cost_center: item.cost_center,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No cost center timeseries points found.");
+      if (result) result.textContent = "No hourly cost center points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.cost_center,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostBusinessUnitTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costBusinessUnitTimeseriesForm");
+  const result = qs("#costBusinessUnitTimeseriesResult");
+  const tbody = qs("#costBusinessUnitTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_business_units: String(raw.top_business_units || "8"),
+  });
+  const businessUnitFilter = String(raw.business_unit_filter || "").trim();
+  if (businessUnitFilter) params.set("business_unit_filter", businessUnitFilter);
+  if (result) result.textContent = "Loading business unit timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/business-units/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          business_unit: item.business_unit,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No business unit timeseries points found.");
+      if (result) result.textContent = "No hourly business unit points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.business_unit,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostSiteTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costSiteTimeseriesForm");
+  const result = qs("#costSiteTimeseriesResult");
+  const tbody = qs("#costSiteTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_sites: String(raw.top_sites || "8"),
+  });
+  const siteFilter = String(raw.site_filter || "").trim();
+  if (siteFilter) params.set("site_filter", siteFilter);
+  if (result) result.textContent = "Loading site timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/sites/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          site: item.site,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No site timeseries points found.");
+      if (result) result.textContent = "No hourly site points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.site,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostSkuTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costSkuTimeseriesForm");
+  const result = qs("#costSkuTimeseriesResult");
+  const tbody = qs("#costSkuTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_skus: String(raw.top_skus || "8"),
+  });
+  const skuFilter = String(raw.sku_filter || "").trim();
+  if (skuFilter) params.set("sku_filter", skuFilter);
+  if (result) result.textContent = "Loading SKU timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/skus/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          sku: item.sku,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No SKU timeseries points found.");
+      if (result) result.textContent = "No hourly SKU points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.sku,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostLineTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costLineTimeseriesForm");
+  const result = qs("#costLineTimeseriesResult");
+  const tbody = qs("#costLineTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_lines: String(raw.top_lines || "8"),
+  });
+  const lineFilter = String(raw.line_filter || "").trim();
+  if (lineFilter) params.set("line_filter", lineFilter);
+  if (result) result.textContent = "Loading line timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/lines/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          line: item.line,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No line timeseries points found.");
+      if (result) result.textContent = "No hourly line points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.line,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostTierTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costTierTimeseriesForm");
+  const result = qs("#costTierTimeseriesResult");
+  const tbody = qs("#costTierTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_tiers: String(raw.top_tiers || "8"),
+  });
+  const tierFilter = String(raw.tier_filter || "").trim();
+  if (tierFilter) params.set("tier_filter", tierFilter);
+  if (result) result.textContent = "Loading tier timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/tiers/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          tier: item.tier,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No tier timeseries points found.");
+      if (result) result.textContent = "No hourly tier points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.tier,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostStageTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costStageTimeseriesForm");
+  const result = qs("#costStageTimeseriesResult");
+  const tbody = qs("#costStageTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_stages: String(raw.top_stages || "8"),
+  });
+  const stageFilter = String(raw.stage_filter || "").trim();
+  if (stageFilter) params.set("stage_filter", stageFilter);
+  if (result) result.textContent = "Loading stage timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/stages/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          stage: item.stage,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No stage timeseries points found.");
+      if (result) result.textContent = "No hourly stage points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.stage,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostPlatformTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costPlatformTimeseriesForm");
+  const result = qs("#costPlatformTimeseriesResult");
+  const tbody = qs("#costPlatformTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_platforms: String(raw.top_platforms || "8"),
+  });
+  const platformFilter = String(raw.platform_filter || "").trim();
+  if (platformFilter) params.set("platform_filter", platformFilter);
+  if (result) result.textContent = "Loading platform timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/platforms/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          platform: item.platform,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No platform timeseries points found.");
+      if (result) result.textContent = "No hourly platform points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.platform,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostDeviceTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costDeviceTimeseriesForm");
+  const result = qs("#costDeviceTimeseriesResult");
+  const tbody = qs("#costDeviceTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_devices: String(raw.top_devices || "8"),
+  });
+  const deviceFilter = String(raw.device_filter || "").trim();
+  if (deviceFilter) params.set("device_filter", deviceFilter);
+  if (result) result.textContent = "Loading device timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/devices/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          device: item.device,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No device timeseries points found.");
+      if (result) result.textContent = "No hourly device points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.device,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostClientTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costClientTimeseriesForm");
+  const result = qs("#costClientTimeseriesResult");
+  const tbody = qs("#costClientTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_clients: String(raw.top_clients || "8"),
+  });
+  const clientFilter = String(raw.client_filter || "").trim();
+  if (clientFilter) params.set("client_filter", clientFilter);
+  if (result) result.textContent = "Loading client timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/clients/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          client: item.client,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No client timeseries points found.");
+      if (result) result.textContent = "No hourly client points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.client,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostBrowserTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costBrowserTimeseriesForm");
+  const result = qs("#costBrowserTimeseriesResult");
+  const tbody = qs("#costBrowserTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_browsers: String(raw.top_browsers || "8"),
+  });
+  const browserFilter = String(raw.browser_filter || "").trim();
+  if (browserFilter) params.set("browser_filter", browserFilter);
+  if (result) result.textContent = "Loading browser timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/browsers/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          browser: item.browser,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No browser timeseries points found.");
+      if (result) result.textContent = "No hourly browser points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.browser,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostReleaseTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costReleaseTimeseriesForm");
+  const result = qs("#costReleaseTimeseriesResult");
+  const tbody = qs("#costReleaseTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_releases: String(raw.top_releases || "8"),
+  });
+  const releaseFilter = String(raw.release_filter || "").trim();
+  if (releaseFilter) params.set("release_filter", releaseFilter);
+  if (result) result.textContent = "Loading release timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/releases/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          release: item.release,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No release timeseries points found.");
+      if (result) result.textContent = "No hourly release points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.release,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostLocaleTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costLocaleTimeseriesForm");
+  const result = qs("#costLocaleTimeseriesResult");
+  const tbody = qs("#costLocaleTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_locales: String(raw.top_locales || "8"),
+  });
+  const localeFilter = String(raw.locale_filter || "").trim();
+  if (localeFilter) params.set("locale_filter", localeFilter);
+  if (result) result.textContent = "Loading locale timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/locales/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          locale: item.locale,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No locale timeseries points found.");
+      if (result) result.textContent = "No hourly locale points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.locale,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostCountryTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costCountryTimeseriesForm");
+  const result = qs("#costCountryTimeseriesResult");
+  const tbody = qs("#costCountryTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_countries: String(raw.top_countries || "8"),
+  });
+  const countryFilter = String(raw.country_filter || "").trim();
+  if (countryFilter) params.set("country_filter", countryFilter);
+  if (result) result.textContent = "Loading country timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/countries/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          country: item.country,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No country timeseries points found.");
+      if (result) result.textContent = "No hourly country points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.country,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostOsTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costOsTimeseriesForm");
+  const result = qs("#costOsTimeseriesResult");
+  const tbody = qs("#costOsTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_os: String(raw.top_os || "8"),
+  });
+  const filterValue = String(raw.os_filter || "").trim();
+  if (filterValue) params.set("os_filter", filterValue);
+  if (result) result.textContent = "Loading os timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/os/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          os: item.os,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No os timeseries points found.");
+      if (result) result.textContent = "No hourly os points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.os,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostTimezoneTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costTimezoneTimeseriesForm");
+  const result = qs("#costTimezoneTimeseriesResult");
+  const tbody = qs("#costTimezoneTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_timezones: String(raw.top_timezones || "8"),
+  });
+  const filterValue = String(raw.timezone_filter || "").trim();
+  if (filterValue) params.set("timezone_filter", filterValue);
+  if (result) result.textContent = "Loading timezone timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/timezones/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          timezone: item.timezone,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No timezone timeseries points found.");
+      if (result) result.textContent = "No hourly timezone points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.timezone,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostLanguageTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costLanguageTimeseriesForm");
+  const result = qs("#costLanguageTimeseriesResult");
+  const tbody = qs("#costLanguageTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_languages: String(raw.top_languages || "8"),
+  });
+  const filterValue = String(raw.language_filter || "").trim();
+  if (filterValue) params.set("language_filter", filterValue);
+  if (result) result.textContent = "Loading language timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/languages/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          language: item.language,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No language timeseries points found.");
+      if (result) result.textContent = "No hourly language points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.language,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostCityTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costCityTimeseriesForm");
+  const result = qs("#costCityTimeseriesResult");
+  const tbody = qs("#costCityTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_cities: String(raw.top_cities || "8"),
+  });
+  const filterValue = String(raw.city_filter || "").trim();
+  if (filterValue) params.set("city_filter", filterValue);
+  if (result) result.textContent = "Loading city timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/cities/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          city: item.city,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No city timeseries points found.");
+      if (result) result.textContent = "No hourly city points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.city,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostContinentTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costContinentTimeseriesForm");
+  const result = qs("#costContinentTimeseriesResult");
+  const tbody = qs("#costContinentTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_continents: String(raw.top_continents || "8"),
+  });
+  const filterValue = String(raw.continent_filter || "").trim();
+  if (filterValue) params.set("continent_filter", filterValue);
+  if (result) result.textContent = "Loading continent timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/continents/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          continent: item.continent,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No continent timeseries points found.");
+      if (result) result.textContent = "No hourly continent points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.continent,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostIspTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costIspTimeseriesForm");
+  const result = qs("#costIspTimeseriesResult");
+  const tbody = qs("#costIspTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_isps: String(raw.top_isps || "8"),
+  });
+  const filterValue = String(raw.isp_filter || "").trim();
+  if (filterValue) params.set("isp_filter", filterValue);
+  if (result) result.textContent = "Loading isp timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/isps/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          isp: item.isp,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No isp timeseries points found.");
+      if (result) result.textContent = "No hourly isp points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.isp,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostAsnTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costAsnTimeseriesForm");
+  const result = qs("#costAsnTimeseriesResult");
+  const tbody = qs("#costAsnTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_asns: String(raw.top_asns || "8"),
+  });
+  const filterValue = String(raw.asn_filter || "").trim();
+  if (filterValue) params.set("asn_filter", filterValue);
+  if (result) result.textContent = "Loading asn timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/asns/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          asn: item.asn,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No asn timeseries points found.");
+      if (result) result.textContent = "No hourly asn points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.asn,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostSdkTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costSdkTimeseriesForm");
+  const result = qs("#costSdkTimeseriesResult");
+  const tbody = qs("#costSdkTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_sdks: String(raw.top_sdks || "8"),
+  });
+  const filterValue = String(raw.sdk_filter || "").trim();
+  if (filterValue) params.set("sdk_filter", filterValue);
+  if (result) result.textContent = "Loading sdk timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/sdks/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          sdk: item.sdk,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No sdk timeseries points found.");
+      if (result) result.textContent = "No hourly sdk points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.sdk,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostFrameworkTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costFrameworkTimeseriesForm");
+  const result = qs("#costFrameworkTimeseriesResult");
+  const tbody = qs("#costFrameworkTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_frameworks: String(raw.top_frameworks || "8"),
+  });
+  const filterValue = String(raw.framework_filter || "").trim();
+  if (filterValue) params.set("framework_filter", filterValue);
+  if (result) result.textContent = "Loading framework timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/frameworks/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          framework: item.framework,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No framework timeseries points found.");
+      if (result) result.textContent = "No hourly framework points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.framework,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostRuntimeTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costRuntimeTimeseriesForm");
+  const result = qs("#costRuntimeTimeseriesResult");
+  const tbody = qs("#costRuntimeTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_runtimes: String(raw.top_runtimes || "8"),
+  });
+  const filterValue = String(raw.runtime_filter || "").trim();
+  if (filterValue) params.set("runtime_filter", filterValue);
+  if (result) result.textContent = "Loading runtime timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/runtimes/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          runtime: item.runtime,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No runtime timeseries points found.");
+      if (result) result.textContent = "No hourly runtime points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.runtime,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostLibraryTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costLibraryTimeseriesForm");
+  const result = qs("#costLibraryTimeseriesResult");
+  const tbody = qs("#costLibraryTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_libraries: String(raw.top_libraries || "8"),
+  });
+  const filterValue = String(raw.library_filter || "").trim();
+  if (filterValue) params.set("library_filter", filterValue);
+  if (result) result.textContent = "Loading library timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/libraries/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          library: item.library,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No library timeseries points found.");
+      if (result) result.textContent = "No hourly library points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.library,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostHostTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costHostTimeseriesForm");
+  const result = qs("#costHostTimeseriesResult");
+  const tbody = qs("#costHostTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_hosts: String(raw.top_hosts || "8"),
+  });
+  const filterValue = String(raw.host_filter || "").trim();
+  if (filterValue) params.set("host_filter", filterValue);
+  if (result) result.textContent = "Loading host timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/hosts/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          host: item.host,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No host timeseries points found.");
+      if (result) result.textContent = "No hourly host points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.host,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostDatacenterTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costDatacenterTimeseriesForm");
+  const result = qs("#costDatacenterTimeseriesResult");
+  const tbody = qs("#costDatacenterTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_datacenters: String(raw.top_datacenters || "8"),
+  });
+  const filterValue = String(raw.datacenter_filter || "").trim();
+  if (filterValue) params.set("datacenter_filter", filterValue);
+  if (result) result.textContent = "Loading datacenter timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/datacenters/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          datacenter: item.datacenter,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No datacenter timeseries points found.");
+      if (result) result.textContent = "No hourly datacenter points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.datacenter,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostAzTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costAzTimeseriesForm");
+  const result = qs("#costAzTimeseriesResult");
+  const tbody = qs("#costAzTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_azs: String(raw.top_azs || "8"),
+  });
+  const filterValue = String(raw.az_filter || "").trim();
+  if (filterValue) params.set("az_filter", filterValue);
+  if (result) result.textContent = "Loading az timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/azs/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          az: item.az,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No az timeseries points found.");
+      if (result) result.textContent = "No hourly az points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.az,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostEdgeTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costEdgeTimeseriesForm");
+  const result = qs("#costEdgeTimeseriesResult");
+  const tbody = qs("#costEdgeTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_edges: String(raw.top_edges || "8"),
+  });
+  const filterValue = String(raw.edge_filter || "").trim();
+  if (filterValue) params.set("edge_filter", filterValue);
+  if (result) result.textContent = "Loading edge timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/edges/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          edge: item.edge,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No edge timeseries points found.");
+      if (result) result.textContent = "No hourly edge points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.edge,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostColoTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costColoTimeseriesForm");
+  const result = qs("#costColoTimeseriesResult");
+  const tbody = qs("#costColoTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_colos: String(raw.top_colos || "8"),
+  });
+  const filterValue = String(raw.colo_filter || "").trim();
+  if (filterValue) params.set("colo_filter", filterValue);
+  if (result) result.textContent = "Loading colo timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/colos/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          colo: item.colo,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No colo timeseries points found.");
+      if (result) result.textContent = "No hourly colo points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.colo,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+
+
+
+
+async function loadCostClusterTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costClusterTimeseriesForm");
+  const result = qs("#costClusterTimeseriesResult");
+  const tbody = qs("#costClusterTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_clusters: String(raw.top_clusters || "8"),
+  });
+  const filterValue = String(raw.cluster_filter || "").trim();
+  if (filterValue) params.set("cluster_filter", filterValue);
+  if (result) result.textContent = "Loading cluster timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/clusters/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          cluster: item.cluster,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No cluster timeseries points found.");
+      if (result) result.textContent = "No hourly cluster points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.cluster,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostPodTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costPodTimeseriesForm");
+  const result = qs("#costPodTimeseriesResult");
+  const tbody = qs("#costPodTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_pods: String(raw.top_pods || "8"),
+  });
+  const filterValue = String(raw.pod_filter || "").trim();
+  if (filterValue) params.set("pod_filter", filterValue);
+  if (result) result.textContent = "Loading pod timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/pods/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          pod: item.pod,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No pod timeseries points found.");
+      if (result) result.textContent = "No hourly pod points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.pod,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostNamespaceTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costNamespaceTimeseriesForm");
+  const result = qs("#costNamespaceTimeseriesResult");
+  const tbody = qs("#costNamespaceTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_namespaces: String(raw.top_namespaces || "8"),
+  });
+  const filterValue = String(raw.namespace_filter || "").trim();
+  if (filterValue) params.set("namespace_filter", filterValue);
+  if (result) result.textContent = "Loading namespace timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/namespaces/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          namespace: item.namespace,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No namespace timeseries points found.");
+      if (result) result.textContent = "No hourly namespace points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.namespace,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostNodeTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costNodeTimeseriesForm");
+  const result = qs("#costNodeTimeseriesResult");
+  const tbody = qs("#costNodeTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_nodes: String(raw.top_nodes || "8"),
+  });
+  const filterValue = String(raw.node_filter || "").trim();
+  if (filterValue) params.set("node_filter", filterValue);
+  if (result) result.textContent = "Loading node timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/nodes/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          node: item.node,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No node timeseries points found.");
+      if (result) result.textContent = "No hourly node points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.node,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+
+async function loadCostToolTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costToolTimeseriesForm");
+  const result = qs("#costToolTimeseriesResult");
+  const tbody = qs("#costToolTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_tools: String(raw.top_tools || "8"),
+  });
+  const filterValue = String(raw.tool_filter || "").trim();
+  if (filterValue) params.set("tool_filter", filterValue);
+  if (result) result.textContent = "Loading tool timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/tools/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          tool: item.tool,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No tool timeseries points found.");
+      if (result) result.textContent = "No hourly tool points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.tool,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostWorkflowTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costWorkflowTimeseriesForm");
+  const result = qs("#costWorkflowTimeseriesResult");
+  const tbody = qs("#costWorkflowTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_workflows: String(raw.top_workflows || "8"),
+  });
+  const filterValue = String(raw.workflow_filter || "").trim();
+  if (filterValue) params.set("workflow_filter", filterValue);
+  if (result) result.textContent = "Loading workflow timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/workflows/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          workflow: item.workflow,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No workflow timeseries points found.");
+      if (result) result.textContent = "No hourly workflow points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.workflow,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostExperimentTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costExperimentTimeseriesForm");
+  const result = qs("#costExperimentTimeseriesResult");
+  const tbody = qs("#costExperimentTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_experiments: String(raw.top_experiments || "8"),
+  });
+  const filterValue = String(raw.experiment_filter || "").trim();
+  if (filterValue) params.set("experiment_filter", filterValue);
+  if (result) result.textContent = "Loading experiment timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/experiments/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          experiment: item.experiment,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No experiment timeseries points found.");
+      if (result) result.textContent = "No hourly experiment points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.experiment,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostVariantTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costVariantTimeseriesForm");
+  const result = qs("#costVariantTimeseriesResult");
+  const tbody = qs("#costVariantTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_variants: String(raw.top_variants || "8"),
+  });
+  const filterValue = String(raw.variant_filter || "").trim();
+  if (filterValue) params.set("variant_filter", filterValue);
+  if (result) result.textContent = "Loading variant timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/variants/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          variant: item.variant,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No variant timeseries points found.");
+      if (result) result.textContent = "No hourly variant points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.variant,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostDeploymentTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costDeploymentTimeseriesForm");
+  const result = qs("#costDeploymentTimeseriesResult");
+  const tbody = qs("#costDeploymentTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_deployments: String(raw.top_deployments || "8"),
+  });
+  const filterValue = String(raw.deployment_filter || "").trim();
+  if (filterValue) params.set("deployment_filter", filterValue);
+  if (result) result.textContent = "Loading deployment timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/deployments/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          deployment: item.deployment,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No deployment timeseries points found.");
+      if (result) result.textContent = "No hourly deployment points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.deployment,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostVersionTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costVersionTimeseriesForm");
+  const result = qs("#costVersionTimeseriesResult");
+  const tbody = qs("#costVersionTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_versions: String(raw.top_versions || "8"),
+  });
+  const filterValue = String(raw.version_filter || "").trim();
+  if (filterValue) params.set("version_filter", filterValue);
+  if (result) result.textContent = "Loading version timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/versions/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          version: item.version,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No version timeseries points found.");
+      if (result) result.textContent = "No hourly version points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.version,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostCanaryTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costCanaryTimeseriesForm");
+  const result = qs("#costCanaryTimeseriesResult");
+  const tbody = qs("#costCanaryTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_canaries: String(raw.top_canaries || "8"),
+  });
+  const filterValue = String(raw.canary_filter || "").trim();
+  if (filterValue) params.set("canary_filter", filterValue);
+  if (result) result.textContent = "Loading canary timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/canaries/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          canary: item.canary,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No canary timeseries points found.");
+      if (result) result.textContent = "No hourly canary points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.canary,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostShadowTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costShadowTimeseriesForm");
+  const result = qs("#costShadowTimeseriesResult");
+  const tbody = qs("#costShadowTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_shadows: String(raw.top_shadows || "8"),
+  });
+  const filterValue = String(raw.shadow_filter || "").trim();
+  if (filterValue) params.set("shadow_filter", filterValue);
+  if (result) result.textContent = "Loading shadow timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/shadows/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          shadow: item.shadow,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No shadow timeseries points found.");
+      if (result) result.textContent = "No hourly shadow points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.shadow,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostRolloutTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costRolloutTimeseriesForm");
+  const result = qs("#costRolloutTimeseriesResult");
+  const tbody = qs("#costRolloutTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_rollouts: String(raw.top_rollouts || "8"),
+  });
+  const filterValue = String(raw.rollout_filter || "").trim();
+  if (filterValue) params.set("rollout_filter", filterValue);
+  if (result) result.textContent = "Loading rollout timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/rollouts/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          rollout: item.rollout,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No rollout timeseries points found.");
+      if (result) result.textContent = "No hourly rollout points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.rollout,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostRouteTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costRouteTimeseriesForm");
+  const result = qs("#costRouteTimeseriesResult");
+  const tbody = qs("#costRouteTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_routes: String(raw.top_routes || "8"),
+  });
+  const filterValue = String(raw.route_filter || "").trim();
+  if (filterValue) params.set("route_filter", filterValue);
+  if (result) result.textContent = "Loading route timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/routes/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          route: item.route,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No route timeseries points found.");
+      if (result) result.textContent = "No hourly route points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.route,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostBatchTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costBatchTimeseriesForm");
+  const result = qs("#costBatchTimeseriesResult");
+  const tbody = qs("#costBatchTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_batches: String(raw.top_batches || "8"),
+  });
+  const filterValue = String(raw.batch_filter || "").trim();
+  if (filterValue) params.set("batch_filter", filterValue);
+  if (result) result.textContent = "Loading batch timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/batches/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          batch: item.batch,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No batch timeseries points found.");
+      if (result) result.textContent = "No hourly batch points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.batch,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostJobTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costJobTimeseriesForm");
+  const result = qs("#costJobTimeseriesResult");
+  const tbody = qs("#costJobTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_jobs: String(raw.top_jobs || "8"),
+  });
+  const filterValue = String(raw.job_filter || "").trim();
+  if (filterValue) params.set("job_filter", filterValue);
+  if (result) result.textContent = "Loading job timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/jobs/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          job: item.job,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No job timeseries points found.");
+      if (result) result.textContent = "No hourly job points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.job,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostQueueTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costQueueTimeseriesForm");
+  const result = qs("#costQueueTimeseriesResult");
+  const tbody = qs("#costQueueTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_queues: String(raw.top_queues || "8"),
+  });
+  const filterValue = String(raw.queue_filter || "").trim();
+  if (filterValue) params.set("queue_filter", filterValue);
+  if (result) result.textContent = "Loading queue timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/queues/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          queue: item.queue,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No queue timeseries points found.");
+      if (result) result.textContent = "No hourly queue points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.queue,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostTopicTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costTopicTimeseriesForm");
+  const result = qs("#costTopicTimeseriesResult");
+  const tbody = qs("#costTopicTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_topics: String(raw.top_topics || "8"),
+  });
+  const filterValue = String(raw.topic_filter || "").trim();
+  if (filterValue) params.set("topic_filter", filterValue);
+  if (result) result.textContent = "Loading topic timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/topics/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          topic: item.topic,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No topic timeseries points found.");
+      if (result) result.textContent = "No hourly topic points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.topic,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostPipelineTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costPipelineTimeseriesForm");
+  const result = qs("#costPipelineTimeseriesResult");
+  const tbody = qs("#costPipelineTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_pipelines: String(raw.top_pipelines || "8"),
+  });
+  const filterValue = String(raw.pipeline_filter || "").trim();
+  if (filterValue) params.set("pipeline_filter", filterValue);
+  if (result) result.textContent = "Loading pipeline timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/pipelines/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          pipeline: item.pipeline,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No pipeline timeseries points found.");
+      if (result) result.textContent = "No hourly pipeline points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.pipeline,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostRunTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costRunTimeseriesForm");
+  const result = qs("#costRunTimeseriesResult");
+  const tbody = qs("#costRunTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_runs: String(raw.top_runs || "8"),
+  });
+  const filterValue = String(raw.run_filter || "").trim();
+  if (filterValue) params.set("run_filter", filterValue);
+  if (result) result.textContent = "Loading run timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/runs/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          run: item.run,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No run timeseries points found.");
+      if (result) result.textContent = "No hourly run points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.run,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostWorkerTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costWorkerTimeseriesForm");
+  const result = qs("#costWorkerTimeseriesResult");
+  const tbody = qs("#costWorkerTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_workers: String(raw.top_workers || "8"),
+  });
+  const filterValue = String(raw.worker_filter || "").trim();
+  if (filterValue) params.set("worker_filter", filterValue);
+  if (result) result.textContent = "Loading worker timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/workers/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          worker: item.worker,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No worker timeseries points found.");
+      if (result) result.textContent = "No hourly worker points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.worker,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostSlotTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costSlotTimeseriesForm");
+  const result = qs("#costSlotTimeseriesResult");
+  const tbody = qs("#costSlotTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_slots: String(raw.top_slots || "8"),
+  });
+  const filterValue = String(raw.slot_filter || "").trim();
+  if (filterValue) params.set("slot_filter", filterValue);
+  if (result) result.textContent = "Loading slot timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/slots/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          slot: item.slot,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No slot timeseries points found.");
+      if (result) result.textContent = "No hourly slot points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.slot,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostTaskTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costTaskTimeseriesForm");
+  const result = qs("#costTaskTimeseriesResult");
+  const tbody = qs("#costTaskTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_tasks: String(raw.top_tasks || "8"),
+  });
+  const filterValue = String(raw.task_filter || "").trim();
+  if (filterValue) params.set("task_filter", filterValue);
+  if (result) result.textContent = "Loading task timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/tasks/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          task: item.task,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No task timeseries points found.");
+      if (result) result.textContent = "No hourly task points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.task,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostStepTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costStepTimeseriesForm");
+  const result = qs("#costStepTimeseriesResult");
+  const tbody = qs("#costStepTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_steps: String(raw.top_steps || "8"),
+  });
+  const filterValue = String(raw.step_filter || "").trim();
+  if (filterValue) params.set("step_filter", filterValue);
+  if (result) result.textContent = "Loading step timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/steps/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          step: item.step,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No step timeseries points found.");
+      if (result) result.textContent = "No hourly step points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.step,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostReplicaTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costReplicaTimeseriesForm");
+  const result = qs("#costReplicaTimeseriesResult");
+  const tbody = qs("#costReplicaTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_replicas: String(raw.top_replicas || "8"),
+  });
+  const filterValue = String(raw.replica_filter || "").trim();
+  if (filterValue) params.set("replica_filter", filterValue);
+  if (result) result.textContent = "Loading replica timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/replicas/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          replica: item.replica,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No replica timeseries points found.");
+      if (result) result.textContent = "No hourly replica points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.replica,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostShardTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costShardTimeseriesForm");
+  const result = qs("#costShardTimeseriesResult");
+  const tbody = qs("#costShardTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_shards: String(raw.top_shards || "8"),
+  });
+  const filterValue = String(raw.shard_filter || "").trim();
+  if (filterValue) params.set("shard_filter", filterValue);
+  if (result) result.textContent = "Loading shard timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/shards/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          shard: item.shard,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No shard timeseries points found.");
+      if (result) result.textContent = "No hourly shard points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.shard,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostPartitionTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costPartitionTimeseriesForm");
+  const result = qs("#costPartitionTimeseriesResult");
+  const tbody = qs("#costPartitionTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_partitions: String(raw.top_partitions || "8"),
+  });
+  const filterValue = String(raw.partition_filter || "").trim();
+  if (filterValue) params.set("partition_filter", filterValue);
+  if (result) result.textContent = "Loading partition timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/partitions/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          partition: item.partition,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No partition timeseries points found.");
+      if (result) result.textContent = "No hourly partition points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.partition,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostConsumerTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costConsumerTimeseriesForm");
+  const result = qs("#costConsumerTimeseriesResult");
+  const tbody = qs("#costConsumerTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_consumers: String(raw.top_consumers || "8"),
+  });
+  const filterValue = String(raw.consumer_filter || "").trim();
+  if (filterValue) params.set("consumer_filter", filterValue);
+  if (result) result.textContent = "Loading consumer timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/consumers/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          consumer: item.consumer,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No consumer timeseries points found.");
+      if (result) result.textContent = "No hourly consumer points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.consumer,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostProducerTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costProducerTimeseriesForm");
+  const result = qs("#costProducerTimeseriesResult");
+  const tbody = qs("#costProducerTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_producers: String(raw.top_producers || "8"),
+  });
+  const filterValue = String(raw.producer_filter || "").trim();
+  if (filterValue) params.set("producer_filter", filterValue);
+  if (result) result.textContent = "Loading producer timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/producers/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          producer: item.producer,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No producer timeseries points found.");
+      if (result) result.textContent = "No hourly producer points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.producer,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostGpuTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costGpuTimeseriesForm");
+  const result = qs("#costGpuTimeseriesResult");
+  const tbody = qs("#costGpuTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_gpus: String(raw.top_gpus || "8"),
+  });
+  const filterValue = String(raw.gpu_filter || "").trim();
+  if (filterValue) params.set("gpu_filter", filterValue);
+  if (result) result.textContent = "Loading gpu timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/gpus/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          gpu: item.gpu,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No gpu timeseries points found.");
+      if (result) result.textContent = "No hourly gpu points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.gpu,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostAcceleratorTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costAcceleratorTimeseriesForm");
+  const result = qs("#costAcceleratorTimeseriesResult");
+  const tbody = qs("#costAcceleratorTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_accelerators: String(raw.top_accelerators || "8"),
+  });
+  const filterValue = String(raw.accelerator_filter || "").trim();
+  if (filterValue) params.set("accelerator_filter", filterValue);
+  if (result) result.textContent = "Loading accelerator timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/accelerators/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          accelerator: item.accelerator,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No accelerator timeseries points found.");
+      if (result) result.textContent = "No hourly accelerator points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.accelerator,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostCellTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costCellTimeseriesForm");
+  const result = qs("#costCellTimeseriesResult");
+  const tbody = qs("#costCellTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_cells: String(raw.top_cells || "8"),
+  });
+  const filterValue = String(raw.cell_filter || "").trim();
+  if (filterValue) params.set("cell_filter", filterValue);
+  if (result) result.textContent = "Loading cell timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/cells/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          cell: item.cell,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No cell timeseries points found.");
+      if (result) result.textContent = "No hourly cell points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.cell,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostZoneTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costZoneTimeseriesForm");
+  const result = qs("#costZoneTimeseriesResult");
+  const tbody = qs("#costZoneTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_zones: String(raw.top_zones || "8"),
+  });
+  const filterValue = String(raw.zone_filter || "").trim();
+  if (filterValue) params.set("zone_filter", filterValue);
+  if (result) result.textContent = "Loading zone timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/zones/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          zone: item.zone,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No zone timeseries points found.");
+      if (result) result.textContent = "No hourly zone points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.zone,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostRackTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costRackTimeseriesForm");
+  const result = qs("#costRackTimeseriesResult");
+  const tbody = qs("#costRackTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_racks: String(raw.top_racks || "8"),
+  });
+  const filterValue = String(raw.rack_filter || "").trim();
+  if (filterValue) params.set("rack_filter", filterValue);
+  if (result) result.textContent = "Loading rack timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/racks/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          rack: item.rack,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No rack timeseries points found.");
+      if (result) result.textContent = "No hourly rack points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.rack,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostPoolTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costPoolTimeseriesForm");
+  const result = qs("#costPoolTimeseriesResult");
+  const tbody = qs("#costPoolTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_pools: String(raw.top_pools || "8"),
+  });
+  const filterValue = String(raw.pool_filter || "").trim();
+  if (filterValue) params.set("pool_filter", filterValue);
+  if (result) result.textContent = "Loading pool timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/pools/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          pool: item.pool,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No pool timeseries points found.");
+      if (result) result.textContent = "No hourly pool points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.pool,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostFleetTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costFleetTimeseriesForm");
+  const result = qs("#costFleetTimeseriesResult");
+  const tbody = qs("#costFleetTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_fleets: String(raw.top_fleets || "8"),
+  });
+  const filterValue = String(raw.fleet_filter || "").trim();
+  if (filterValue) params.set("fleet_filter", filterValue);
+  if (result) result.textContent = "Loading fleet timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/fleets/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          fleet: item.fleet,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No fleet timeseries points found.");
+      if (result) result.textContent = "No hourly fleet points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.fleet,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostLeaseTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costLeaseTimeseriesForm");
+  const result = qs("#costLeaseTimeseriesResult");
+  const tbody = qs("#costLeaseTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_leases: String(raw.top_leases || "8"),
+  });
+  const filterValue = String(raw.lease_filter || "").trim();
+  if (filterValue) params.set("lease_filter", filterValue);
+  if (result) result.textContent = "Loading lease timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/leases/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          lease: item.lease,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No lease timeseries points found.");
+      if (result) result.textContent = "No hourly lease points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.lease,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostQuotaTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costQuotaTimeseriesForm");
+  const result = qs("#costQuotaTimeseriesResult");
+  const tbody = qs("#costQuotaTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_quotas: String(raw.top_quotas || "8"),
+  });
+  const filterValue = String(raw.quota_filter || "").trim();
+  if (filterValue) params.set("quota_filter", filterValue);
+  if (result) result.textContent = "Loading quota timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/quotas/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          quota: item.quota,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No quota timeseries points found.");
+      if (result) result.textContent = "No hourly quota points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.quota,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostCapacityTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costCapacityTimeseriesForm");
+  const result = qs("#costCapacityTimeseriesResult");
+  const tbody = qs("#costCapacityTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_capacities: String(raw.top_capacities || "8"),
+  });
+  const filterValue = String(raw.capacity_filter || "").trim();
+  if (filterValue) params.set("capacity_filter", filterValue);
+  if (result) result.textContent = "Loading capacity timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/capacities/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          capacity: item.capacity,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No capacity timeseries points found.");
+      if (result) result.textContent = "No hourly capacity points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.capacity,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+
+async function loadCostReservationTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costReservationTimeseriesForm");
+  const result = qs("#costReservationTimeseriesResult");
+  const tbody = qs("#costReservationTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_reservations: String(raw.top_reservations || "8"),
+  });
+  const filterValue = String(raw.reservation_filter || "").trim();
+  if (filterValue) params.set("reservation_filter", filterValue);
+  if (result) result.textContent = "Loading reservation timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/reservations/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          reservation: item.reservation,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          total_tokens: point.total_tokens,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No reservation timeseries points found.");
+      if (result) result.textContent = "No hourly reservation points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.reservation,
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.total_tokens,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function _costRequestsQueryParams({ forExport = false } = {}) {
+  const form = qs("#costRequestsForm");
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    limit: String(forExport ? "1000" : raw.limit || "50"),
+  });
+  const userId = String(raw.user_id || "").trim();
+  const model = String(raw.model || "").trim();
+  const propertyKey = String(raw.property_key || "").trim();
+  const propertyValue = String(raw.property_value || "").trim();
+  const cacheHit = String(raw.cache_hit || "").trim();
+  const hasFeedback = String(raw.has_feedback || "").trim();
+  if (userId) params.set("user_id", userId);
+  if (model) params.set("model", model);
+  if (propertyKey) params.set("property_key", propertyKey);
+  if (propertyValue) params.set("property_value", propertyValue);
+  if (cacheHit === "true" || cacheHit === "false") params.set("cache_hit", cacheHit);
+  if (hasFeedback === "true" || hasFeedback === "false") params.set("has_feedback", hasFeedback);
+  return params;
+}
+
+async function loadCostRequests(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#costRequestsResult");
+  const tbody = qs("#costRequestsTable");
+  if (!tbody) return;
+  const params = _costRequestsQueryParams();
+  if (result) result.textContent = "Loading requests...";
+  setTableMessage(tbody, 7, "Loading...");
+  try {
+    const data = await api(`/cost/requests?${params.toString()}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) {
+      setTableMessage(tbody, 7, "No requests found.");
+      if (result) result.textContent = "No requests matched the selected filters.";
+      return;
+    }
+    tbody.textContent = "";
+    items.forEach((row) => {
+      const tokens = Number(row.input_tokens || 0) + Number(row.output_tokens || 0);
+      appendTableRow(tbody, [
+        row.request_id,
+        row.model_name,
+        row.user_id || "—",
+        row.cache_hit ? "hit" : "miss",
+        row.estimated_cost_cents,
+        tokens,
+        formatComplianceDate(row.timestamp),
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${items.length} request(s); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
     setTableMessage(tbody, 7, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function exportCostRequestsCsv() {
+  const result = qs("#costRequestsResult");
+  const params = _costRequestsQueryParams({ forExport: true });
+  const url = `${state.apiBase}/cost/requests/export?${params.toString()}`;
+  try {
+    const response = await fetch(url, { headers: ApiClient.buildHeaders(state) });
+    if (!response.ok) throw new Error(`Export failed (${response.status})`);
+    const text = await response.text();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    downloadTextFile(text, `cost-requests-${stamp}.csv`, "text/csv");
+    if (result) result.textContent = "Exported request CSV for the selected filters.";
+  } catch (err) {
+    if (result) result.textContent = `Export error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostSessions(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costSessionsForm");
+  const result = qs("#costSessionsResult");
+  const tbody = qs("#costSessionsTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    limit: String(raw.limit || "50"),
+  });
+  const pathPrefix = String(raw.path_prefix || "").trim();
+  if (pathPrefix) params.set("path_prefix", pathPrefix);
+  const propertyKey = String(raw.property_key || "").trim();
+  if (propertyKey) params.set("property_key", propertyKey);
+  const propertyValue = String(raw.property_value || "").trim();
+  if (propertyValue) params.set("property_value", propertyValue);
+  if (result) result.textContent = "Loading sessions...";
+  setTableMessage(tbody, 7, "Loading...");
+  try {
+    const data = await api(`/cost/sessions?${params.toString()}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) {
+      setTableMessage(tbody, 7, "No sessions found.");
+      if (result) result.textContent = "No sessions found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    items.forEach((row) => {
+      const tr = document.createElement("tr");
+      appendTableCell(tr, row.session_id);
+      appendTableCell(tr, row.session_path || "—");
+      appendTableCell(tr, row.session_name || "—");
+      appendTableCell(tr, row.event_count);
+      appendTableCell(tr, row.spend_cents);
+      appendTableCell(tr, formatComplianceDate(row.last_seen_at));
+      const actions = document.createElement("td");
+      actions.className = "cell-actions";
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "ghost";
+      openBtn.textContent = "Open";
+      openBtn.addEventListener("click", () => {
+        const drillForm = qs("#costDrilldownForm");
+        if (drillForm?.elements?.session_id) {
+          drillForm.elements.session_id.value = row.session_id || "";
+          if (drillForm.elements.drilldown_type) drillForm.elements.drilldown_type.value = "session";
+        }
+        loadCostDrilldown("session");
+      });
+      actions.appendChild(openBtn);
+      tr.appendChild(actions);
+      tbody.appendChild(tr);
+    });
+    if (result) {
+      result.textContent = `Loaded ${items.length} session(s); spend=${data.total_spend_cents ?? 0}¢, events=${data.total_event_count ?? 0}.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 7, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadCostSessionTimeseries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costSessionTimeseriesForm");
+  const result = qs("#costSessionTimeseriesResult");
+  const tbody = qs("#costSessionTimeseriesTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    top_sessions: String(raw.top_sessions || "8"),
+  });
+  const pathPrefix = String(raw.path_prefix || "").trim();
+  if (pathPrefix) params.set("path_prefix", pathPrefix);
+  if (result) result.textContent = "Loading session timeseries...";
+  setTableMessage(tbody, 5, "Loading...");
+  try {
+    const data = await api(`/cost/sessions/timeseries?${params.toString()}`);
+    const series = Array.isArray(data?.series) ? data.series : [];
+    const rows = [];
+    series.forEach((item) => {
+      const points = Array.isArray(item?.points) ? item.points : [];
+      const active = points.filter(
+        (point) => Number(point?.event_count || 0) > 0 || Number(point?.spend_cents || 0) > 0,
+      );
+      (active.length ? active : points.slice(-1)).forEach((point) => {
+        rows.push({
+          session_id: item.session_id,
+          session_path: item.session_path,
+          hour_start: point.hour_start,
+          event_count: point.event_count,
+          spend_cents: point.spend_cents,
+        });
+      });
+    });
+    if (!rows.length) {
+      setTableMessage(tbody, 5, "No session timeseries points found.");
+      if (result) result.textContent = "No hourly session points found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.slice(0, 200).forEach((row) => {
+      appendTableRow(tbody, [
+        row.session_id,
+        row.session_path || "—",
+        formatComplianceDate(row.hour_start),
+        row.event_count,
+        row.spend_cents,
+      ]);
+    });
+    if (result) {
+      result.textContent = `Loaded ${series.length} series (${rows.length} hour point(s)); spend=${data.total_spend_cents ?? 0}¢.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function flattenCostSessionTree(nodes, depth = 1, acc = []) {
+  (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+    const children = Array.isArray(node?.children) ? node.children : [];
+    acc.push({
+      path: node?.path || "",
+      depth,
+      session_count: node?.session_count ?? 0,
+      event_count: node?.event_count ?? 0,
+      spend_cents: node?.spend_cents ?? 0,
+      children_count: children.length,
+    });
+    if (children.length) flattenCostSessionTree(children, depth + 1, acc);
+  });
+  return acc;
+}
+
+async function loadCostSessionTree(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#costSessionTreeForm");
+  const result = qs("#costSessionTreeResult");
+  const tbody = qs("#costSessionTreeTable");
+  if (!tbody) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const params = new URLSearchParams({
+    window_hours: String(raw.window_hours || "24"),
+    max_depth: String(raw.max_depth || "4"),
+    limit: String(raw.limit || "50"),
+  });
+  const pathPrefix = String(raw.path_prefix || "").trim();
+  if (pathPrefix) params.set("path_prefix", pathPrefix);
+  if (result) result.textContent = "Loading session path tree...";
+  setTableMessage(tbody, 6, "Loading...");
+  try {
+    const data = await api(`/cost/sessions/tree?${params.toString()}`);
+    const rows = flattenCostSessionTree(data?.items || []);
+    if (!rows.length) {
+      setTableMessage(tbody, 6, "No path tree nodes found.");
+      if (result) result.textContent = "No session paths found for the selected window.";
+      return;
+    }
+    tbody.textContent = "";
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      const indent = Math.max(0, Number(row.depth || 1) - 1);
+      appendTableCell(tr, `${"  ".repeat(indent)}${row.path || "—"}`);
+      appendTableCell(tr, row.depth);
+      appendTableCell(tr, row.session_count);
+      appendTableCell(tr, row.event_count);
+      appendTableCell(tr, row.spend_cents);
+      appendTableCell(tr, row.children_count);
+      tbody.appendChild(tr);
+    });
+    if (result) {
+      result.textContent = `Loaded ${rows.length} path node(s); roots=${data.count ?? 0}, spend=${data.total_spend_cents ?? 0}¢, events=${data.total_event_count ?? 0}.`;
+    }
+  } catch (err) {
+    setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
   }
 }
 
@@ -20378,20 +31972,30 @@ async function loadCostDrilldown(kind) {
   }
 
   result.textContent = `Loading ${drilldownType} cost events for ${targetText}...`;
-  setTableMessage(tbody, 9, "Loading...");
+  setTableMessage(tbody, 11, "Loading...");
   try {
     const rows = await api(path);
     if (!rows?.length) {
-      setTableMessage(tbody, 9, "No cost events found.");
+      setTableMessage(tbody, 11, "No cost events found.");
       result.textContent = `No cost events found for ${targetText}.`;
       return;
     }
     tbody.textContent = "";
     rows.forEach((row) => {
+      let propertiesPreview = "--";
+      try {
+        const props = typeof row.properties_json === "string" ? JSON.parse(row.properties_json || "{}") : row.properties_json || {};
+        const keys = Object.keys(props || {}).filter((key) => props[key] != null && props[key] !== "");
+        propertiesPreview = keys.length ? keys.slice(0, 3).map((key) => `${key}=${props[key]}`).join(", ") : "--";
+      } catch (_err) {
+        propertiesPreview = "--";
+      }
       appendTableRow(tbody, [
         formatComplianceDate(row.timestamp),
         row.request_id,
         row.request_tag || "--",
+        row.cache_hit ? "HIT" : "—",
+        propertiesPreview,
         row.trace_id,
         row.model_name,
         row.endpoint_family,
@@ -20403,7 +32007,7 @@ async function loadCostDrilldown(kind) {
     result.textContent = `Loaded ${rows.length} ${drilldownType} cost events for ${targetText}.`;
     renderCostConsoleSummary();
   } catch (err) {
-    setTableMessage(tbody, 9, `Error: ${safeText(err.message)}`);
+    setTableMessage(tbody, 11, `Error: ${safeText(err.message)}`);
     result.textContent = `Error: ${safeText(err.message)}`;
   }
 }
@@ -21045,25 +32649,97 @@ async function loadRoutePriorityReadback(routePolicyId) {
   try {
     const query = buildQueryString({ request_tag: requestTag || null });
     const data = await api(`/gateway/routes/${encodeURIComponent(id)}/providers/priority${query}`);
-    form.elements.route_policy_id.value = id;
-    syncTenantSelectField(form.elements.tenant_id, data.tenant_id || "");
-    form.elements.environment.value = data.environment || "prod";
-    form.elements.request_tag.value = data.request_tag || requestTag || "";
-    form.elements.priority_order.value = data.priority_order || "[]";
-    setRoutePriorityChainFromJson(data.priority_order || "[]");
-    form.elements.global_timeout_ms.value = data.global_timeout_ms ?? 4500;
-    form.elements.max_fallback_hops.value = data.max_fallback_hops ?? 2;
-    if (form.elements.budget_limit_cents) form.elements.budget_limit_cents.value = data.budget_limit_cents ?? "";
-    if (form.elements.health_check_enabled) form.elements.health_check_enabled.value = String(Boolean(data.health_check_enabled));
-    updateRoutePriorityScopeLabel(data.request_tag || requestTag || "");
-    renderRoutePriorityReadback(data);
-    await loadRoutePriorityTimeline(null, id);
-    result.textContent = `Loaded provider priority for ${id}.`;
+    await applyRoutePriorityPayload(data, id, requestTag, "provider priority");
   } catch (err) {
     updateRoutePriorityScopeLabel("");
     result.textContent = `Error: ${safeText(err.message)}`;
     const table = qs("#routePriorityTable");
     if (table) setTableMessage(table, 3, `Error: ${safeText(err.message)}`);
+  }
+}
+
+async function applyRoutePriorityPayload(data, id, requestTag, sourceLabel) {
+  const form = qs("#routePriorityForm");
+  const result = qs("#routePriorityResult");
+  if (!form || !result || !data) return;
+  form.elements.route_policy_id.value = id;
+  syncTenantSelectField(form.elements.tenant_id, data.tenant_id || "");
+  form.elements.environment.value = data.environment || "prod";
+  form.elements.request_tag.value = data.request_tag || requestTag || "";
+  form.elements.priority_order.value = data.priority_order || "[]";
+  setRoutePriorityChainFromJson(data.priority_order || "[]");
+  form.elements.global_timeout_ms.value = data.global_timeout_ms ?? 4500;
+  form.elements.max_fallback_hops.value = data.max_fallback_hops ?? 2;
+  if (form.elements.budget_limit_cents) form.elements.budget_limit_cents.value = data.budget_limit_cents ?? "";
+  if (form.elements.health_check_enabled) form.elements.health_check_enabled.value = String(Boolean(data.health_check_enabled));
+  updateRoutePriorityScopeLabel(data.request_tag || requestTag || "");
+  renderRoutePriorityReadback(data);
+  await loadRoutePriorityTimeline(null, id);
+  result.textContent = `Loaded ${sourceLabel} for ${id}.`;
+}
+
+async function loadRouteFallbacks(routePolicyId) {
+  const form = qs("#routePriorityForm");
+  const result = qs("#routePriorityResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const id = String(routePolicyId || raw.route_policy_id || "").trim();
+  const requestTag = String(raw.request_tag || "").trim();
+  if (!id) {
+    result.textContent = "Route policy ID is required to load fallbacks.";
+    return;
+  }
+  result.textContent = `Loading fallbacks for ${id}...`;
+  try {
+    const query = buildQueryString({ request_tag: requestTag || null });
+    const data = await api(`/gateway/routes/${encodeURIComponent(id)}/fallbacks${query}`);
+    await applyRoutePriorityPayload(data, id, requestTag, "fallbacks (/fallbacks)");
+  } catch (err) {
+    updateRoutePriorityScopeLabel("");
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveRouteFallbacks() {
+  const form = qs("#routePriorityForm");
+  const result = qs("#routePriorityResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  routePriorityChainRows = collectRoutePriorityChainFromDom("#routePriorityChainTable");
+  let priorityOrderJson = String(raw.priority_order || "[]").trim();
+  try {
+    priorityOrderJson = serializeRoutePriorityOrder(routePriorityChainRows);
+    form.elements.priority_order.value = priorityOrderJson;
+    setRoutePriorityValidationMessage(`Valid chain with ${routePriorityChainRows.length} target(s).`, true);
+  } catch (err) {
+    setRoutePriorityValidationMessage(safeText(err.message));
+    result.textContent = `Error: ${safeText(err.message)}`;
+    return;
+  }
+  const routePolicyId = String(raw.route_policy_id || "").trim();
+  if (!routePolicyId) {
+    result.textContent = "Route policy ID is required.";
+    return;
+  }
+  try {
+    const data = await api(`/gateway/routes/${encodeURIComponent(routePolicyId)}/fallbacks`, {
+      method: "PUT",
+      body: JSON.stringify({
+        tenant_id: String(raw.tenant_id || "").trim(),
+        environment: String(raw.environment || "prod").trim(),
+        request_tag: String(raw.request_tag || "").trim() || null,
+        priority_order: priorityOrderJson,
+        global_timeout_ms: Number(raw.global_timeout_ms || 4500),
+        max_fallback_hops: Number(raw.max_fallback_hops || 2),
+        budget_limit_cents: String(raw.budget_limit_cents || "").trim() ? Number(raw.budget_limit_cents) : null,
+        health_check_enabled: String(raw.health_check_enabled || "false") === "true",
+      }),
+    });
+    await applyRoutePriorityPayload(data, data.route_policy_id || routePolicyId, data.request_tag || raw.request_tag || "", "fallbacks (/fallbacks)");
+    result.textContent = `Saved fallbacks for ${safeText(data.route_policy_id || routePolicyId)} via PUT /fallbacks.`;
+    await loadRoutePolicies();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
   }
 }
 
@@ -21355,8 +33031,73 @@ async function invalidateGatewayCache(evt) {
     });
     result.textContent = `Cache invalidation ${safeText(data.status)}; matched ${safeText(data.matching_policies)} policies and ${safeText(data.requested_keys)} explicit keys.`;
     await loadGatewayCacheHealth();
+    await loadGatewayCacheEntries();
   } catch (err) {
     result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function renderGatewayCacheEntries() {
+  const table = qs("#gatewayCacheEntriesTable");
+  if (!table) return;
+  if (!gatewayCacheEntryRows.length) {
+    setTableMessage(table, 9, "No cache entries found.");
+    return;
+  }
+  table.textContent = "";
+  gatewayCacheEntryRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Click to fill invalidate form with this fingerprint";
+    tr.addEventListener("click", () => {
+      const invalidateForm = qs("#gatewayCacheInvalidateForm");
+      if (invalidateForm?.elements?.cache_keys) {
+        invalidateForm.elements.cache_keys.value = JSON.stringify([row.request_fingerprint].filter(Boolean));
+      }
+      if (invalidateForm?.elements?.reason && !String(invalidateForm.elements.reason.value || "").trim()) {
+        invalidateForm.elements.reason.value = `invalidate entry ${row.cache_entry_id || ""}`.trim();
+      }
+    });
+    appendTableCell(tr, row.cache_entry_id);
+    appendTableCell(tr, row.cache_policy_id);
+    appendTableCell(tr, row.request_fingerprint);
+    appendTableCell(tr, row.tenant_id);
+    appendTableCell(tr, row.environment);
+    appendTableCell(tr, row.cache_mode);
+    appendTableCell(tr, row.match_score ?? "--");
+    appendTableCell(tr, formatComplianceDate(row.ttl_expires_at));
+    appendTableCell(tr, row.status);
+    table.appendChild(tr);
+  });
+}
+
+async function loadGatewayCacheEntries(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayCacheEntryFilters");
+  const result = qs("#gatewayCacheEntriesResult");
+  const table = qs("#gatewayCacheEntriesTable");
+  if (!table) return;
+  const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  const query = buildQueryString({
+    tenant_id: raw.tenant_id,
+    cache_policy_id: raw.cache_policy_id,
+    status: raw.status || "active",
+    limit: raw.limit || 50,
+    offset: raw.offset || 0,
+  });
+  setTableMessage(table, 9, "Loading...");
+  if (result) result.textContent = "Loading cache entries...";
+  try {
+    const rows = await api(`/gateway/cache/entries${query}`, {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    gatewayCacheEntryRows = Array.isArray(rows) ? rows : [];
+    renderGatewayCacheEntries();
+    if (result) result.textContent = `Loaded ${gatewayCacheEntryRows.length} cache entries.`;
+  } catch (err) {
+    gatewayCacheEntryRows = [];
+    renderGatewayCacheEntries();
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
   }
 }
 
@@ -21539,9 +33280,7 @@ function renderGatewayNotificationChannelConfigTable(channels) {
     tr.appendChild(document.createElement("td")).appendChild(envSelect);
     tr.appendChild(wrapTableInputCell(createGatewayVectorStoreTextInput("from_address", channel.from_address || "")));
     tr.appendChild(
-      wrapTableInputCell(
-        createGatewayVectorStoreTextInput("credential_binding_id", channel.credential_binding_id || "", "bind-…"),
-      ),
+      wrapTableInputCell(createGatewayCredentialBindingSelect("credential_binding_id", channel.credential_binding_id || "")),
     );
     tr.appendChild(wrapTableInputCell(createGatewayVectorStoreTextInput("api_base_url", channel.api_base_url || "", "https://…")));
     tr.appendChild(
@@ -21788,6 +33527,53 @@ function renderGatewayVectorStoreConfigTable(stores) {
     tr.appendChild(actions);
     table.appendChild(tr);
   });
+}
+
+function createGatewayCredentialBindingSelect(field, selectedValue = "") {
+  const select = document.createElement("select");
+  select.dataset.field = field;
+  select.setAttribute("data-credential-binding-select", "true");
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "Select credential binding…";
+  select.appendChild(empty);
+  const current = String(selectedValue || "").trim();
+  if (current) {
+    const keep = document.createElement("option");
+    keep.value = current;
+    keep.textContent = `${current} (loading…)`;
+    keep.selected = true;
+    select.appendChild(keep);
+  }
+  void (async () => {
+    try {
+      const rows = await api("/providers/credential-bindings?status=active&limit=200", {
+        headers: { "X-Actor-Role": "Auditor" },
+      });
+      const options = (Array.isArray(rows) ? rows : []).filter((row) => row?.binding_id);
+      select.textContent = "";
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = options.length ? "Select credential binding…" : "No bindings — create in Providers";
+      select.appendChild(none);
+      options.forEach((row) => {
+        const option = document.createElement("option");
+        option.value = row.binding_id;
+        option.textContent = `${row.binding_name || row.binding_id}${row.credential_plane ? ` · ${row.credential_plane}` : ""}`;
+        select.appendChild(option);
+      });
+      if (current && !options.some((row) => row.binding_id === current)) {
+        const orphan = document.createElement("option");
+        orphan.value = current;
+        orphan.textContent = `${current} (saved)`;
+        select.appendChild(orphan);
+      }
+      select.value = current || "";
+    } catch {
+      /* keep loading/saved option */
+    }
+  })();
+  return select;
 }
 
 function createGatewayVectorStoreTextInput(field, value, placeholder) {
@@ -23366,8 +35152,18 @@ async function runPlaygroundPrompt(evt) {
 
     let completion = "";
     let inferenceTraceId = "";
+    const playgroundEnvironment = String(
+      raw.environment || state.environmentProfile || "dev",
+    )
+      .trim()
+      .toLowerCase() || "dev";
     try {
-      const inference = await appendPlaygroundInferenceResponse(streamLines, promptText, selectedModel, "dev");
+      const inference = await appendPlaygroundInferenceResponse(
+        streamLines,
+        promptText,
+        selectedModel,
+        playgroundEnvironment === "local" ? "dev" : playgroundEnvironment,
+      );
       completion = String(inference?.completion || "").trim();
       inferenceTraceId = resolvePlaygroundInferenceTraceId(inference?.data, data.run_id);
       data.model_response = completion;
@@ -23390,6 +35186,7 @@ async function runPlaygroundPrompt(evt) {
       runId: data.run_id,
       responseText: completion,
       traceId: inferenceTraceId,
+      environment: playgroundEnvironment === "local" ? "dev" : playgroundEnvironment,
       silent: true,
     });
     await loadPlaygroundRunFeedback(data.run_id);
@@ -23442,13 +35239,14 @@ async function runBenchmark(evt) {
     return;
   }
   const estimate = await fetchBenchmarkCostEstimateForConfirm(formValues);
-  const approved = window.confirm(
+  const approved = await operatorConfirm(
     buildBenchmarkScanConfirmMessage({
       actionLabel: `Run benchmark suite "${formValues.benchmark_suite}"`,
       estimate,
       agentId,
       environment: formValues.environment,
     }),
+    { title: "Run benchmark", okLabel: "Run", danger: formValues.environment === "prod" },
   );
   if (!approved) {
     if (result) result.textContent = "Benchmark run canceled.";
@@ -23487,13 +35285,14 @@ async function runScan(evt) {
     return;
   }
   const estimate = await fetchScanCostEstimateForConfirm(formValues);
-  const approved = window.confirm(
+  const approved = await operatorConfirm(
     buildBenchmarkScanConfirmMessage({
       actionLabel: `Run ${formValues.scan_type} scan`,
       estimate,
       agentId,
       environment: formValues.environment,
     }),
+    { title: "Run scan", okLabel: "Run", danger: formValues.environment === "prod" },
   );
   if (!approved) {
     if (result) result.textContent = "Scan run canceled.";
@@ -23940,6 +35739,9 @@ async function loadRouteInputDataPolicy(evt) {
     form.elements.mask_token.value = data.mask_token || "[REDACTED]";
     form.elements.data_classes.value = data.data_classes || "[]";
     form.elements.block_patterns.value = data.block_patterns || "[]";
+    if (form.elements.prompt_injection_mode) {
+      form.elements.prompt_injection_mode.value = data.prompt_injection_mode || "inherit";
+    }
     result.textContent = `Loaded input data policy for ${routePolicyId}.`;
   } catch (err) {
     result.textContent = `Error: ${safeText(err.message)}`;
@@ -23981,6 +35783,7 @@ async function saveRouteInputDataPolicy(evt) {
         mask_token: String(raw.mask_token || "[REDACTED]").trim(),
         data_classes: JSON.stringify(dataClasses),
         block_patterns: JSON.stringify(blockPatterns),
+        prompt_injection_mode: String(raw.prompt_injection_mode || "inherit").trim() || "inherit",
       }),
     });
     result.textContent = `Saved input data policy for ${routePolicyId}.`;
@@ -25224,12 +37027,14 @@ function renderRetentionPoliciesTable(rows) {
     editButton.addEventListener("click", () => {
       const form = qs("#retentionPolicyForm");
       if (!form) return;
+      if (form.elements.policy_id) form.elements.policy_id.value = row.policy_id || "";
       form.elements.data_class.value = row.data_class || "";
       form.elements.jurisdiction.value = row.jurisdiction || "";
       form.elements.retention_days.value = row.retention_days ?? "";
       form.elements.deletion_mode.value = row.deletion_mode || "soft_delete";
       form.elements.legal_hold_supported.value = String(Boolean(row.legal_hold_supported));
-      setComplianceText("#retentionPolicyResult", `Loaded ${row.data_class} / ${row.jurisdiction} into the form.`);
+      if (form.elements.status) form.elements.status.value = row.status || "active";
+      setComplianceText("#retentionPolicyResult", `Loaded ${row.data_class} / ${row.jurisdiction} (${safeText(row.policy_id)}) into the form.`);
     });
 
     [
@@ -25543,17 +37348,38 @@ async function saveRetentionPolicy(evt) {
 
   result.textContent = `Saving retention policy for ${dataClass}/${jurisdiction}...`;
   try {
-    await api("/compliance/retention/policies", {
-      method: "POST",
-      body: JSON.stringify({
-        data_class: dataClass,
-        jurisdiction,
-        retention_days: Number(raw.retention_days || 365),
-        deletion_mode: String(raw.deletion_mode || "soft_delete").trim(),
-        legal_hold_supported: String(raw.legal_hold_supported || "true") === "true",
-      }),
-    });
-    result.textContent = `Saved retention policy for ${dataClass}/${jurisdiction}.`;
+    const policyId = String(raw.policy_id || "").trim();
+    const retentionDays = Number(raw.retention_days || 365);
+    const deletionMode = String(raw.deletion_mode || "soft_delete").trim();
+    const legalHoldSupported = String(raw.legal_hold_supported || "true") === "true";
+    const status = String(raw.status || "active").trim() || "active";
+    if (policyId) {
+      await api(`/compliance/retention/policies/${encodeURIComponent(policyId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          retention_days: retentionDays,
+          deletion_mode: deletionMode,
+          legal_hold_supported: legalHoldSupported,
+          status,
+        }),
+      });
+      result.textContent = `Updated retention policy ${safeText(policyId)} (${dataClass}/${jurisdiction}).`;
+    } else {
+      const created = await api("/compliance/retention/policies", {
+        method: "POST",
+        body: JSON.stringify({
+          data_class: dataClass,
+          jurisdiction,
+          retention_days: retentionDays,
+          deletion_mode: deletionMode,
+          legal_hold_supported: legalHoldSupported,
+        }),
+      });
+      if (form.elements.policy_id && created?.policy_id) {
+        form.elements.policy_id.value = created.policy_id;
+      }
+      result.textContent = `Saved retention policy for ${dataClass}/${jurisdiction}.`;
+    }
     await loadRetentionPolicies();
   } catch (err) {
     result.textContent = `Error: ${safeText(err.message)}`;
@@ -25895,6 +37721,37 @@ async function evaluateObservabilitySiemRules(evt) {
     if (tbody) setTableMessage(tbody, 5, `Error: ${safeText(err.message)}`);
     if (result) result.textContent = `Evaluate error: ${safeText(err.message)}`;
     throw err;
+  }
+}
+
+async function exportCostEventsCsv() {
+  const form = qs("#costTimeseriesForm");
+  const summary = qs("#costTimeseriesSummary");
+  const dimension = normalizeSpendBreakdownDimension(form?.elements?.dimension?.value || "all");
+  const windowHours = Number(form?.elements?.window_hours?.value || 24) || 24;
+  const scopeFilter = String(form?.elements?.scope_filter?.value || "").trim();
+  const propertyKey = String(form?.elements?.property_key?.value || "").trim();
+  const propertyValue = String(form?.elements?.property_value?.value || "").trim();
+  const params = new URLSearchParams();
+  params.set("dimension", dimension);
+  params.set("window_hours", String(Math.max(1, Math.min(windowHours, 24 * 30))));
+  params.set("limit", "1000");
+  if (scopeFilter) params.set("scope_filter", scopeFilter);
+  if (propertyKey) params.set("property_key", propertyKey);
+  if (propertyValue) params.set("property_value", propertyValue);
+  const url = `${state.apiBase}/cost/export?${params.toString()}`;
+  try {
+    const response = await fetch(url, { headers: ApiClient.buildHeaders(state) });
+    if (!response.ok) throw new Error(`Export failed (${response.status})`);
+    const text = await response.text();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    downloadTextFile(text, `cost-export-${dimension}-${stamp}.csv`, "text/csv");
+    if (summary) {
+      const propNote = propertyKey ? ` property=${propertyKey}` : "";
+      summary.textContent = `Exported cost CSV for ${dimension} (${windowHours}h)${propNote}.`;
+    }
+  } catch (err) {
+    if (summary) summary.textContent = `Export error: ${safeText(err.message)}`;
   }
 }
 
@@ -26600,7 +38457,11 @@ async function loadDirectoryUsers(searchOverride) {
       statusToggleBtn.addEventListener("click", async () => {
         const result = qs("#directoryUserResult");
         const actionLabel = isInactive ? "Enable" : "Disable";
-        if (!window.confirm(`${actionLabel} directory user ${row.user_id}?`)) return;
+        if (!(await operatorConfirm(`${actionLabel} directory user ${row.user_id}?`, {
+          title: `${actionLabel} directory user`,
+          okLabel: actionLabel,
+          danger: !isInactive,
+        }))) return;
         try {
           const outcome = await toggleDirectoryUserStatus(row.user_id, isInactive);
           if (result) result.textContent = `${actionLabel}d user ${row.user_id} (${outcome}).`;
@@ -27576,6 +39437,22 @@ async function disableBasicAuthTemporary() {
   }
 }
 
+async function tickBasicAuthExpire() {
+  const result = qs("#basicAuthResult") || qs("#sessionGovernanceResult");
+  if (result) result.textContent = "Running break-glass expire tick...";
+  try {
+    const data = await api("/auth/basic/config/expire-tick", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (result) {
+      result.textContent = `Expire tick complete · disabled ${safeText(data?.disabled_count ?? 0)} stale break-glass window(s).`;
+    }
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function registerAgent() {
   const result = qs("#agentRegisterResult");
   const payload = readRegisterAgentPayload();
@@ -28217,11 +40094,25 @@ function editBrowserRiskPolicy(pJson) {
 }
 
 async function deleteBrowserRiskPolicy(policyId, name) {
-  if (!confirm(`Delete policy "${name}"?`)) return;
+  const approved = await operatorConfirm(`Delete policy "${name}"?`, {
+    title: "Delete risk policy",
+    okLabel: "Delete",
+    danger: true,
+  });
+  if (!approved) return;
   try {
     await api(`/browser/risk-policies/${encodeURIComponent(policyId)}`, { method: "DELETE" });
     await loadBrowserRiskPolicies();
-  } catch (err) { alert(`Error: ${err.message}`); }
+    if (typeof UiKit !== "undefined" && UiKit.showToast) {
+      UiKit.showToast("Risk policy deleted", "success", 1800);
+    }
+  } catch (err) {
+    if (typeof UiKit !== "undefined" && UiKit.showToast) {
+      UiKit.showToast(`Error: ${err.message}`, "error", 2800);
+    } else {
+      alert(`Error: ${err.message}`);
+    }
+  }
 }
 
 async function saveBrowserRiskPolicy(evt) {
@@ -28404,6 +40295,134 @@ function bindBrowserSecurityEvents() {
 // ── End GuardBridge ────────────────────────────────────────────────────────────
 
 function bindEvents() {
+  let goChord = null;
+  let goChordTimer = null;
+
+  const closeShortcutsOverlay = () => {
+    const overlay = qs("#shortcutsOverlay");
+    if (overlay) overlay.hidden = true;
+  };
+
+  const openShortcutsOverlay = () => {
+    const overlay = qs("#shortcutsOverlay");
+    if (!overlay) return;
+    overlay.hidden = false;
+    qs("#shortcutsClose")?.focus();
+    if (typeof UiKit !== "undefined" && typeof UiKit.announce === "function") {
+      UiKit.announce("Keyboard shortcuts opened");
+    }
+  };
+
+  document.addEventListener("keydown", (evt) => {
+    const overlay = qs("#shortcutsOverlay");
+    const confirmOverlay = qs("#confirmOverlay");
+    if (overlay && !overlay.hidden && typeof UiKit !== "undefined" && UiKit.trapFocus) {
+      UiKit.trapFocus(overlay, evt);
+    }
+
+    const tag = String(evt.target?.tagName || "").toLowerCase();
+    const isTypingTarget =
+      tag === "input" ||
+      tag === "textarea" ||
+      tag === "select" ||
+      Boolean(evt.target?.isContentEditable);
+    const modalOpen = (overlay && !overlay.hidden) || (confirmOverlay && !confirmOverlay.hidden);
+
+    if (evt.key === "/" && !evt.shiftKey && !evt.metaKey && !evt.ctrlKey && !evt.altKey && !isTypingTarget && !modalOpen) {
+      const search = qs("#globalSearchInput") || qs("#sidebarGlobalSearchInput");
+      if (search) {
+        evt.preventDefault();
+        search.focus();
+        search.select?.();
+      }
+      return;
+    }
+
+    if (evt.key === "." && !evt.metaKey && !evt.ctrlKey && !evt.altKey && !isTypingTarget && !modalOpen) {
+      const viewRoot = qs(`#${currentActiveView}`) || document.querySelector(".view.active");
+      const pageSearch =
+        viewRoot?.querySelector("[data-view-search-input], .view-page-search-input") ||
+        viewRoot?.querySelector(".table-search-input, [data-table-search-input]");
+      if (pageSearch) {
+        evt.preventDefault();
+        pageSearch.focus();
+        pageSearch.select?.();
+        pageSearch.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      return;
+    }
+
+    if ((evt.key === "?" || (evt.key === "/" && evt.shiftKey)) && !isTypingTarget && !evt.metaKey && !evt.ctrlKey && !evt.altKey && !(confirmOverlay && !confirmOverlay.hidden)) {
+      evt.preventDefault();
+      if (overlay?.hidden === false) closeShortcutsOverlay();
+      else openShortcutsOverlay();
+      return;
+    }
+
+    if (evt.key === "[" && !isTypingTarget && !evt.metaKey && !evt.ctrlKey && !evt.altKey && !modalOpen) {
+      if (window.innerWidth > 1080) {
+        evt.preventDefault();
+        toggleSidebarRail();
+      }
+      return;
+    }
+
+    if (evt.key === "]" && !isTypingTarget && !evt.metaKey && !evt.ctrlKey && !evt.altKey && !modalOpen) {
+      evt.preventDefault();
+      const filter = qs("#sidebarNavFilter");
+      if (filter) filter.value = "";
+      filterSidebarNav("");
+      collapseNavGroupsToActive();
+      return;
+    }
+
+    if (evt.key === "\\" && !isTypingTarget && !evt.metaKey && !evt.ctrlKey && !evt.altKey && !modalOpen) {
+      const filter = qs("#sidebarNavFilter");
+      const shell = qs(".app-shell");
+      if (filter && window.innerWidth > 1080 && !shell?.classList.contains("sidebar-rail")) {
+        evt.preventDefault();
+        filter.focus();
+        filter.select?.();
+      }
+      return;
+    }
+
+    if (!isTypingTarget && !evt.metaKey && !evt.ctrlKey && !evt.altKey && !modalOpen) {
+      const key = String(evt.key || "").toLowerCase();
+      if (goChord === "g") {
+        window.clearTimeout(goChordTimer);
+        goChord = null;
+        const map = { o: "overview", f: "orchestration", p: "playground", r: "routing-gateway", c: "compliance", a: "audit", b: "benchmark-scan" };
+        if (map[key]) {
+          evt.preventDefault();
+          void switchView(map[key]);
+          return;
+        }
+      } else if (key === "g") {
+        goChord = "g";
+        window.clearTimeout(goChordTimer);
+        goChordTimer = window.setTimeout(() => {
+          goChord = null;
+        }, 900);
+      }
+    }
+
+    if (evt.key === "Escape") {
+      hideAllGlobalSearchPanels();
+      closeShortcutsOverlay();
+      const feedbackPanel = qs("#operatorFeedbackPanel");
+      if (feedbackPanel && !feedbackPanel.hidden) {
+        feedbackPanel.hidden = true;
+      }
+    }
+  });
+
+  qs("#shortcutsHelpButton")?.addEventListener("click", openShortcutsOverlay);
+  qs("#shortcutsClose")?.addEventListener("click", closeShortcutsOverlay);
+  qs("#shortcutsOverlay")?.addEventListener("click", (evt) => {
+    if (evt.target === qs("#shortcutsOverlay")) closeShortcutsOverlay();
+  });
+
   document.addEventListener("change", (evt) => {
     const target = evt.target;
     if (!(target instanceof HTMLSelectElement)) return;
@@ -28415,33 +40434,154 @@ function bindEvents() {
     btn.addEventListener("click", () => switchView(btn.dataset.view));
   });
 
-  qsa(".quick-start-chip").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const viewName = btn.dataset.view;
-      const scrollTarget = btn.dataset.scrollTarget;
-      const gatewayTab = btn.dataset.gatewayConsoleTab;
-      if (viewName) await switchView(viewName);
+  document.addEventListener("click", (event) => {
+    const btn = event.target.closest?.(".quick-start-chip");
+    if (!btn) return;
+    // Gateway ops chips inside Cursor hub use data-gateway-ops-tab, not data-view.
+    if (btn.dataset.gatewayOpsTab && !btn.dataset.view) return;
+    const viewName = btn.dataset.view;
+    if (!viewName) return;
+    event.preventDefault();
+    const scrollTarget = btn.dataset.scrollTarget;
+    const gatewayTab = btn.dataset.gatewayConsoleTab;
+    const consoleTab = btn.dataset.consoleTab;
+    void (async () => {
+      try {
+        await switchView(viewName);
+      } catch (err) {
+        console.error("Failed to open view", viewName, err);
+        return;
+      }
       const scroll = () => {
-        if (scrollTarget) {
-          const target = qs(`#${scrollTarget}`);
-          if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
+        if (!scrollTarget) return;
+        const target = qs(`#${scrollTarget}`);
+        if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
       };
       if (gatewayTab) {
         window.setTimeout(() => {
           activateGatewayConsoleTab(gatewayTab);
           scroll();
         }, 150);
+      } else if (consoleTab && viewName === "orchestration") {
+        window.setTimeout(() => {
+          qs(`#orchestration [data-console-tab="${consoleTab}"]`)?.click();
+          scroll();
+        }, 150);
       } else {
         scroll();
       }
-    });
+    })();
+  });
+
+  qs("#overviewOrchestrationSummary")?.addEventListener("click", (event) => {
+    const stat = event.target.closest?.(".flow-platform-stat.is-clickable");
+    if (!stat?.dataset?.view) return;
+    void openOrchestrationConsoleTab(stat.dataset.consoleTab || "studio");
+  });
+  qs("#overviewOrchestrationSummary")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const stat = event.target.closest?.(".flow-platform-stat.is-clickable");
+    if (!stat?.dataset?.view) return;
+    event.preventDefault();
+    void openOrchestrationConsoleTab(stat.dataset.consoleTab || "studio");
   });
 
   const sidebarToggle = qs("#sidebarToggle");
   if (sidebarToggle) {
     sidebarToggle.addEventListener("click", toggleSidebar);
   }
+
+  const sidebarRailToggle = qs("#sidebarRailToggle");
+  if (sidebarRailToggle) {
+    sidebarRailToggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleSidebarRail();
+    });
+    let preferRail = false;
+    try {
+      preferRail = localStorage.getItem(SIDEBAR_RAIL_STORAGE_KEY) === "1";
+    } catch {
+      preferRail = false;
+    }
+    if (preferRail && window.innerWidth > 1080) setSidebarRail(true);
+  }
+
+  qs("#sidebarPlaneSummary")?.addEventListener("click", (event) => {
+    const shell = qs(".app-shell");
+    if (!shell?.classList.contains("sidebar-rail")) return;
+    event.preventDefault();
+    setSidebarRail(false);
+    const panel = qs("#sidebarPlanePanel");
+    if (panel) panel.open = true;
+  });
+
+  const navFilter = qs("#sidebarNavFilter");
+  if (navFilter) {
+    navFilter.addEventListener("input", () => {
+      filterSidebarNav(navFilter.value);
+    });
+    navFilter.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        navFilter.value = "";
+        filterSidebarNav("");
+        navFilter.blur();
+      }
+    });
+  }
+  qs("#navCollapseAll")?.addEventListener("click", () => {
+    if (navFilter) navFilter.value = "";
+    qsa("#sidebarNavList .nav-item, #sidebarNavList .nav-group, #sidebarNavList .nav-section-kicker").forEach((el) => {
+      el.classList.remove("nav-filter-hidden");
+    });
+    const emptyEl = qs("#sidebarNavFilterEmpty");
+    if (emptyEl) emptyEl.hidden = true;
+    syncNavGroupCounts();
+    qsa("[data-nav-group]").forEach((group) => {
+      setNavGroupExpanded(group, false);
+      refreshNavGroupActiveMeta(group);
+    });
+  });
+  qs("#navExpandActive")?.addEventListener("click", () => {
+    if (navFilter) navFilter.value = "";
+    qsa("#sidebarNavList .nav-item, #sidebarNavList .nav-group, #sidebarNavList .nav-section-kicker").forEach((el) => {
+      el.classList.remove("nav-filter-hidden");
+    });
+    const emptyEl = qs("#sidebarNavFilterEmpty");
+    if (emptyEl) emptyEl.hidden = true;
+    syncNavGroupCounts();
+    collapseNavGroupsToActive();
+  });
+  qs("#navExpandAll")?.addEventListener("click", () => {
+    if (navFilter) navFilter.value = "";
+    qsa("#sidebarNavList .nav-item, #sidebarNavList .nav-group, #sidebarNavList .nav-section-kicker").forEach((el) => {
+      el.classList.remove("nav-filter-hidden");
+    });
+    const emptyEl = qs("#sidebarNavFilterEmpty");
+    if (emptyEl) emptyEl.hidden = true;
+    syncNavGroupCounts();
+    expandAllNavGroups();
+  });
+
+  qs("#sidebarNavPinnedList")?.addEventListener("click", (evt) => {
+    const chip = evt.target?.closest?.(".nav-quick-chip[data-view]");
+    if (chip) void switchView(chip.dataset.view);
+  });
+  qs("#sidebarNavRecentList")?.addEventListener("click", (evt) => {
+    const chip = evt.target?.closest?.(".nav-quick-chip[data-view]");
+    if (chip) void switchView(chip.dataset.view);
+  });
+
+  qsa("#sidebarNav .nav-item[data-view]").forEach((item) => {
+    item.addEventListener("dblclick", () => {
+      const shell = qs(".app-shell");
+      if (shell?.classList.contains("sidebar-rail")) {
+        setSidebarRail(false);
+        expandNavGroupForView(item.dataset.view, { accordion: true });
+      }
+    });
+  });
 
   document.addEventListener("click", (evt) => {
     const sidebar = qs("#sidebar");
@@ -28455,18 +40595,112 @@ function bindEvents() {
 
   window.addEventListener("resize", () => {
     if (window.innerWidth > 1080) closeSidebar();
+    if (window.innerWidth <= 1080) {
+      const shell = qs(".app-shell");
+      if (shell?.classList.contains("sidebar-rail")) setSidebarRail(false);
+    }
   });
 
   qsa("[data-nav-group]").forEach((group) => {
     const toggle = group.querySelector(".nav-group-toggle");
     const submenu = group.querySelector(".nav-submenu");
     if (!toggle || !submenu) return;
+
+    if (!toggle.id) {
+      toggle.id = `nav-toggle-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    if (!submenu.id) {
+      submenu.id = `${toggle.id}-menu`;
+    }
+    toggle.setAttribute("aria-controls", submenu.id);
+
+    const setExpanded = (expanded) => {
+      if (expanded) {
+        qsa("[data-nav-group]").forEach((other) => {
+          setNavGroupExpanded(other, other === group);
+        });
+      } else {
+        setNavGroupExpanded(group, false);
+      }
+    };
+
     toggle.addEventListener("click", () => {
-      const willExpand = submenu.hidden;
-      submenu.hidden = !willExpand;
-      toggle.setAttribute("aria-expanded", willExpand ? "true" : "false");
+      setExpanded(submenu.hidden);
+    });
+
+    toggle.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setExpanded(true);
+        const first = submenu.querySelector(".nav-item");
+        first?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setExpanded(false);
+      } else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setExpanded(submenu.hidden);
+      }
+    });
+
+    submenu.addEventListener("keydown", (event) => {
+      const items = Array.from(submenu.querySelectorAll(".nav-item"));
+      if (!items.length) return;
+      const index = items.indexOf(document.activeElement);
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        items[(index + 1 + items.length) % items.length]?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        if (index <= 0) {
+          toggle.focus();
+          return;
+        }
+        items[index - 1]?.focus();
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        items[0]?.focus();
+      } else if (event.key === "End") {
+        event.preventDefault();
+        items[items.length - 1]?.focus();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        setExpanded(false);
+        toggle.focus();
+      }
     });
   });
+
+  // Start minimized: only expand the group that owns the active view.
+  expandNavGroupForView(
+    qsa(".nav-item.active").find((btn) => btn.dataset.view)?.dataset.view || "overview",
+    { accordion: true },
+  );
+  ensureNavItemEnhancements();
+  refreshNavQuickStrips();
+
+  const navRoot = qs("#sidebarNav");
+  if (navRoot) {
+    navRoot.addEventListener("keydown", (event) => {
+      if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+      const focusable = Array.from(
+        navRoot.querySelectorAll(".nav-item:not([hidden]), .nav-group-toggle"),
+      ).filter((el) => {
+        const submenu = el.closest(".nav-submenu");
+        return !submenu || !submenu.hidden;
+      });
+      const index = focusable.indexOf(document.activeElement);
+      if (index < 0) return;
+      if (document.activeElement?.classList.contains("nav-group-toggle")) return;
+      if (document.activeElement?.closest(".nav-submenu")) return;
+      event.preventDefault();
+      const next =
+        event.key === "ArrowDown"
+          ? focusable[(index + 1) % focusable.length]
+          : focusable[(index - 1 + focusable.length) % focusable.length];
+      next?.focus();
+    });
+  }
 
   const themeToggle = qs("#themeToggle");
   if (themeToggle) {
@@ -28474,6 +40708,15 @@ function bindEvents() {
       applyTheme(state.theme === "dark" ? "light" : "dark");
     });
   }
+
+  const densityToggle = qs("#densityToggle");
+  if (densityToggle) {
+    densityToggle.addEventListener("click", () => {
+      applyDensity(state.density === "compact" ? "comfortable" : "compact");
+    });
+  }
+
+  bindScrollTopFab();
 
   qs("#saveContext").addEventListener("click", async () => {
     const statusTarget = qs("#healthStatus");
@@ -28527,47 +40770,64 @@ function bindEvents() {
   qs("#probeProfiles").addEventListener("click", probeProfiles);
 
   qs("#refreshAll").addEventListener("click", async () => {
-    await Promise.allSettled([
-      loadOverview(),
-      renderRuntimeConfigTable(),
-    ]);
-    const refreshCurrentView = async () => {
-      switch (currentActiveView) {
-        case "discovery":
-          await loadDiscoveryConsole({ force: true });
-          break;
-        case "cost":
-          await loadCostConsole({ force: true });
-          break;
-        case "observability":
-          await loadObservabilityConsole({ force: true });
-          break;
-        case "compliance":
-          await loadComplianceWorkspace();
-          break;
-        case "browser-security":
-          await loadBrowserSecurityConsole({ refreshAll: true, force: true });
-          break;
-        case "security":
-          await loadSecurityConsole();
-          break;
-        case "audit":
-          await loadAudit();
-          break;
-        case "agentic":
-          await loadAgenticConsole();
-          break;
-        case "providers":
-          await loadProviderConsole();
-          break;
-        case "modules":
-          await loadModulesConsole();
-          break;
-        default:
-          break;
+    const refreshBtn = qs("#refreshAll");
+    const runRefresh = async () => {
+      await Promise.allSettled([
+        loadOverview(),
+        renderRuntimeConfigTable(),
+      ]);
+      const refreshCurrentView = async () => {
+        switch (currentActiveView) {
+          case "discovery":
+            await loadDiscoveryConsole({ force: true });
+            break;
+          case "cost":
+            await loadCostConsole({ force: true });
+            break;
+          case "observability":
+            await loadObservabilityConsole({ force: true });
+            break;
+          case "compliance":
+            await loadComplianceWorkspace();
+            break;
+          case "browser-security":
+            await loadBrowserSecurityConsole({ refreshAll: true, force: true });
+            break;
+          case "security":
+            await loadSecurityConsole();
+            break;
+          case "audit":
+            await loadAudit();
+            break;
+          case "agentic":
+            await loadAgenticConsole();
+            break;
+          case "providers":
+            await loadProviderConsole();
+            break;
+          case "modules":
+            await loadModulesConsole();
+            break;
+          default:
+            break;
+        }
+      };
+      await refreshCurrentView();
+      if (typeof UiKit !== "undefined" && UiKit.showToast) {
+        UiKit.showToast("Console data refreshed", "success", 2200);
       }
+      markViewRefreshed("Refreshed");
     };
-    await refreshCurrentView();
+    if (typeof UiKit !== "undefined" && UiKit.withBusy) {
+      if (UiKit.setShellProgress) UiKit.setShellProgress(true);
+      try {
+        await UiKit.withBusy(refreshBtn, runRefresh, "Refreshing…");
+      } finally {
+        if (UiKit.setShellProgress) UiKit.setShellProgress(false);
+      }
+    } else {
+      await runRefresh();
+    }
   });
 
   qs("#loadRuntimeConfigs").addEventListener("click", renderRuntimeConfigTable);
@@ -28645,8 +40905,7 @@ function bindEvents() {
   bindDiscoveryAgentsSearch();
   qs("#refreshAuditConsole")?.addEventListener("click", () => void loadAudit());
   qs("#refreshAgentsConsole")?.addEventListener("click", () => {
-    void loadAgentConfigs();
-    renderAgentsConsoleSummary();
+    void renderAgentConfigTable().then(() => renderAgentsConsoleSummary());
   });
   qs("#refreshBenchmarkScanConsole")?.addEventListener("click", () => {
     void refreshBenchmarkScanAgentOptions();
@@ -28675,7 +40934,11 @@ function bindEvents() {
     void loadGatewayConfiguredModels();
     void loadGatewayTunnelConfig();
   });
-  qs("#refreshPlaygroundConsole")?.addEventListener("click", () => renderPlaygroundConsoleSummary());
+  qs("#refreshPlaygroundConsole")?.addEventListener("click", () => {
+    void Promise.all([loadPlaygroundRuns(), loadPlaygroundTestSets()])
+      .catch(() => null)
+      .then(() => renderPlaygroundConsoleSummary());
+  });
   qs("#refreshAgenticConsole")?.addEventListener("click", () => {
     void loadAgenticConsole();
   });
@@ -28693,6 +40956,48 @@ function bindEvents() {
   });
   qs("#loadOverviewUiCoverage")?.addEventListener("click", () => {
     void loadOverviewUiCoverage();
+  });
+  qs("#overviewPlaneReconcile")?.addEventListener("click", () => {
+    void forceOverviewPlaneReconcile();
+  });
+  qs("#overviewPlaneAttest")?.addEventListener("click", () => {
+    void attestOverviewPlaneLeadership();
+  });
+  qs("#overviewPlaneVerifyAttest")?.addEventListener("click", () => {
+    void verifyOverviewPlaneAttestation();
+  });
+  qs("#overviewPlaneEvaluateGate")?.addEventListener("click", () => {
+    void evaluateOverviewPlaneReleaseGate();
+  });
+  qs("#overviewPlaneExportAttest")?.addEventListener("click", () => {
+    exportOverviewPlaneAttestation();
+  });
+  qs("#overviewPlaneExportEvidence")?.addEventListener("click", () => {
+    void exportOverviewPlaneEvidencePack();
+  });
+  qs("#overviewPlaneMintEvidence")?.addEventListener("click", () => {
+    void mintOverviewPlaneEvidencePack();
+  });
+  qs("#overviewPlaneExportSnapshot")?.addEventListener("click", () => {
+    void exportOverviewPlaneSnapshot();
+  });
+  qs("#overviewPlaneMintSnapshot")?.addEventListener("click", () => {
+    void mintOverviewPlaneSnapshot();
+  });
+  qs("#overviewPlaneApplySnapshot")?.addEventListener("click", () => {
+    void applyOverviewPlaneSnapshot();
+  });
+  qs("#overviewPlaneFreeze")?.addEventListener("click", () => {
+    void setOverviewPlaneFreeze(true);
+  });
+  qs("#overviewPlaneUnfreeze")?.addEventListener("click", () => {
+    void setOverviewPlaneFreeze(false);
+  });
+  qs("#overviewPlaneRollbackLkg")?.addEventListener("click", () => {
+    void rollbackOverviewPlaneLkg();
+  });
+  qs("#overviewPlanePeerAck")?.addEventListener("click", () => {
+    void ackOverviewPlanePublished();
   });
   qs("#openComplianceUiCoverage")?.addEventListener("click", () => {
     switchView("compliance");
@@ -28764,6 +41069,11 @@ function bindEvents() {
   qs("#supportedModelForm").addEventListener("submit", saveSupportedModel);
   qs("#supportedModelApprovalForm").addEventListener("submit", submitSupportedModelApproval);
   qs("#supportedModelFilters").addEventListener("submit", loadSupportedModels);
+  qs("#seedTrendingSupportedModels")?.addEventListener("click", seedTrendingSupportedModels);
+  qs("#seedBedrockSupportedModels")?.addEventListener("click", seedTrendingSupportedModels);
+  qs("#seedAzureSupportedModels")?.addEventListener("click", seedTrendingSupportedModels);
+  qs("#seedGcpSupportedModels")?.addEventListener("click", seedTrendingSupportedModels);
+  qs("#seedAllCloudSupportedModels")?.addEventListener("click", seedTrendingSupportedModels);
   qs("#platformModelAvailabilityFilters")?.addEventListener("submit", loadPlatformModelAvailabilityRegister);
   qs("#loadPlatformModelAvailability")?.addEventListener("click", loadPlatformModelAvailabilityRegister);
   qs("#resetSupportedModelForm").addEventListener("click", () => resetSupportedModelForm("Form reset."));
@@ -28777,8 +41087,14 @@ function bindEvents() {
   qs("#loadCostModelCatalog")?.addEventListener("click", loadCostModelCatalog);
   qs("#costPricingCalculatorForm")?.addEventListener("submit", calculateCostPricing);
   qs("#costSpendTrackForm")?.addEventListener("submit", trackSpendEvent);
+  qs("#costEventFeedbackForm")?.addEventListener("submit", submitCostEventFeedback);
+  qs("#lookupCostEventFeedback")?.addEventListener("click", lookupCostEventFeedback);
   qs("#loadGatewayAnalytics")?.addEventListener("click", loadGatewayAnalytics);
   qs("#gatewayAnalyticsFilters")?.addEventListener("submit", loadGatewayAnalytics);
+  qs("#loadLeadershipQbrSnapshot")?.addEventListener("click", loadLeadershipQbrSnapshot);
+  qs("#loadLeadershipDrillRuns")?.addEventListener("click", () => void loadLeadershipDrillRuns());
+  qs("#leadershipDrillRunForm")?.addEventListener("submit", (evt) => void createLeadershipDrillRun(evt));
+  qs("#leadershipDrillRunFilters")?.addEventListener("submit", (evt) => void loadLeadershipDrillRuns(evt));
   qs("#costBudgetForm")?.addEventListener("submit", saveCostBudgetPolicy);
   qs('#costBudgetForm select[name="scope_type"]')?.addEventListener("change", () => {
     syncScopeIdPicker("#costBudgetForm", "scope_type", "scope_id", "costBudgetScopeIdList");
@@ -28787,6 +41103,19 @@ function bindEvents() {
     syncScopeIdPicker("#costBudgetForm", "scope_type", "scope_id", "costBudgetScopeIdList");
   });
   qs("#loadCostBudgets")?.addEventListener("click", loadCostBudgetPolicies);
+  qs("#exportCostBudgets")?.addEventListener("click", exportCostBudgetsCsv);
+  qs("#costBudgetListFilters")?.addEventListener("submit", (evt) => {
+    evt.preventDefault();
+    void loadCostBudgetPolicies();
+  });
+  qs("#costBudgetDecisionFilters")?.addEventListener("click", (evt) => {
+    const chip = evt.target?.closest?.("[data-cost-budget-filter]");
+    if (!chip) return;
+    costBudgetDecisionFilter = String(chip.getAttribute("data-cost-budget-filter") || "all");
+    syncCostBudgetFilterChips();
+    renderCostBudgetRows();
+  });
+  syncCostBudgetFilterChips();
   qs("#resetCostBudgetForm")?.addEventListener("click", () => resetCostBudgetForm("Budget form reset."));
   qs("#costPolicyEvalForm")?.addEventListener("submit", evaluateCostPolicy);
   qs('#costPolicyEvalForm select[name="scope_type"]')?.addEventListener("change", () => {
@@ -28796,7 +41125,42 @@ function bindEvents() {
     syncScopeIdPicker("#costPolicyEvalForm", "scope_type", "scope_id", "costPolicyEvalScopeIdList");
   });
   qs("#costLimitEvalForm")?.addEventListener("submit", evaluateCostLimits);
+  qs("#costLimitUseMemberships")?.addEventListener("click", useCostLimitDirectoryMemberships);
+  qs("#costHierarchyForm")?.addEventListener("submit", loadCostHierarchy);
+  qs("#loadCostHierarchy")?.addEventListener("click", () => {
+    void loadCostHierarchy();
+  });
+  qs("#exportCostHierarchy")?.addEventListener("click", exportCostHierarchyJson);
+  qs("#copyCostHierarchyExplain")?.addEventListener("click", () => {
+    void copyCostHierarchyExplain();
+  });
+  qs("#costHierarchyFilters")?.addEventListener("click", (evt) => {
+    const chip = evt.target?.closest?.("[data-cost-hierarchy-filter]");
+    if (!chip) return;
+    costHierarchyDecisionFilter = String(chip.getAttribute("data-cost-hierarchy-filter") || "all");
+    syncCostHierarchyFilterChips();
+    renderCostHierarchyRows(latestCostHierarchyData);
+  });
+  syncCostHierarchyFilterChips();
+  qs("#refreshCostHierarchyAlerts")?.addEventListener("click", () => {
+    void loadCostHierarchyAlerts();
+  });
+  qs("#costOverviewHierarchyAlertsForm")?.addEventListener("submit", loadCostHierarchyAlerts);
+  qs("#costOverviewAlertFilters")?.addEventListener("click", (evt) => {
+    const chip = evt.target?.closest?.("[data-cost-overview-alert-filter]");
+    if (!chip) return;
+    costOverviewAlertDecisionFilter = String(chip.getAttribute("data-cost-overview-alert-filter") || "all");
+    document.querySelectorAll("[data-cost-overview-alert-filter]").forEach((node) => {
+      node.classList.toggle(
+        "is-active",
+        String(node.getAttribute("data-cost-overview-alert-filter") || "all") === costOverviewAlertDecisionFilter
+      );
+    });
+    void loadCostHierarchyAlerts();
+  });
+  qs("#costAnomaliesForm")?.addEventListener("submit", loadCostAnomalies);
   qs("#loadCostAnomalies")?.addEventListener("click", loadCostAnomalies);
+  qs("#exportCostAnomalies")?.addEventListener("click", exportCostAnomaliesCsv);
   bindCostWorkspaceSelect();
   bindCostPricingSectionSelect();
   bindCostBudgetSectionSelect();
@@ -28809,6 +41173,238 @@ function bindEvents() {
   qs("#loadCostDrilldown")?.addEventListener("click", () => loadCostDrilldown());
   qs("#loadCostSessionDrilldown")?.addEventListener("click", () => loadCostDrilldown("session"));
   qs("#loadCostAgentDrilldown")?.addEventListener("click", () => loadCostDrilldown("agent"));
+  qs("#costSessionsForm")?.addEventListener("submit", loadCostSessions);
+  qs("#costSessionTimeseriesForm")?.addEventListener("submit", loadCostSessionTimeseries);
+  qs("#loadCostSessionTimeseries")?.addEventListener("click", loadCostSessionTimeseries);
+  qs("#loadCostSessions")?.addEventListener("click", loadCostSessions);
+  qs("#costUsersForm")?.addEventListener("submit", loadCostUsers);
+  qs("#loadCostUsers")?.addEventListener("click", loadCostUsers);
+  qs("#costUserTimeseriesForm")?.addEventListener("submit", loadCostUserTimeseries);
+  qs("#loadCostUserTimeseries")?.addEventListener("click", loadCostUserTimeseries);
+  qs("#costModelStatsForm")?.addEventListener("submit", loadCostModelStats);
+  qs("#loadCostModelStats")?.addEventListener("click", loadCostModelStats);
+  qs("#costModelTimeseriesForm")?.addEventListener("submit", loadCostModelTimeseries);
+  qs("#loadCostModelTimeseries")?.addEventListener("click", loadCostModelTimeseries);
+  qs("#costTagTimeseriesForm")?.addEventListener("submit", loadCostTagTimeseries);
+  qs("#loadCostTagTimeseries")?.addEventListener("click", loadCostTagTimeseries);
+  qs("#costEndpointTimeseriesForm")?.addEventListener("submit", loadCostEndpointTimeseries);
+  qs("#loadCostEndpointTimeseries")?.addEventListener("click", loadCostEndpointTimeseries);
+  qs("#costAgentTimeseriesForm")?.addEventListener("submit", loadCostAgentTimeseries);
+  qs("#loadCostAgentTimeseries")?.addEventListener("click", loadCostAgentTimeseries);
+  qs("#costEnvironmentTimeseriesForm")?.addEventListener("submit", loadCostEnvironmentTimeseries);
+  qs("#loadCostEnvironmentTimeseries")?.addEventListener("click", loadCostEnvironmentTimeseries);
+  qs("#costOwnerTimeseriesForm")?.addEventListener("submit", loadCostOwnerTimeseries);
+  qs("#loadCostOwnerTimeseries")?.addEventListener("click", loadCostOwnerTimeseries);
+  qs("#costCurrencyTimeseriesForm")?.addEventListener("submit", loadCostCurrencyTimeseries);
+  qs("#loadCostCurrencyTimeseries")?.addEventListener("click", loadCostCurrencyTimeseries);
+  qs("#costProviderTimeseriesForm")?.addEventListener("submit", loadCostProviderTimeseries);
+  qs("#loadCostProviderTimeseries")?.addEventListener("click", loadCostProviderTimeseries);
+  qs("#costTeamTimeseriesForm")?.addEventListener("submit", loadCostTeamTimeseries);
+  qs("#loadCostTeamTimeseries")?.addEventListener("click", loadCostTeamTimeseries);
+  qs("#costGroupTimeseriesForm")?.addEventListener("submit", loadCostGroupTimeseries);
+  qs("#loadCostGroupTimeseries")?.addEventListener("click", loadCostGroupTimeseries);
+  qs("#costProjectTimeseriesForm")?.addEventListener("submit", loadCostProjectTimeseries);
+  qs("#loadCostProjectTimeseries")?.addEventListener("click", loadCostProjectTimeseries);
+  qs("#costFeedbackTimeseriesForm")?.addEventListener("submit", loadCostFeedbackTimeseries);
+  qs("#loadCostFeedbackTimeseries")?.addEventListener("click", loadCostFeedbackTimeseries);
+  qs("#costSessionPathTimeseriesForm")?.addEventListener("submit", loadCostSessionPathTimeseries);
+  qs("#loadCostSessionPathTimeseries")?.addEventListener("click", loadCostSessionPathTimeseries);
+  qs("#costSessionNameTimeseriesForm")?.addEventListener("submit", loadCostSessionNameTimeseries);
+  qs("#loadCostSessionNameTimeseries")?.addEventListener("click", loadCostSessionNameTimeseries);
+  qs("#costPromptIdTimeseriesForm")?.addEventListener("submit", loadCostPromptIdTimeseries);
+  qs("#loadCostPromptIdTimeseries")?.addEventListener("click", loadCostPromptIdTimeseries);
+  qs("#costApplicationTimeseriesForm")?.addEventListener("submit", loadCostApplicationTimeseries);
+  qs("#loadCostApplicationTimeseries")?.addEventListener("click", loadCostApplicationTimeseries);
+  qs("#costCustomerTimeseriesForm")?.addEventListener("submit", loadCostCustomerTimeseries);
+  qs("#loadCostCustomerTimeseries")?.addEventListener("click", loadCostCustomerTimeseries);
+  qs("#costDepartmentTimeseriesForm")?.addEventListener("submit", loadCostDepartmentTimeseries);
+  qs("#loadCostDepartmentTimeseries")?.addEventListener("click", loadCostDepartmentTimeseries);
+  qs("#costFeatureTimeseriesForm")?.addEventListener("submit", loadCostFeatureTimeseries);
+  qs("#loadCostFeatureTimeseries")?.addEventListener("click", loadCostFeatureTimeseries);
+  qs("#costRegionTimeseriesForm")?.addEventListener("submit", loadCostRegionTimeseries);
+  qs("#loadCostRegionTimeseries")?.addEventListener("click", loadCostRegionTimeseries);
+  qs("#costWorkspaceTimeseriesForm")?.addEventListener("submit", loadCostWorkspaceTimeseries);
+  qs("#loadCostWorkspaceTimeseries")?.addEventListener("click", loadCostWorkspaceTimeseries);
+  qs("#costProductTimeseriesForm")?.addEventListener("submit", loadCostProductTimeseries);
+  qs("#loadCostProductTimeseries")?.addEventListener("click", loadCostProductTimeseries);
+  qs("#costServiceTimeseriesForm")?.addEventListener("submit", loadCostServiceTimeseries);
+  qs("#loadCostServiceTimeseries")?.addEventListener("click", loadCostServiceTimeseries);
+  qs("#costTenantTimeseriesForm")?.addEventListener("submit", loadCostTenantTimeseries);
+  qs("#loadCostTenantTimeseries")?.addEventListener("click", loadCostTenantTimeseries);
+  qs("#costChannelTimeseriesForm")?.addEventListener("submit", loadCostChannelTimeseries);
+  qs("#loadCostChannelTimeseries")?.addEventListener("click", loadCostChannelTimeseries);
+  qs("#costCampaignTimeseriesForm")?.addEventListener("submit", loadCostCampaignTimeseries);
+  qs("#loadCostCampaignTimeseries")?.addEventListener("click", loadCostCampaignTimeseries);
+  qs("#costBrandTimeseriesForm")?.addEventListener("submit", loadCostBrandTimeseries);
+  qs("#loadCostBrandTimeseries")?.addEventListener("click", loadCostBrandTimeseries);
+  qs("#costMarketTimeseriesForm")?.addEventListener("submit", loadCostMarketTimeseries);
+  qs("#loadCostMarketTimeseries")?.addEventListener("click", loadCostMarketTimeseries);
+  qs("#costSegmentTimeseriesForm")?.addEventListener("submit", loadCostSegmentTimeseries);
+  qs("#loadCostSegmentTimeseries")?.addEventListener("click", loadCostSegmentTimeseries);
+  qs("#costAccountTimeseriesForm")?.addEventListener("submit", loadCostAccountTimeseries);
+  qs("#loadCostAccountTimeseries")?.addEventListener("click", loadCostAccountTimeseries);
+  qs("#costOrgTimeseriesForm")?.addEventListener("submit", loadCostOrgTimeseries);
+  qs("#loadCostOrgTimeseries")?.addEventListener("click", loadCostOrgTimeseries);
+  qs("#costCostCenterTimeseriesForm")?.addEventListener("submit", loadCostCostCenterTimeseries);
+  qs("#loadCostCostCenterTimeseries")?.addEventListener("click", loadCostCostCenterTimeseries);
+  qs("#costBusinessUnitTimeseriesForm")?.addEventListener("submit", loadCostBusinessUnitTimeseries);
+  qs("#loadCostBusinessUnitTimeseries")?.addEventListener("click", loadCostBusinessUnitTimeseries);
+  qs("#costSiteTimeseriesForm")?.addEventListener("submit", loadCostSiteTimeseries);
+  qs("#loadCostSiteTimeseries")?.addEventListener("click", loadCostSiteTimeseries);
+  qs("#costSkuTimeseriesForm")?.addEventListener("submit", loadCostSkuTimeseries);
+  qs("#loadCostSkuTimeseries")?.addEventListener("click", loadCostSkuTimeseries);
+  qs("#costLineTimeseriesForm")?.addEventListener("submit", loadCostLineTimeseries);
+  qs("#loadCostLineTimeseries")?.addEventListener("click", loadCostLineTimeseries);
+  qs("#costTierTimeseriesForm")?.addEventListener("submit", loadCostTierTimeseries);
+  qs("#loadCostTierTimeseries")?.addEventListener("click", loadCostTierTimeseries);
+  qs("#costStageTimeseriesForm")?.addEventListener("submit", loadCostStageTimeseries);
+  qs("#loadCostStageTimeseries")?.addEventListener("click", loadCostStageTimeseries);
+  qs("#costPlatformTimeseriesForm")?.addEventListener("submit", loadCostPlatformTimeseries);
+  qs("#loadCostPlatformTimeseries")?.addEventListener("click", loadCostPlatformTimeseries);
+  qs("#costDeviceTimeseriesForm")?.addEventListener("submit", loadCostDeviceTimeseries);
+  qs("#loadCostDeviceTimeseries")?.addEventListener("click", loadCostDeviceTimeseries);
+  qs("#costClientTimeseriesForm")?.addEventListener("submit", loadCostClientTimeseries);
+  qs("#loadCostClientTimeseries")?.addEventListener("click", loadCostClientTimeseries);
+  qs("#costBrowserTimeseriesForm")?.addEventListener("submit", loadCostBrowserTimeseries);
+  qs("#loadCostBrowserTimeseries")?.addEventListener("click", loadCostBrowserTimeseries);
+  qs("#costReleaseTimeseriesForm")?.addEventListener("submit", loadCostReleaseTimeseries);
+  qs("#loadCostReleaseTimeseries")?.addEventListener("click", loadCostReleaseTimeseries);
+  qs("#costLocaleTimeseriesForm")?.addEventListener("submit", loadCostLocaleTimeseries);
+  qs("#loadCostLocaleTimeseries")?.addEventListener("click", loadCostLocaleTimeseries);
+  qs("#costCountryTimeseriesForm")?.addEventListener("submit", loadCostCountryTimeseries);
+  qs("#loadCostCountryTimeseries")?.addEventListener("click", loadCostCountryTimeseries);
+  qs("#costTimezoneTimeseriesForm")?.addEventListener("submit", loadCostTimezoneTimeseries);
+  qs("#loadCostTimezoneTimeseries")?.addEventListener("click", loadCostTimezoneTimeseries);
+  qs("#costCityTimeseriesForm")?.addEventListener("submit", loadCostCityTimeseries);
+  qs("#loadCostCityTimeseries")?.addEventListener("click", loadCostCityTimeseries);
+  qs("#costIspTimeseriesForm")?.addEventListener("submit", loadCostIspTimeseries);
+  qs("#loadCostIspTimeseries")?.addEventListener("click", loadCostIspTimeseries);
+  qs("#costAsnTimeseriesForm")?.addEventListener("submit", loadCostAsnTimeseries);
+  qs("#loadCostAsnTimeseries")?.addEventListener("click", loadCostAsnTimeseries);
+  qs("#costSdkTimeseriesForm")?.addEventListener("submit", loadCostSdkTimeseries);
+  qs("#loadCostSdkTimeseries")?.addEventListener("click", loadCostSdkTimeseries);
+  qs("#costFrameworkTimeseriesForm")?.addEventListener("submit", loadCostFrameworkTimeseries);
+  qs("#loadCostFrameworkTimeseries")?.addEventListener("click", loadCostFrameworkTimeseries);
+  qs("#costRuntimeTimeseriesForm")?.addEventListener("submit", loadCostRuntimeTimeseries);
+  qs("#loadCostRuntimeTimeseries")?.addEventListener("click", loadCostRuntimeTimeseries);
+  qs("#costLibraryTimeseriesForm")?.addEventListener("submit", loadCostLibraryTimeseries);
+  qs("#loadCostLibraryTimeseries")?.addEventListener("click", loadCostLibraryTimeseries);
+  qs("#costHostTimeseriesForm")?.addEventListener("submit", loadCostHostTimeseries);
+  qs("#loadCostHostTimeseries")?.addEventListener("click", loadCostHostTimeseries);
+  qs("#costDatacenterTimeseriesForm")?.addEventListener("submit", loadCostDatacenterTimeseries);
+  qs("#loadCostDatacenterTimeseries")?.addEventListener("click", loadCostDatacenterTimeseries);
+  qs("#costAzTimeseriesForm")?.addEventListener("submit", loadCostAzTimeseries);
+  qs("#loadCostAzTimeseries")?.addEventListener("click", loadCostAzTimeseries);
+  qs("#costEdgeTimeseriesForm")?.addEventListener("submit", loadCostEdgeTimeseries);
+  qs("#loadCostEdgeTimeseries")?.addEventListener("click", loadCostEdgeTimeseries);
+  
+  qs("#costColoTimeseriesForm")?.addEventListener("submit", loadCostColoTimeseries);
+  qs("#loadCostColoTimeseries")?.addEventListener("click", loadCostColoTimeseries);
+  qs("#costClusterTimeseriesForm")?.addEventListener("submit", loadCostClusterTimeseries);
+  qs("#loadCostClusterTimeseries")?.addEventListener("click", loadCostClusterTimeseries);
+  qs("#costPodTimeseriesForm")?.addEventListener("submit", loadCostPodTimeseries);
+  qs("#loadCostPodTimeseries")?.addEventListener("click", loadCostPodTimeseries);
+  qs("#costNamespaceTimeseriesForm")?.addEventListener("submit", loadCostNamespaceTimeseries);
+  qs("#loadCostNamespaceTimeseries")?.addEventListener("click", loadCostNamespaceTimeseries);
+  qs("#costNodeTimeseriesForm")?.addEventListener("submit", loadCostNodeTimeseries);
+  qs("#loadCostNodeTimeseries")?.addEventListener("click", loadCostNodeTimeseries);
+  qs("#costToolTimeseriesForm")?.addEventListener("submit", loadCostToolTimeseries);
+  qs("#loadCostToolTimeseries")?.addEventListener("click", loadCostToolTimeseries);
+  qs("#costWorkflowTimeseriesForm")?.addEventListener("submit", loadCostWorkflowTimeseries);
+  qs("#loadCostWorkflowTimeseries")?.addEventListener("click", loadCostWorkflowTimeseries);
+  qs("#costExperimentTimeseriesForm")?.addEventListener("submit", loadCostExperimentTimeseries);
+  qs("#loadCostExperimentTimeseries")?.addEventListener("click", loadCostExperimentTimeseries);
+  qs("#costVariantTimeseriesForm")?.addEventListener("submit", loadCostVariantTimeseries);
+  qs("#loadCostVariantTimeseries")?.addEventListener("click", loadCostVariantTimeseries);
+  qs("#costDeploymentTimeseriesForm")?.addEventListener("submit", loadCostDeploymentTimeseries);
+  qs("#loadCostDeploymentTimeseries")?.addEventListener("click", loadCostDeploymentTimeseries);
+  qs("#costVersionTimeseriesForm")?.addEventListener("submit", loadCostVersionTimeseries);
+  qs("#loadCostVersionTimeseries")?.addEventListener("click", loadCostVersionTimeseries);
+  qs("#costCanaryTimeseriesForm")?.addEventListener("submit", loadCostCanaryTimeseries);
+  qs("#loadCostCanaryTimeseries")?.addEventListener("click", loadCostCanaryTimeseries);
+  qs("#costShadowTimeseriesForm")?.addEventListener("submit", loadCostShadowTimeseries);
+  qs("#loadCostShadowTimeseries")?.addEventListener("click", loadCostShadowTimeseries);
+  qs("#costRolloutTimeseriesForm")?.addEventListener("submit", loadCostRolloutTimeseries);
+  qs("#loadCostRolloutTimeseries")?.addEventListener("click", loadCostRolloutTimeseries);
+  qs("#costRouteTimeseriesForm")?.addEventListener("submit", loadCostRouteTimeseries);
+  qs("#loadCostRouteTimeseries")?.addEventListener("click", loadCostRouteTimeseries);
+  qs("#costBatchTimeseriesForm")?.addEventListener("submit", loadCostBatchTimeseries);
+  qs("#loadCostBatchTimeseries")?.addEventListener("click", loadCostBatchTimeseries);
+  qs("#costJobTimeseriesForm")?.addEventListener("submit", loadCostJobTimeseries);
+  qs("#loadCostJobTimeseries")?.addEventListener("click", loadCostJobTimeseries);
+  qs("#costQueueTimeseriesForm")?.addEventListener("submit", loadCostQueueTimeseries);
+  qs("#loadCostQueueTimeseries")?.addEventListener("click", loadCostQueueTimeseries);
+  qs("#costTopicTimeseriesForm")?.addEventListener("submit", loadCostTopicTimeseries);
+  qs("#loadCostTopicTimeseries")?.addEventListener("click", loadCostTopicTimeseries);
+  qs("#costPipelineTimeseriesForm")?.addEventListener("submit", loadCostPipelineTimeseries);
+  qs("#loadCostPipelineTimeseries")?.addEventListener("click", loadCostPipelineTimeseries);
+  qs("#costRunTimeseriesForm")?.addEventListener("submit", loadCostRunTimeseries);
+  qs("#loadCostRunTimeseries")?.addEventListener("click", loadCostRunTimeseries);
+  qs("#costWorkerTimeseriesForm")?.addEventListener("submit", loadCostWorkerTimeseries);
+  qs("#loadCostWorkerTimeseries")?.addEventListener("click", loadCostWorkerTimeseries);
+  qs("#costSlotTimeseriesForm")?.addEventListener("submit", loadCostSlotTimeseries);
+  qs("#loadCostSlotTimeseries")?.addEventListener("click", loadCostSlotTimeseries);
+  qs("#costTaskTimeseriesForm")?.addEventListener("submit", loadCostTaskTimeseries);
+  qs("#loadCostTaskTimeseries")?.addEventListener("click", loadCostTaskTimeseries);
+  qs("#costStepTimeseriesForm")?.addEventListener("submit", loadCostStepTimeseries);
+  qs("#loadCostStepTimeseries")?.addEventListener("click", loadCostStepTimeseries);
+  qs("#costReplicaTimeseriesForm")?.addEventListener("submit", loadCostReplicaTimeseries);
+  qs("#loadCostReplicaTimeseries")?.addEventListener("click", loadCostReplicaTimeseries);
+  qs("#costShardTimeseriesForm")?.addEventListener("submit", loadCostShardTimeseries);
+  qs("#loadCostShardTimeseries")?.addEventListener("click", loadCostShardTimeseries);
+  qs("#costPartitionTimeseriesForm")?.addEventListener("submit", loadCostPartitionTimeseries);
+  qs("#loadCostPartitionTimeseries")?.addEventListener("click", loadCostPartitionTimeseries);
+  qs("#costConsumerTimeseriesForm")?.addEventListener("submit", loadCostConsumerTimeseries);
+  qs("#loadCostConsumerTimeseries")?.addEventListener("click", loadCostConsumerTimeseries);
+  qs("#costProducerTimeseriesForm")?.addEventListener("submit", loadCostProducerTimeseries);
+  qs("#loadCostProducerTimeseries")?.addEventListener("click", loadCostProducerTimeseries);
+  qs("#costGpuTimeseriesForm")?.addEventListener("submit", loadCostGpuTimeseries);
+  qs("#loadCostGpuTimeseries")?.addEventListener("click", loadCostGpuTimeseries);
+  qs("#costAcceleratorTimeseriesForm")?.addEventListener("submit", loadCostAcceleratorTimeseries);
+  qs("#loadCostAcceleratorTimeseries")?.addEventListener("click", loadCostAcceleratorTimeseries);
+  qs("#costCellTimeseriesForm")?.addEventListener("submit", loadCostCellTimeseries);
+  qs("#loadCostCellTimeseries")?.addEventListener("click", loadCostCellTimeseries);
+  qs("#costZoneTimeseriesForm")?.addEventListener("submit", loadCostZoneTimeseries);
+  qs("#loadCostZoneTimeseries")?.addEventListener("click", loadCostZoneTimeseries);
+  qs("#costRackTimeseriesForm")?.addEventListener("submit", loadCostRackTimeseries);
+  qs("#loadCostRackTimeseries")?.addEventListener("click", loadCostRackTimeseries);
+  qs("#costPoolTimeseriesForm")?.addEventListener("submit", loadCostPoolTimeseries);
+  qs("#loadCostPoolTimeseries")?.addEventListener("click", loadCostPoolTimeseries);
+  qs("#costFleetTimeseriesForm")?.addEventListener("submit", loadCostFleetTimeseries);
+  qs("#loadCostFleetTimeseries")?.addEventListener("click", loadCostFleetTimeseries);
+  qs("#costLeaseTimeseriesForm")?.addEventListener("submit", loadCostLeaseTimeseries);
+  qs("#loadCostLeaseTimeseries")?.addEventListener("click", loadCostLeaseTimeseries);
+  qs("#costQuotaTimeseriesForm")?.addEventListener("submit", loadCostQuotaTimeseries);
+  qs("#loadCostQuotaTimeseries")?.addEventListener("click", loadCostQuotaTimeseries);
+  qs("#costCapacityTimeseriesForm")?.addEventListener("submit", loadCostCapacityTimeseries);
+  qs("#loadCostCapacityTimeseries")?.addEventListener("click", loadCostCapacityTimeseries);
+  qs("#costReservationTimeseriesForm")?.addEventListener("submit", loadCostReservationTimeseries);
+  qs("#loadCostReservationTimeseries")?.addEventListener("click", loadCostReservationTimeseries);
+  qs("#costContinentTimeseriesForm")?.addEventListener("submit", loadCostContinentTimeseries);
+  qs("#loadCostContinentTimeseries")?.addEventListener("click", loadCostContinentTimeseries);
+  qs("#costLanguageTimeseriesForm")?.addEventListener("submit", loadCostLanguageTimeseries);
+  qs("#loadCostLanguageTimeseries")?.addEventListener("click", loadCostLanguageTimeseries);
+  qs("#costOsTimeseriesForm")?.addEventListener("submit", loadCostOsTimeseries);
+  qs("#loadCostOsTimeseries")?.addEventListener("click", loadCostOsTimeseries);
+  qs("#costRequestsForm")?.addEventListener("submit", loadCostRequests);
+  qs("#loadCostRequests")?.addEventListener("click", loadCostRequests);
+  qs("#exportCostRequests")?.addEventListener("click", () => void exportCostRequestsCsv());
+  qs("#costSessionTreeForm")?.addEventListener("submit", loadCostSessionTree);
+  qs("#loadCostSessionTree")?.addEventListener("click", loadCostSessionTree);
+  qs("#costScoreStatsForm")?.addEventListener("submit", loadCostScoreStats);
+  qs("#loadCostScoreStats")?.addEventListener("click", loadCostScoreStats);
+  qs("#costScoreTimeseriesForm")?.addEventListener("submit", loadCostScoreTimeseries);
+  qs("#loadCostScoreTimeseries")?.addEventListener("click", loadCostScoreTimeseries);
+  qs("#costLatencyTimeseriesForm")?.addEventListener("submit", loadCostLatencyTimeseries);
+  qs("#loadCostLatencyTimeseries")?.addEventListener("click", loadCostLatencyTimeseries);
+  qs("#costCacheTimeseriesForm")?.addEventListener("submit", loadCostCacheTimeseries);
+  qs("#loadCostCacheTimeseries")?.addEventListener("click", loadCostCacheTimeseries);
+  qs("#costRatingTimeseriesForm")?.addEventListener("submit", loadCostRatingTimeseries);
+  qs("#loadCostRatingTimeseries")?.addEventListener("click", loadCostRatingTimeseries);
+  qs("#costPropertyStatsForm")?.addEventListener("submit", loadCostPropertyStats);
+  qs("#loadCostPropertyStats")?.addEventListener("click", loadCostPropertyStats);
+  qs("#costPropertyTimeseriesForm")?.addEventListener("submit", loadCostPropertyTimeseries);
+  qs("#loadCostPropertyTimeseries")?.addEventListener("click", loadCostPropertyTimeseries);
   qs('#costSpendTrackForm select[name="scope_type"]')?.addEventListener("change", () => {
     syncScopeIdPicker("#costSpendTrackForm", "scope_type", "scope_id", "costSpendScopeIdList");
   });
@@ -28855,7 +41451,10 @@ function bindEvents() {
   qs("#retentionPolicyForm").addEventListener("submit", saveRetentionPolicy);
   qs("#resetRetentionPolicyForm").addEventListener("click", () => {
     const form = qs("#retentionPolicyForm");
-    if (form) form.reset();
+    if (form) {
+      form.reset();
+      if (form.elements.policy_id) form.elements.policy_id.value = "";
+    }
     setComplianceText("#retentionPolicyResult", "Retention policy form reset.");
   });
   qs("#loadLegalHolds").addEventListener("click", loadLegalHolds);
@@ -28905,6 +41504,7 @@ function bindEvents() {
   qs("#deletePromptRegistryItem").addEventListener("click", deletePromptRegistryItem);
   qs("#loadPromptRegistryVersions").addEventListener("click", () => loadPromptRegistryVersions());
   qs("#previewPromptRegistryPromotion").addEventListener("click", () => promotePromptRegistryItem(true));
+  qs("#renderPromptRegistryItem")?.addEventListener("click", () => void renderPromptRegistryItem());
   qs("#clearPlaygroundStream").addEventListener("click", () => {
     stopPlaygroundStream();
     updatePlaygroundStreamLog("");
@@ -28953,6 +41553,9 @@ function bindEvents() {
     if (isClickEventFor(evt, "loadKeyRotationSchedules")) {
       loadKeyRotationSchedules(evt);
     }
+    if (isClickEventFor(evt, "tickKeyRotationSchedules")) {
+      void tickKeyRotationSchedules();
+    }
   });
   qs("#guardrailTemplateBalanced").addEventListener("click", () => applyGuardrailTemplate("balanced"));
   qs("#guardrailTemplateStrictProd").addEventListener("click", () => applyGuardrailTemplate("strict_prod"));
@@ -28968,6 +41571,8 @@ function bindEvents() {
   });
   qs("#routePriorityForm").addEventListener("submit", saveRoutePriority);
   qs("#loadRoutePriority")?.addEventListener("click", () => loadRoutePriorityReadback());
+  qs("#loadRouteFallbacks")?.addEventListener("click", () => void loadRouteFallbacks());
+  qs("#saveRouteFallbacks")?.addEventListener("click", () => void saveRouteFallbacks());
   qs("#routePriorityTimelineForm")?.addEventListener("submit", loadRoutePriorityTimeline);
   qs("#addRoutePriorityTarget")?.addEventListener("click", () => addRoutePriorityChainRow("#routePriorityChainTable"));
   qs("#syncRoutePriorityFromJson")?.addEventListener("click", syncRoutePriorityChainFromJsonField);
@@ -29001,6 +41606,14 @@ function bindEvents() {
   qs("#loadGatewayAccessReviewCampaign").addEventListener("click", loadGatewayAccessReviewCampaign);
   qs("#gatewayJitRequestForm").addEventListener("submit", createGatewayJitRequest);
   qs("#gatewayJitApproveForm").addEventListener("submit", approveGatewayJitRequest);
+  qs("#copyGatewayJitMintedToken")?.addEventListener("click", () => void copyGatewayJitMintedToken());
+  qs("#jumpGatewayJitMintedKey")?.addEventListener("click", jumpGatewayJitMintedKey);
+  qs("#loadGatewayJitQueue")?.addEventListener("click", () => void loadGatewayJitQueue());
+  qs("#runGatewayJitExpireTick")?.addEventListener("click", () => void runGatewayJitExpireTick());
+  qs("#gatewayJitQueueFilters")?.addEventListener("change", () => void loadGatewayJitQueue());
+  qs("#loadGatewayJitDecisionNotify")?.addEventListener("click", () => void loadGatewayJitDecisionNotify());
+  qs("#saveGatewayJitDecisionNotify")?.addEventListener("click", () => void saveGatewayJitDecisionNotify());
+  qs("#refreshGatewayJitNotifyPickers")?.addEventListener("click", () => void refreshGatewayJitNotifyPickers());
   qs("#gatewayLeastPrivilegeFiltersForm").addEventListener("submit", loadGatewayLeastPrivilegeRecommendations);
   qs("#loadGatewayLeastPrivilegeRecommendations").addEventListener("click", loadGatewayLeastPrivilegeRecommendations);
   qs("#gatewayGovernanceEvidenceForm").addEventListener("submit", loadGatewayGovernanceEvidence);
@@ -29076,6 +41689,7 @@ function bindEvents() {
   qs("#closeGatewayOpenAiRealtimeSession").addEventListener("click", () => closeGatewayOpenAiRealtimeSessionById());
   qs("#loadGatewayOpenAiFiles").addEventListener("click", loadGatewayOpenAiFiles);
   qs("#getGatewayOpenAiFile").addEventListener("click", () => loadGatewayOpenAiFileById());
+  qs("#downloadGatewayOpenAiFileContent")?.addEventListener("click", () => downloadGatewayOpenAiFileContent());
   qs("#deleteGatewayOpenAiFile").addEventListener("click", () => deleteGatewayOpenAiFileById());
   qs("#selectAllGatewayOpenAiFiles").addEventListener("click", selectAllGatewayOpenAiFiles);
   qs("#clearGatewayOpenAiFilesSelection").addEventListener("click", clearGatewayOpenAiFilesSelection);
@@ -29097,6 +41711,8 @@ function bindEvents() {
   qs("#gatewayCacheInvalidateForm").addEventListener("submit", invalidateGatewayCache);
   qs("#loadGatewayCachePolicies").addEventListener("click", loadGatewayCachePolicies);
   qs("#loadGatewayCacheDecisions").addEventListener("click", loadGatewayCacheDecisions);
+  qs("#loadGatewayCacheEntries")?.addEventListener("click", () => void loadGatewayCacheEntries());
+  qs("#gatewayCacheEntryFilters")?.addEventListener("submit", (evt) => void loadGatewayCacheEntries(evt));
   qs("#loadGatewayMemoryOverview")?.addEventListener("click", loadGatewayMemoryOverview);
   qs("#loadGatewayMemoryPlatformConfig")?.addEventListener("click", loadGatewayMemoryPlatformConfig);
   qs("#saveGatewayMemoryPlatformConfig")?.addEventListener("click", saveGatewayMemoryPlatformConfig);
@@ -29140,6 +41756,51 @@ function bindEvents() {
   qs("#gatewayFineTuningCreateForm")?.addEventListener("submit", createGatewayFineTuningJob);
   qs("#retrieveGatewayFineTuningJob")?.addEventListener("click", () => void retrieveGatewayFineTuningJob());
   qs("#cancelGatewayFineTuningJob")?.addEventListener("click", () => void cancelGatewayFineTuningJob());
+  qs("#loadGatewayBatches")?.addEventListener("click", () => void loadGatewayBatches());
+  qs("#gatewayBatchCreateForm")?.addEventListener("submit", (evt) => void createGatewayBatch(evt));
+  qs("#gatewayBatchFilters")?.addEventListener("submit", (evt) => void loadGatewayBatches(evt));
+  qs("#retrieveGatewayBatch")?.addEventListener("click", () => void retrieveGatewayBatch());
+  qs("#loadGatewayBatchResults")?.addEventListener("click", () => void loadGatewayBatchResults());
+  qs("#cancelGatewayBatch")?.addEventListener("click", () => void cancelGatewayBatch());
+  qs("#completeGatewayBatch")?.addEventListener("click", () => void completeGatewayBatch());
+  qs("#expireGatewayBatch")?.addEventListener("click", () => void expireGatewayBatch());
+  qs("#gatewayCompatConfigsForm")?.addEventListener("submit", (evt) => void loadGatewayCompatConfigs(evt));
+  qs("#loadGatewayCompatConfigs")?.addEventListener("click", () => void loadGatewayCompatConfigs());
+  qs("#getGatewayCompatConfig")?.addEventListener("click", () => void getGatewayCompatConfig());
+  qs("#gatewayCompatModelsForm")?.addEventListener("submit", (evt) => void loadGatewayCompatModels(evt));
+  qs("#loadGatewayCompatModels")?.addEventListener("click", () => void loadGatewayCompatModels());
+  qs("#getGatewayCompatModel")?.addEventListener("click", () => void getGatewayCompatModel());
+  qs("#gatewayCompatGuardrailsForm")?.addEventListener("submit", (evt) => void loadGatewayCompatGuardrails(evt));
+  qs("#loadGatewayCompatGuardrails")?.addEventListener("click", () => void loadGatewayCompatGuardrails());
+  qs("#getGatewayCompatGuardrail")?.addEventListener("click", () => void getGatewayCompatGuardrail());
+  qs("#gatewayCompatVectorStoresForm")?.addEventListener("submit", (evt) => void loadGatewayCompatVectorStores(evt));
+  qs("#loadGatewayCompatVectorStores")?.addEventListener("click", () => void loadGatewayCompatVectorStores());
+  qs("#getGatewayCompatVectorStore")?.addEventListener("click", () => void getGatewayCompatVectorStore());
+  qs("#attemptRegisterGatewayCompatVectorStore")?.addEventListener("click", () => void attemptRegisterGatewayCompatVectorStore());
+  qs("#gatewayCompatLogsForm")?.addEventListener("submit", (evt) => void loadGatewayCompatLogs(evt));
+  qs("#loadGatewayCompatLogs")?.addEventListener("click", () => void loadGatewayCompatLogs());
+  qs("#getGatewayCompatLog")?.addEventListener("click", () => void getGatewayCompatLog());
+  qs("#exportGatewayCompatLogs")?.addEventListener("click", () => void exportGatewayCompatLogs());
+  qs("#gatewayCompatVirtualKeysForm")?.addEventListener("submit", (evt) => void loadGatewayCompatVirtualKeys(evt));
+  qs("#loadGatewayCompatVirtualKeys")?.addEventListener("click", () => void loadGatewayCompatVirtualKeys());
+  qs("#getGatewayCompatVirtualKey")?.addEventListener("click", () => void getGatewayCompatVirtualKey());
+  qs("#loadGatewayCompatVirtualKeyUsage")?.addEventListener("click", () => void loadGatewayCompatVirtualKeyUsage());
+  qs("#gatewayCompatPromptsForm")?.addEventListener("submit", (evt) => void loadGatewayCompatPrompts(evt));
+  qs("#loadGatewayCompatPrompts")?.addEventListener("click", () => void loadGatewayCompatPrompts());
+  qs("#getGatewayCompatPrompt")?.addEventListener("click", () => void getGatewayCompatPrompt());
+  qs("#gatewayCompatAnalyticsForm")?.addEventListener("submit", (evt) => void loadGatewayCompatAnalytics(evt));
+  qs("#loadGatewayCompatAnalytics")?.addEventListener("click", () => void loadGatewayCompatAnalytics());
+  qs("#getGatewayCompatFeedback")?.addEventListener("click", () => void getGatewayCompatFeedback());
+  qs("#gatewayCompatFeedbackForm")?.addEventListener("submit", (evt) => void submitGatewayCompatFeedback(evt));
+  qs("#retrieveKey")?.addEventListener("click", () => void retrieveKey());
+  qs("#gatewayLogExportCreateForm")?.addEventListener("submit", (evt) => void createGatewayLogExport(evt));
+  qs("#loadGatewayLogExports")?.addEventListener("click", () => void loadGatewayLogExports());
+  qs("#getGatewayLogExport")?.addEventListener("click", () => void gatewayLogExportAction("get"));
+  qs("#startGatewayLogExport")?.addEventListener("click", () => void gatewayLogExportAction("start"));
+  qs("#cancelGatewayLogExport")?.addEventListener("click", () => void gatewayLogExportAction("cancel"));
+  qs("#downloadGatewayLogExport")?.addEventListener("click", () => void gatewayLogExportAction("download"));
+  qs("#contentGatewayLogExport")?.addEventListener("click", () => void gatewayLogExportAction("content"));
+  qs("#deleteGatewayLogExport")?.addEventListener("click", () => void gatewayLogExportAction("delete"));
   qs("#gatewayPassthroughForm")?.addEventListener("submit", submitGatewayPassthroughForm);
   qs("#gatewayDecisionTraceForm").addEventListener("submit", loadGatewayDecisionTrace);
   qs("#loadGatewayMcpServers").addEventListener("click", loadGatewayMcpServers);
@@ -29197,17 +41858,20 @@ function bindEvents() {
   qs("#basicAuthConfigForm").addEventListener("submit", saveBasicAuthConfig);
   qs("#enableBasicAuthTemporary").addEventListener("click", enableBasicAuthTemporary);
   qs("#disableBasicAuthTemporary").addEventListener("click", disableBasicAuthTemporary);
+  qs("#tickBasicAuthExpire")?.addEventListener("click", () => void tickBasicAuthExpire());
   qs("#refreshObservability").addEventListener("click", loadObservability);
   qs("#loadObservabilitySiemRules")?.addEventListener("click", () => void loadObservabilitySiemRules());
   qs("#exportObservabilitySiemRules")?.addEventListener("click", () => void exportObservabilitySiemRules());
   qs("#evaluateObservabilitySiemRules")?.addEventListener("click", () => void evaluateObservabilitySiemRules());
   qs("#loadCostScopeBreakdown")?.addEventListener("click", () => void loadCostScopeBreakdown());
   qs("#loadCostTimeseries")?.addEventListener("click", () => void loadCostTimeseries());
+  qs("#exportCostEventsCsv")?.addEventListener("click", () => void exportCostEventsCsv());
   qs("#costTimeseriesForm")?.addEventListener("submit", (evt) => {
     evt.preventDefault();
     void loadCostTimeseries();
   });
   qs("#testOrchestrationDataConnection")?.addEventListener("click", () => void testOrchestrationDataConnection());
+  qs("#inspectOrchestrationDataConnection")?.addEventListener("click", () => void inspectOrchestrationDataConnection());
   qs("#orchestrationDataConnectionTestForm")?.addEventListener("submit", (evt) => {
     evt.preventDefault();
     void testOrchestrationDataConnection();
@@ -29364,10 +42028,16 @@ function activateBlankOrchestrationFlow(name = "Untitled flow") {
   orchestrationSelectedFlowId = "";
   orchestrationSelectedNodeId = ORCHESTRATION_FLOW_START_ID;
   orchestrationBuilderItems = [];
+  orchestrationBoardEdges = [];
+  orchestrationWireFromNodeId = "";
+  orchestrationSelectedBoardEdge = null;
+  orchestrationSuppressedSyntheticEdges = new Set();
+  orchestrationAnchorPositions = { start: { x: 80, y: 80 }, end: { x: 80, y: 520 } };
   clearOrchestrationInsertState();
   orchestrationPaletteArmedType = "";
   orchestrationValidationState = { valid: true, errors: [], warnings: [], byNodeId: {}, flowLevel: [] };
   orchestrationClientValidationCache = null;
+  orchestrationValidationPanelDismissed = false;
   orchestrationCollapsedParallelGroups = new Set();
   orchestrationDefaultRunMode = "serial";
   activateOrchestrationFlow();
@@ -29394,49 +42064,134 @@ function applyOrchestrationFlowTemplate(templateId) {
     description: template.description,
   });
   template.steps.forEach((type) => insertOrchestrationNodeAt(orchestrationBuilderItems.length, type, { silent: true }));
+  if (templateId === "while-counter" || templateId === "do-while-flag") {
+    wireOrchestrationWhileTemplate(templateId);
+  }
   orchestrationSelectedNodeId = ORCHESTRATION_FLOW_START_ID;
   renderOrchestrationStudio();
   setOrchestrationFeedback(`Created "${template.name}" — Start → ${template.steps.length} widgets → End`, "orchestrationBuilderFeedback", "success");
 }
 
+function wireOrchestrationWhileTemplate(templateId) {
+  const nodes = flattenOrchestrationNodes();
+  if (templateId === "while-counter") {
+    const loop = nodes.find((n) => n.type === "while_loop");
+    const body = nodes.find((n) => n.type === "set_fields");
+    const exit = nodes.find((n) => n.type === "noop");
+    if (!loop || !body || !exit) return;
+    applyOrchestrationWhilePreset(loop, "index", { repeatCount: 3 });
+    loop.config.body_branch = body.id;
+    loop.config.exit_branch = exit.id;
+    body.name = "Loop body";
+    body.config = {
+      fields_json: JSON.stringify(
+        { note: "Iteration {{loop.iteration}}", loop_index: "{{loop.index}}" },
+        null,
+        2,
+      ),
+    };
+    exit.name = "After loop";
+    if (orchestrationCanvasLayout === "board") {
+      orchestrationBoardEdges = (orchestrationBoardEdges || []).filter(
+        (edge) => edge.source !== loop.id || !["body", "exit"].includes(edge.kind),
+      );
+      orchestrationBoardEdges.push({ source: loop.id, target: body.id, kind: "body" });
+      orchestrationBoardEdges.push({ source: loop.id, target: exit.id, kind: "exit" });
+    }
+    return;
+  }
+  if (templateId === "do-while-flag") {
+    const init = nodes.find((n) => n.type === "static_data");
+    const loop = nodes.find((n) => n.type === "do_while");
+    const body = nodes.find((n) => n.type === "set_fields");
+    const exit = nodes.find((n) => n.type === "noop");
+    if (!loop || !body || !exit) return;
+    if (init) {
+      init.name = "Init flag";
+      init.config = { fields_json: JSON.stringify({ done: "false" }, null, 2) };
+    }
+    // Condition reads the body output after each pass (do-while skips the first check).
+    loop.config.source_node_id = body.id;
+    loop.config.json_path = "$.done";
+    loop.config.operator = "==";
+    loop.config.compare_value = "false";
+    loop.config.body_branch = body.id;
+    loop.config.exit_branch = exit.id;
+    loop.config.max_iterations = "25";
+    body.name = "Set done";
+    body.config = {
+      fields_json: JSON.stringify({ done: "true", note: "Stops after first body pass" }, null, 2),
+    };
+    exit.name = "After loop";
+    if (orchestrationCanvasLayout === "board") {
+      orchestrationBoardEdges = (orchestrationBoardEdges || []).filter(
+        (edge) => edge.source !== loop.id || !["body", "exit"].includes(edge.kind),
+      );
+      orchestrationBoardEdges.push({ source: loop.id, target: body.id, kind: "body" });
+      orchestrationBoardEdges.push({ source: loop.id, target: exit.id, kind: "exit" });
+    }
+  }
+}
+
 function getOrchestrationNodeVisual(type) {
-  if (ORCH_REG?.getNodeVisual) return ORCH_REG.getNodeVisual(type);
-  return ORCHESTRATION_NODE_VISUAL[type] || { icon: "?", color: "#64748b", category: "logic", label: type };
+  const key = String(type || "").trim();
+  const fallback = { icon: "?", color: "#c4a35a", category: "logic", label: key || "Unknown" };
+  try {
+    if (ORCH_REG?.getNodeVisual) return ORCH_REG.getNodeVisual(key) || fallback;
+  } catch (_err) {
+    /* registry visual lookup must never blank the canvas */
+  }
+  return ORCHESTRATION_NODE_VISUAL[key] || fallback;
 }
 
 function getOrchestrationStudioPhase() {
   const values = getOrchestrationFlowFormValues();
-  if (!isOrchestrationFlowActive()) return "create";
-  if (!orchestrationBuilderItems.length) return "build";
-  if (!String(values.flow_name || "").trim() || !values.flow_id) return "save";
-  return "validate";
+  if (!isOrchestrationFlowActive() || !orchestrationBuilderItems.length) return "design";
+  const named = String(values.flow_name || "").trim();
+  const saved = Boolean(values.flow_id);
+  const status = String(values.status || "draft").toLowerCase();
+  if (!named || !saved || status === "draft") return "design";
+  if (["pending_approval", "approved", "certified"].includes(status) || values.environment === "prod") {
+    return "govern";
+  }
+  // Saved flow with widgets — ready to check / run
+  if (orchestrationValidationState?.valid === false) return "govern";
+  return "run";
 }
 
 function renderOrchestrationWorkflowGuide() {
   const guide = qs("#orchestrationWorkflowGuide");
-  const hint = qs("#orchestrationCanvasHint");
-  if (!guide) return;
+  const phaseHint = qs("#orchestrationCanvasPhaseHint");
   const phase = getOrchestrationStudioPhase();
   const phases = ORCHESTRATION_STUDIO_PHASES.length
     ? ORCHESTRATION_STUDIO_PHASES
     : [
-        { id: "create", label: "Create", action: "Start a flow" },
-        { id: "build", label: "Build", action: "Add widgets" },
-        { id: "save", label: "Save", action: "Save your work" },
-        { id: "validate", label: "Check", action: "Validate" },
-        { id: "run", label: "Run", action: "Test or run" },
+        { id: "design", label: "Design", action: "Wire Start → steps → End on the board" },
+        { id: "govern", label: "Govern", action: "Check, approve, and promote by environment" },
+        { id: "run", label: "Run", action: "Test or run with ledgered evidence" },
       ];
   const phaseOrder = phases.map((item) => item.id);
   const currentIndex = Math.max(0, phaseOrder.indexOf(phase));
-  guide.innerHTML = phases
-    .map((item, index) => {
-      const state = index < currentIndex ? "done" : index === currentIndex ? "current" : "upcoming";
-      return `<li class="flow-workflow-step is-${state}" data-phase="${safeText(item.id)}"><span class="flow-workflow-step-num">${index + 1}</span><span class="flow-workflow-step-copy"><strong>${safeText(item.label)}</strong><small>${safeText(item.action)}</small></span></li>`;
-    })
-    .join("");
-  if (hint) {
+  if (guide) {
+    guide.innerHTML = phases
+      .map((item, index) => {
+        const state = index < currentIndex ? "done" : index === currentIndex ? "current" : "upcoming";
+        return `<li class="flow-workflow-step is-${state}" data-phase="${safeText(item.id)}"><span class="flow-workflow-step-num">${index + 1}</span><span class="flow-workflow-step-copy"><strong>${safeText(item.label)}</strong><small>${safeText(item.action)}</small></span></li>`;
+      })
+      .join("");
+  }
+  if (phaseHint) {
     const current = phases[currentIndex] || phases[0];
-    hint.textContent = current?.action || "Build your flow top to bottom — Start → widgets → End";
+    const shortHints = {
+      design:
+        orchestrationCanvasLayout === "board"
+          ? "Design · drag ● from one step onto the next to wire the board"
+          : "Design · add steps in the lane, or switch to Board for freeform wires",
+      govern: "Govern · Check, then Approve / Promote for the target environment",
+      run: "Run · Test dry-run, then Run with ledger evidence",
+    };
+    phaseHint.textContent = shortHints[current?.id] || current?.action || "Design · Govern · Run";
+    phaseHint.dataset.phase = current?.id || "design";
   }
 }
 
@@ -29446,20 +42201,348 @@ function renderOrchestrationPaletteCategoryFilters() {
   container.textContent = "";
   const categories = ORCHESTRATION_PALETTE_CATEGORIES.filter((item) => item.id !== "trigger");
   if (!categories.length) return;
+  ensureOrchestrationNodeTypesCatalog();
   categories.forEach((category) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "flow-palette-category-chip";
     if (orchestrationPaletteCategoryFilter === category.id) btn.classList.add("active");
     btn.dataset.paletteCategory = category.id;
-    btn.textContent = category.label;
-    btn.title = category.hint || category.label;
+    let count = 0;
+    if (category.id === "all") {
+      count = orchestrationNodeTypes.filter((item) => {
+        const visual = getOrchestrationNodeVisual(item.type);
+        return visual.category !== "trigger" && visual.category !== "control";
+      }).length;
+    } else {
+      count = orchestrationNodeTypes.filter(
+        (item) => getOrchestrationNodeVisual(item.type).category === category.id,
+      ).length;
+    }
+    btn.textContent = count ? `${category.label} (${count})` : category.label;
+    btn.title = count
+      ? `${category.hint || category.label} (${count})`
+      : category.hint || category.label;
     btn.addEventListener("click", () => {
       orchestrationPaletteCategoryFilter = category.id;
+      syncOrchestrationPaletteSearchPlaceholder();
       renderOrchestrationPaletteCategoryFilters();
       renderOrchestrationPalette();
     });
     container.appendChild(btn);
+  });
+  syncOrchestrationPaletteSearchPlaceholder();
+}
+
+function syncOrchestrationPaletteSearchPlaceholder() {
+  const search = qs("#orchestrationPaletteSearch");
+  if (!search) return;
+  if (orchestrationPaletteCategoryFilter === "integration") {
+    search.placeholder = "Search external APIs (GitHub, Stripe, AWS…)";
+  } else if (orchestrationPaletteCategoryFilter === "all") {
+    search.placeholder = "Search steps and APIs…";
+  } else {
+    search.placeholder = "Search steps…";
+  }
+}
+
+function getOrchestrationPaletteVendorGroup(item) {
+  const type = String(item?.type || "");
+  const label = String(item?.label || getOrchestrationNodeVisual(type).label || type);
+  const visual = getOrchestrationNodeVisual(type);
+  const keywords = `${(visual.keywords || []).join(" ")} ${visual.help || ""} ${item?.description || ""}`.toLowerCase();
+  if (["http_request", "graphql_request", "respond_to_webhook"].includes(type)) {
+    return { id: "core", label: "Core HTTP", order: 0 };
+  }
+  if (type.startsWith("google_") || /^google\b/i.test(label)) {
+    return { id: "google", label: "Google", order: 1 };
+  }
+  if (type.startsWith("aws_") || /\baws\b/i.test(label) || /\baws\b/.test(keywords)) {
+    return { id: "aws", label: "AWS", order: 2 };
+  }
+  if (
+    /^(microsoft_|azure_|ms_)/.test(type) ||
+    /microsoft|azure/i.test(label) ||
+    type === "microsoft_graph_api"
+  ) {
+    return { id: "microsoft", label: "Microsoft", order: 3 };
+  }
+  if (/jira|confluence|bitbucket/i.test(type)) {
+    return { id: "atlassian", label: "Atlassian", order: 4 };
+  }
+  const letter = (label.replace(/^[^A-Za-z]+/, "") || type).charAt(0).toUpperCase() || "#";
+  return { id: `letter-${letter}`, label: letter, order: 100 + letter.charCodeAt(0) };
+}
+
+function isOrchestrationPaletteSectionExpanded(key, { defaultExpanded = true } = {}) {
+  if (Object.prototype.hasOwnProperty.call(orchestrationPaletteExpandState, key)) {
+    return Boolean(orchestrationPaletteExpandState[key]);
+  }
+  return defaultExpanded;
+}
+
+function toggleOrchestrationPaletteSection(key, defaultExpanded = true) {
+  const currently = isOrchestrationPaletteSectionExpanded(key, { defaultExpanded });
+  orchestrationPaletteExpandState[key] = !currently;
+  renderOrchestrationPalette();
+}
+
+function createOrchestrationPaletteWidgetRow(item) {
+  const visual = getOrchestrationNodeVisual(item.type);
+  const row = document.createElement("div");
+  row.className = "flow-toolkit-item";
+  if (orchestrationPaletteArmedType === item.type) row.classList.add("is-armed");
+  row.setAttribute("data-palette-node-type", item.type);
+  row.title = item.description || visual.help || item.label;
+  row.draggable = true;
+  row.addEventListener("dragstart", (event) => beginOrchestrationPaletteDrag(item.type, event));
+  row.addEventListener("dragend", clearOrchestrationDragState);
+  row.addEventListener("click", (event) => {
+    if (event.target.closest(".flow-toolkit-add")) return;
+    armOrchestrationPaletteWidget(item.type);
+  });
+  row.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    addOrchestrationNodeFromPalette(item.type);
+  });
+  row.innerHTML = `
+    <span class="flow-toolkit-grip" aria-hidden="true" title="Drag to canvas">⋮⋮</span>
+    <span class="flow-toolkit-icon" style="--node-color:${visual.color}">${safeText(visual.icon)}</span>
+    <div class="flow-toolkit-copy">
+      <strong>${safeText(item.label || visual.label)} <span class="flow-toolkit-category-badge">${safeText(getOrchestrationCategoryBadge(visual.category))}</span></strong>
+      <small>${safeText(visual.help || item.description || "")}</small>
+    </div>
+    <button type="button" class="flow-toolkit-add" title="Add to flow" aria-label="Add ${safeText(item.label || visual.label)} to flow">+</button>
+  `;
+  row.querySelector(".flow-toolkit-add")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    addOrchestrationNodeFromPalette(item.type);
+  });
+  return row;
+}
+
+function appendOrchestrationPaletteCollapsibleList(parent, items, { groupKey, defaultExpanded, title, hint }) {
+  const expanded = isOrchestrationPaletteSectionExpanded(groupKey, { defaultExpanded });
+  const section = document.createElement("section");
+  section.className = `flow-palette-category${expanded ? " is-expanded" : " is-collapsed"}`;
+  section.dataset.paletteSection = groupKey;
+
+  const header = document.createElement("button");
+  header.type = "button";
+  header.className = "flow-palette-category-toggle";
+  header.setAttribute("aria-expanded", expanded ? "true" : "false");
+  header.innerHTML = `
+    <span class="flow-palette-category-toggle-label">
+      <strong>${safeText(title)}</strong>
+      <span class="flow-palette-category-count">${items.length}</span>
+    </span>
+    ${hint ? `<span class="flow-palette-category-hint">${safeText(hint)}</span>` : ""}
+  `;
+  header.addEventListener("click", () => toggleOrchestrationPaletteSection(groupKey, defaultExpanded));
+  section.appendChild(header);
+
+  if (expanded) {
+    const list = document.createElement("div");
+    list.className = "flow-toolkit-list-inner";
+    items
+      .slice()
+      .sort((a, b) => String(a.label || a.type).localeCompare(String(b.label || b.type)))
+      .forEach((item) => list.appendChild(createOrchestrationPaletteWidgetRow(item)));
+    section.appendChild(list);
+  }
+  parent.appendChild(section);
+}
+
+function renderOrchestrationPalette() {
+  const palette = qs("#orchestrationNodePalette");
+  if (!palette) return;
+  ensureOrchestrationNodeTypesCatalog();
+  updateOrchestrationToolkitHint();
+  syncOrchestrationPaletteSearchPlaceholder();
+  const query = String(qs("#orchestrationPaletteSearch")?.value || "").trim().toLowerCase();
+  const hasQuery = Boolean(query);
+  palette.textContent = "";
+  const widgetTypes = orchestrationNodeTypes.filter((item) => {
+    const visual = getOrchestrationNodeVisual(item.type);
+    if (visual.category === "trigger" || visual.category === "control") return false;
+    if (orchestrationPaletteCategoryFilter !== "all" && visual.category !== orchestrationPaletteCategoryFilter) {
+      return false;
+    }
+    if (!query) return true;
+    const keywords = (visual.keywords || []).join(" ");
+    const hay = `${item.type} ${item.label} ${item.description} ${visual.label} ${keywords} ${visual.help || ""}`.toLowerCase();
+    return hay.includes(query);
+  });
+
+  const meta = qs("#orchestrationPaletteSearchMeta");
+  if (meta) {
+    if (orchestrationPaletteCategoryFilter === "integration") {
+      meta.hidden = false;
+      meta.textContent = hasQuery
+        ? `${widgetTypes.length} API${widgetTypes.length === 1 ? "" : "s"} match “${qs("#orchestrationPaletteSearch")?.value || ""}”`
+        : `${widgetTypes.length} external APIs — search or expand a group`;
+    } else if (hasQuery) {
+      meta.hidden = false;
+      meta.textContent = `${widgetTypes.length} match${widgetTypes.length === 1 ? "" : "es"}`;
+    } else {
+      meta.hidden = true;
+      meta.textContent = "";
+    }
+  }
+
+  if (!widgetTypes.length) {
+    palette.innerHTML = query || orchestrationPaletteCategoryFilter !== "all"
+      ? '<p class="flow-sidebar-empty">No components match — try another category or search.</p>'
+      : '<p class="flow-sidebar-empty">No components loaded — click Reload above.</p>';
+    return;
+  }
+
+  const categoriesToRender =
+    orchestrationPaletteCategoryFilter === "all"
+      ? ORCHESTRATION_PALETTE_CATEGORIES.filter((item) => item.id !== "all" && item.id !== "trigger")
+      : ORCHESTRATION_PALETTE_CATEGORIES.filter((item) => item.id === orchestrationPaletteCategoryFilter);
+
+  categoriesToRender.forEach((category) => {
+    const items = widgetTypes.filter((item) => getOrchestrationNodeVisual(item.type).category === category.id);
+    if (!items.length) return;
+
+    const categoryKey = `cat:${category.id}`;
+    // Keep Connect visible on All — otherwise 200+ APIs hide behind one collapsed row.
+    const categoryDefaultExpanded = true;
+
+    if (category.id === "integration") {
+      const categoryExpanded = isOrchestrationPaletteSectionExpanded(categoryKey, {
+        defaultExpanded: categoryDefaultExpanded,
+      });
+      const shell = document.createElement("section");
+      shell.className = `flow-palette-category flow-palette-category-connect${categoryExpanded ? " is-expanded" : " is-collapsed"}`;
+      shell.dataset.paletteSection = categoryKey;
+
+      const header = document.createElement("button");
+      header.type = "button";
+      header.className = "flow-palette-category-toggle";
+      header.setAttribute("aria-expanded", categoryExpanded ? "true" : "false");
+      header.innerHTML = `
+        <span class="flow-palette-category-toggle-label">
+          <strong>${safeText(category.label)}</strong>
+          <span class="flow-palette-category-count">${items.length}</span>
+        </span>
+        <span class="flow-palette-category-hint">${safeText(category.hint || "External APIs")}</span>
+      `;
+      header.addEventListener("click", () =>
+        toggleOrchestrationPaletteSection(categoryKey, categoryDefaultExpanded),
+      );
+      shell.appendChild(header);
+
+      if (!categoryExpanded) {
+        palette.appendChild(shell);
+        return;
+      }
+
+      const tip = document.createElement("p");
+      tip.className = "flow-palette-connect-tip";
+      tip.textContent = hasQuery
+        ? `${items.length} API${items.length === 1 ? "" : "s"} match your search — expand a group to add.`
+        : `Browse ${items.length} external APIs by vendor or letter. Search (e.g. RabbitMQ, Stripe) to jump faster.`;
+      shell.appendChild(tip);
+
+      // Pin frequent connectors at top when not searching.
+      if (!hasQuery) {
+        const pinnedTypes = [
+          "http_request",
+          "graphql_request",
+          "github_api",
+          "slack_api",
+          "rabbitmq_api",
+          "opensearch_api",
+          "postgres_api",
+          "s3_api",
+        ];
+        const pinned = pinnedTypes
+          .map((type) => items.find((item) => item.type === type))
+          .filter(Boolean);
+        if (pinned.length) {
+          appendOrchestrationPaletteCollapsibleList(shell, pinned, {
+            groupKey: "grp:integration:popular",
+            defaultExpanded: true,
+            title: "Popular",
+            hint: "Common connectors",
+          });
+        }
+      }
+
+      const groups = new Map();
+      items.forEach((item) => {
+        const group = getOrchestrationPaletteVendorGroup(item);
+        if (!groups.has(group.id)) groups.set(group.id, { ...group, items: [] });
+        groups.get(group.id).items.push(item);
+      });
+      [...groups.values()]
+        .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+        .forEach((group) => {
+          const groupKey = `grp:integration:${group.id}`;
+          // Search: expand matches. Small groups: expand. Large letter buckets: collapsed.
+          const defaultExpanded = hasQuery || group.items.length <= 12 || group.order < 100;
+          appendOrchestrationPaletteCollapsibleList(shell, group.items, {
+            groupKey,
+            defaultExpanded,
+            title: group.label,
+            hint: "",
+          });
+        });
+      palette.appendChild(shell);
+      return;
+    }
+
+    appendOrchestrationPaletteCollapsibleList(palette, items, {
+      groupKey: categoryKey,
+      defaultExpanded: true,
+      title: category.label,
+      hint: category.hint || "",
+    });
+  });
+}
+
+function setOrchestrationPaletteSectionsExpanded(expanded) {
+  const keys = new Set();
+  qsa("#orchestrationNodePalette [data-palette-section]").forEach((el) => {
+    const key = el.getAttribute("data-palette-section");
+    if (key) keys.add(key);
+  });
+  // Also seed known category/group keys from current filter so collapsed Connect subgroups expand.
+  ensureOrchestrationNodeTypesCatalog();
+  ORCHESTRATION_PALETTE_CATEGORIES.forEach((category) => {
+    if (category.id === "all" || category.id === "trigger") return;
+    keys.add(`cat:${category.id}`);
+  });
+  if (orchestrationPaletteCategoryFilter === "all" || orchestrationPaletteCategoryFilter === "integration") {
+    const integrationItems = orchestrationNodeTypes.filter(
+      (item) => getOrchestrationNodeVisual(item.type).category === "integration",
+    );
+    keys.add("grp:integration:popular");
+    integrationItems.forEach((item) => {
+      const group = getOrchestrationPaletteVendorGroup(item);
+      keys.add(`grp:integration:${group.id}`);
+    });
+  }
+  keys.forEach((key) => {
+    orchestrationPaletteExpandState[key] = expanded;
+  });
+  renderOrchestrationPalette();
+}
+
+function bindOrchestrationPaletteLibraryControls() {
+  qs("#orchestrationPaletteExpandAll")?.addEventListener("click", () => setOrchestrationPaletteSectionsExpanded(true));
+  qs("#orchestrationPaletteCollapseAll")?.addEventListener("click", () => setOrchestrationPaletteSectionsExpanded(false));
+  qs("#orchestrationPaletteShowConnect")?.addEventListener("click", () => {
+    orchestrationPaletteCategoryFilter = "integration";
+    const search = qs("#orchestrationPaletteSearch");
+    if (search) search.value = "";
+    orchestrationPaletteExpandState["cat:integration"] = true;
+    syncOrchestrationPaletteSearchPlaceholder();
+    renderOrchestrationPaletteCategoryFilters();
+    renderOrchestrationPalette();
   });
 }
 
@@ -29475,10 +42558,134 @@ function parseOrchestrationTriggerConfig(raw) {
 function syncOrchestrationScheduleToolbarUi(triggerType = getOrchestrationFlowFormValues()?.trigger_type || "manual") {
   const wrap = qs("#orchestrationToolbarScheduleWrap");
   const cronInput = qs("#orchestrationToolbarCron");
-  const isSchedule = String(triggerType || "").trim().toLowerCase() === "schedule";
+  const webhookWrap = qs("#orchestrationToolbarWebhookWrap");
+  const webhookPath = qs("#orchestrationToolbarWebhookPath");
+  const tickBtn = qs("#orchestrationToolbarSchedulerTick");
+  const normalized = String(triggerType || "").trim().toLowerCase();
+  const isSchedule = normalized === "schedule";
+  const isWebhook = normalized === "webhook";
   if (wrap) wrap.hidden = !isSchedule;
+  if (webhookWrap) webhookWrap.hidden = !isWebhook;
+  if (tickBtn) tickBtn.hidden = !isSchedule;
   if (cronInput && isSchedule && !cronInput.value.trim()) {
     cronInput.value = "0 9 * * *";
+  }
+  if (webhookPath && isWebhook && !webhookPath.value.trim()) {
+    const values = getOrchestrationFlowFormValues();
+    const cfg = parseOrchestrationTriggerConfig(values?.trigger_config_json);
+    webhookPath.value = String(cfg.webhook_path_ref || cfg.path_ref || "flow-hook").trim() || "flow-hook";
+  }
+}
+
+function getOrchestrationWebhookTriggerUrl(pathRef) {
+  const ref = String(pathRef || "").trim().replace(/^\/+/, "");
+  if (!ref) return "";
+  const base = String(state.apiBase || window.location.origin || "").replace(/\/+$/, "");
+  return `${base}/orchestration/webhooks/${encodeURIComponent(ref)}/trigger`;
+}
+
+function resolveOrchestrationRunInputText(rawPayload = "") {
+  const raw = String(rawPayload || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      if (parsed.run_input != null) return String(parsed.run_input);
+      if (parsed.input != null) {
+        return typeof parsed.input === "string" ? parsed.input : JSON.stringify(parsed.input);
+      }
+      return JSON.stringify(parsed);
+    }
+    return String(parsed);
+  } catch (_err) {
+    return raw;
+  }
+}
+
+function getOrchestrationToolbarRunInputText() {
+  const webhookPayload = String(qs("#orchestrationToolbarWebhookPayload")?.value || "").trim();
+  const runPayload = String(qs("#orchestrationToolbarRunInput")?.value || "").trim();
+  return resolveOrchestrationRunInputText(runPayload || webhookPayload);
+}
+
+async function copyOrchestrationWebhookUrl() {
+  const pathInput = qs("#orchestrationToolbarWebhookPath");
+  const pathRef = String(pathInput?.value || "").trim();
+  const url = getOrchestrationWebhookTriggerUrl(pathRef);
+  if (!url) {
+    setOrchestrationFeedback("Set a webhook path first.", "orchestrationBuilderFeedback", "warn");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    setOrchestrationFeedback("Webhook URL copied.", "orchestrationBuilderFeedback", "success");
+  } catch {
+    setOrchestrationFeedback(url, "orchestrationBuilderFeedback", "info");
+  }
+}
+
+async function testOrchestrationWebhookTrigger() {
+  syncOrchestrationFormFromToolbar();
+  const values = getOrchestrationFlowFormValues();
+  const cfg = parseOrchestrationTriggerConfig(values?.trigger_config_json);
+  const pathRef = String(cfg.webhook_path_ref || cfg.path_ref || "").trim();
+  if (!pathRef) {
+    setOrchestrationFeedback("Save a webhook path before testing.", "orchestrationBuilderFeedback", "warn");
+    return;
+  }
+  if (!values?.flow_id) {
+    setOrchestrationFeedback("Save the flow before testing the webhook.", "orchestrationBuilderFeedback", "warn");
+    return;
+  }
+  const runInput = getOrchestrationToolbarRunInputText() || "Flow Studio webhook test";
+  const body = { dry_run: true, run_input: runInput };
+  try {
+    setOrchestrationFeedback("Firing webhook test…", "orchestrationBuilderFeedback", "info");
+    const result = await api(`/orchestration/webhooks/${encodeURIComponent(pathRef)}/trigger`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    const runId = result?.run_id || result?.id || "ok";
+    setOrchestrationFeedback(`Webhook test accepted (run ${runId}).`, "orchestrationBuilderFeedback", "success");
+    void loadFlowRuns();
+  } catch (err) {
+    setOrchestrationFeedback(
+      `Webhook test failed: ${err?.message || err}`,
+      "orchestrationBuilderFeedback",
+      "error",
+    );
+  }
+}
+
+async function tickOrchestrationScheduler(dryRun = false) {
+  try {
+    setOrchestrationFeedback(
+      dryRun ? "Checking due schedules…" : "Running due scheduled flows…",
+      "orchestrationBuilderFeedback",
+      "info",
+    );
+    const result = await api(`/orchestration/scheduler/tick?dry_run=${dryRun ? "true" : "false"}`);
+    const triggered = Array.isArray(result?.triggered) ? result.triggered : [];
+    if (!triggered.length) {
+      setOrchestrationFeedback(
+        dryRun ? "No scheduled flows are due." : "Scheduler tick complete — nothing due.",
+        "orchestrationBuilderFeedback",
+        "info",
+      );
+      return;
+    }
+    setOrchestrationFeedback(
+      `Scheduler ${dryRun ? "preview" : "tick"}: ${triggered.length} flow${triggered.length === 1 ? "" : "s"}.`,
+      "orchestrationBuilderFeedback",
+      "success",
+    );
+    void loadFlowRuns();
+  } catch (err) {
+    setOrchestrationFeedback(
+      `Scheduler tick failed: ${err?.message || err}`,
+      "orchestrationBuilderFeedback",
+      "error",
+    );
   }
 }
 
@@ -29488,11 +42695,21 @@ function syncOrchestrationToolbarFromForm() {
   const envSelect = qs("#orchestrationToolbarEnvironment");
   const triggerSelect = qs("#orchestrationToolbarTrigger");
   const cronInput = qs("#orchestrationToolbarCron");
+  const webhookPath = qs("#orchestrationToolbarWebhookPath");
   if (nameInput) nameInput.value = resolveOrchestrationFlowName(values);
   if (envSelect) envSelect.value = values.environment || "dev";
   if (triggerSelect) triggerSelect.value = values.trigger_type || "manual";
   const triggerConfig = parseOrchestrationTriggerConfig(values?.trigger_config_json);
   if (cronInput) cronInput.value = String(triggerConfig.cron_expression || "0 9 * * *");
+  const cronPreset = qs("#orchestrationToolbarCronPreset");
+  if (cronPreset && cronInput) {
+    const cron = String(cronInput.value || "").trim();
+    const match = Array.from(cronPreset.options).some((opt) => opt.value && opt.value === cron);
+    cronPreset.value = match ? cron : "";
+  }
+  if (webhookPath) {
+    webhookPath.value = String(triggerConfig.webhook_path_ref || triggerConfig.path_ref || "").trim();
+  }
   syncOrchestrationScheduleToolbarUi(values.trigger_type || "manual");
   updateOrchestrationBadges(values);
 }
@@ -29502,6 +42719,7 @@ function syncOrchestrationFormFromToolbar() {
   const envSelect = qs("#orchestrationToolbarEnvironment");
   const triggerSelect = qs("#orchestrationToolbarTrigger");
   const cronInput = qs("#orchestrationToolbarCron");
+  const webhookPath = qs("#orchestrationToolbarWebhookPath");
   if (nameInput) {
     const trimmed = nameInput.value.trim();
     if (trimmed) setOrchestrationFormFields({ flow_name: trimmed });
@@ -29517,6 +42735,16 @@ function syncOrchestrationFormFromToolbar() {
         trigger_config_json: JSON.stringify({ cron_expression: cron }),
       });
       if (cronInput && !cronInput.value.trim()) cronInput.value = cron;
+    } else if (triggerType === "webhook") {
+      const pathRef = String(webhookPath?.value || "flow-hook").trim() || "flow-hook";
+      const existing = parseOrchestrationTriggerConfig(getOrchestrationFlowFormValues()?.trigger_config_json);
+      setOrchestrationFormFields({
+        trigger_config_json: JSON.stringify({
+          ...existing,
+          webhook_path_ref: pathRef,
+        }),
+      });
+      if (webhookPath && !webhookPath.value.trim()) webhookPath.value = pathRef;
     }
   }
   updateOrchestrationBadges(getOrchestrationFlowFormValues());
@@ -29547,7 +42775,7 @@ function renderOrchestrationConsoleSummary() {
   const widgets = countOrchestrationWidgets();
   const parallelGroups = countOrchestrationParallelGroups();
   if (!isOrchestrationFlowActive() && !values?.flow_id) {
-    target.textContent = "Choose a template or create a blank flow with Start and End.";
+    target.textContent = "Flow Studio ready — start blank or open a template, then wire Start → steps → End on the board.";
     return;
   }
   const parallelLabel = parallelGroups ? ` · ${parallelGroups} parallel group${parallelGroups === 1 ? "" : "s"}` : "";
@@ -29624,8 +42852,12 @@ function renderOrchestrationSecurityPanel() {
   const liveEnabled = String(policy.live_executor_enabled || "false").toLowerCase() === "true";
   const liveProd = String(policy.live_executor_prod_enabled || "false").toLowerCase() === "true";
   panel.innerHTML = `
-    <article class="flow-security-card"><span class="flow-security-icon">⚡</span><strong>Live executor</strong><p>${liveEnabled ? `Enabled for dev/staging${liveProd ? " and production" : " (production requires prod flag)"}` : "Disabled — dry runs simulate; enable live executor for gateway-backed nodes"}</p></article>
-    <article class="flow-security-card"><span class="flow-security-icon">🌐</span><strong>Allowed websites</strong><p>${hosts.length ? hosts.join(", ") : "None configured — external calls are blocked"}</p></article>
+    <article class="flow-security-card"><span class="flow-security-icon">⚡</span><strong>Live executor</strong><p>${
+      liveEnabled
+        ? `ON for non-prod${liveProd ? " · prod ON" : " · prod OFF (orchestration.live_executor_prod_enabled)"}`
+        : "OFF — dry runs simulate; set orchestration.live_executor_enabled for gateway-backed nodes"
+    }</p></article>
+    <article class="flow-security-card"><span class="flow-security-icon">🌐</span><strong>Allowed websites</strong><p>${hosts.length ? hosts.join(", ") : "None configured — GitHub/Jira/HTTP/webhooks outbound blocked until allowlisted"}</p></article>
     <article class="flow-security-card"><span class="flow-security-icon">📊</span><strong>Step limit</strong><p>Up to ${safeText(policy.max_nodes_per_flow ?? "50")} steps per flow</p></article>
     <article class="flow-security-card"><span class="flow-security-icon">🔒</span><strong>Production runs</strong><p>${policy.prod_run_requires_approval === false ? "Approval optional" : "Requires approval before running"}${policy.prod_run_requires_access_certification === false ? "" : " · access certification required"}</p></article>
     <article class="flow-security-card"><span class="flow-security-icon">📧</span><strong>Notifications</strong><p>${policy.notify_nodes_remain_simulated === false ? "Email/SMS nodes deliver live when channels and bindings are configured" : "Configure notification channels for live email/SMS delivery"}</p></article>
@@ -29672,6 +42904,119 @@ async function renderOrchestrationIgaPosturePanel() {
   }
 }
 
+async function explainOrchestrationIga(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#orchestrationIgaExplainForm");
+  const result = qs("#orchestrationIgaExplainResult");
+  const payloadTarget = qs("#orchestrationIgaExplainPayload");
+  const flowId = orchestrationSelectedFlowId || getOrchestrationFlowFormValues()?.flow_id;
+  if (!flowId) {
+    if (result) result.textContent = "Select a saved flow first.";
+    return;
+  }
+  const action = String(form?.elements?.action?.value || "run").trim() || "run";
+  try {
+    const data = await api(`/orchestration/flows/${encodeURIComponent(flowId)}/iga/explain`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+    if (result) {
+      result.textContent = `${safeText(data.decision)} · allowed=${safeText(data.allowed)}${
+        data.error_code ? ` · ${safeText(data.error_code)}` : ""
+      } · trace ${safeText(data.decision_trace_id)}`;
+    }
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+  } catch (error) {
+    if (result) result.textContent = `Error: ${safeText(error.message)}`;
+  }
+}
+
+async function loadOrchestrationApprovalEvents() {
+  const result = qs("#orchestrationApprovalEventsResult");
+  const table = qs("#orchestrationApprovalEventsTable");
+  const flowId = orchestrationSelectedFlowId || getOrchestrationFlowFormValues()?.flow_id;
+  if (!flowId) {
+    if (result) result.textContent = "Select a saved flow to load approval events.";
+    if (table) setTableMessage(table, 7, "Select a flow first.");
+    return;
+  }
+  if (table) setTableMessage(table, 7, "Loading...");
+  try {
+    const rows = await api(`/orchestration/flows/${encodeURIComponent(flowId)}/approval-events`);
+    const items = Array.isArray(rows) ? rows : [];
+    if (!table) return;
+    if (!items.length) {
+      setTableMessage(table, 7, "No approval events for this flow.");
+      if (result) result.textContent = `No approval events for ${safeText(flowId)}.`;
+      return;
+    }
+    table.textContent = "";
+    items.forEach((row) => {
+      appendTableRow(table, [
+        formatComplianceDate(row.occurred_at),
+        row.event_type || "--",
+        row.stage_id || "--",
+        row.action || "--",
+        `${row.state_from || "—"} → ${row.state_to || "—"}`,
+        `${row.actor_id || "--"} (${row.actor_role || "--"})`,
+        row.decision || "--",
+      ]);
+    });
+    if (result) result.textContent = `Loaded ${items.length} approval events for ${safeText(flowId)}.`;
+  } catch (error) {
+    if (table) setTableMessage(table, 7, `Error: ${safeText(error.message)}`);
+    if (result) result.textContent = `Error: ${safeText(error.message)}`;
+  }
+}
+
+function summarizeOrchestrationLiveReadiness(data) {
+  if (!data) return "Live readiness unavailable.";
+  const hosts = data.connector_hosts || {};
+  const missing = Array.isArray(hosts.missing_hosts) ? hosts.missing_hosts : [];
+  const actions = Array.isArray(data.actions_applied) ? data.actions_applied : [];
+  const recs = Array.isArray(data.recommendations) ? data.recommendations.slice(0, 2) : [];
+  return [
+    `non-prod ready: ${data.non_prod_live_ready ? "yes" : "no"}`,
+    `prod live: ${data.prod_live_enabled ? "on" : "off"}`,
+    `hosts ready: ${hosts.ready ? "yes" : "no"}`,
+    missing.length ? `missing hosts: ${missing.join(", ")}` : null,
+    actions.length ? `applied: ${actions.join("; ")}` : null,
+    recs.length ? `next: ${recs.join(" · ")}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+async function refreshOrchestrationLiveReadiness() {
+  const result = qs("#orchestrationLiveReadinessResult");
+  try {
+    orchestrationLiveReadinessSnapshot = await api("/orchestration/live-readiness");
+    if (result) result.textContent = summarizeOrchestrationLiveReadiness(orchestrationLiveReadinessSnapshot);
+    renderOrchestrationConsoleSummary();
+    renderOrchestrationSecurityPanel();
+  } catch (error) {
+    if (result) result.textContent = `Error: ${safeText(error.message)}`;
+  }
+}
+
+async function bootstrapOrchestrationLiveReadiness() {
+  const result = qs("#orchestrationLiveReadinessResult");
+  try {
+    orchestrationLiveReadinessSnapshot = await api("/orchestration/live-readiness/bootstrap", {
+      method: "POST",
+      body: JSON.stringify({
+        seed_connector_hosts: true,
+        enable_non_prod_live: false,
+      }),
+    });
+    if (result) result.textContent = summarizeOrchestrationLiveReadiness(orchestrationLiveReadinessSnapshot);
+    await loadOrchestrationNodeTypes();
+    renderOrchestrationConsoleSummary();
+  } catch (error) {
+    if (result) result.textContent = `Error: ${safeText(error.message)}`;
+  }
+}
+
 async function loadOrchestrationEntitlementPicker() {
   const datalist = qs("#orchestrationEntitlementPicker");
   if (!datalist) return;
@@ -29694,7 +43039,28 @@ async function loadOrchestrationNodeTypes() {
     if (!orchestrationNodeTypes.length) {
       orchestrationNodeTypes = getOrchestrationFallbackNodeTypes();
     }
+    const knownTypes = new Set(orchestrationNodeTypes.map((item) => item.type));
+    getOrchestrationFallbackNodeTypes().forEach((item) => {
+      if (!knownTypes.has(item.type) && ["while_loop", "do_while"].includes(item.type)) {
+        orchestrationNodeTypes.push(item);
+        knownTypes.add(item.type);
+      }
+    });
+    orchestrationNodeTypes = orchestrationNodeTypes.map((item) => {
+      const visual = getOrchestrationNodeVisual(item.type);
+      if (!visual?.label) return item;
+      // Prefer UI registry labels for logic/data widgets we recently renamed.
+      if (["foreach_map", "set_fields", "static_data", "condition", "split_in_batches", "while_loop", "do_while"].includes(item.type)) {
+        return { ...item, label: visual.label, description: visual.help || item.description };
+      }
+      return item;
+    });
     orchestrationPolicySnapshot = payload.policy || null;
+    try {
+      orchestrationLiveReadinessSnapshot = await api("/orchestration/live-readiness");
+    } catch {
+      orchestrationLiveReadinessSnapshot = null;
+    }
     renderOrchestrationPalette();
     renderOrchestrationSecurityPanel();
   } catch (error) {
@@ -29934,6 +43300,23 @@ function renderOrchestrationDataConnectionTestTable(payload) {
   });
 }
 
+async function inspectOrchestrationDataConnection() {
+  const form = qs("#orchestrationDataConnectionTestForm");
+  const result = qs("#orchestrationDataConnectionTestResult");
+  const payloadTarget = qs("#orchestrationDataConnectionPayload");
+  const connectionId = String(form?.elements?.connection_id?.value || "platform").trim() || "platform";
+  if (result) result.textContent = `Inspecting connection ${connectionId}...`;
+  try {
+    const data = await api(`/orchestration/data-connections/${encodeURIComponent(connectionId)}`);
+    if (payloadTarget) payloadTarget.textContent = JSON.stringify(data, null, 2);
+    if (result) {
+      result.textContent = `Connection ${safeText(data.connection_id)} · driver ${safeText(data.driver)} · enabled ${safeText(data.enabled)} · max_rows ${safeText(data.max_rows)}.`;
+    }
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function testOrchestrationDataConnection(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#orchestrationDataConnectionTestForm");
@@ -30042,18 +43425,22 @@ async function saveOrchestrationAccessPolicy() {
   }
 }
 
-function assignOrchestrationNodePositions() {
+function assignOrchestrationNodePositions({ force = false } = {}) {
   let y = 120;
   orchestrationBuilderItems.forEach((item) => {
     if (isOrchestrationStepItem(item)) {
-      item.node.position = { x: 280, y };
+      if (force || !item.node.position || item.node.position.x == null || item.node.position.y == null) {
+        item.node.position = { x: 280, y };
+      }
       y += 148;
       return;
     }
     if (isOrchestrationParallelItem(item)) {
       item.branches.forEach((branch, branchIndex) => {
         branch.forEach((node, nodeIndex) => {
-          node.position = { x: 120 + branchIndex * 180, y: y + nodeIndex * 148 };
+          if (force || !node.position || node.position.x == null || node.position.y == null) {
+            node.position = { x: 120 + branchIndex * 180, y: y + nodeIndex * 148 };
+          }
         });
       });
       y += 220;
@@ -30061,12 +43448,165 @@ function assignOrchestrationNodePositions() {
   });
 }
 
+function buildLaneDerivedOrchestrationEdges(nodes) {
+  const edges = [];
+  let prevTerminal = null;
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  orchestrationBuilderItems.forEach((item) => {
+    if (isOrchestrationStepItem(item)) {
+      if (prevTerminal && nodeIds.has(item.node.id)) {
+        edges.push({ source: prevTerminal, target: item.node.id });
+      }
+      prevTerminal = item.node.id;
+      return;
+    }
+    if (isOrchestrationParallelItem(item)) {
+      const forkId = item.forkId || `fork-${item.groupId}`;
+      const joinId = item.joinId || `join-${item.groupId}`;
+      if (prevTerminal) edges.push({ source: prevTerminal, target: forkId });
+      item.branches.forEach((branch, branchIndex) => {
+        if (!branch.length) return;
+        edges.push({ source: forkId, target: branch[0].id, branch: branchIndex });
+        for (let i = 0; i < branch.length - 1; i += 1) {
+          edges.push({ source: branch[i].id, target: branch[i + 1].id });
+        }
+        edges.push({ source: branch[branch.length - 1].id, target: joinId });
+      });
+      prevTerminal = joinId;
+    }
+  });
+  return edges;
+}
+
+function sanitizeOrchestrationBoardEdges(nodeIds) {
+  const ids = nodeIds instanceof Set ? new Set(nodeIds) : new Set(nodeIds || []);
+  ids.add(ORCHESTRATION_FLOW_START_ID);
+  ids.add(ORCHESTRATION_FLOW_END_ID);
+  return (orchestrationBoardEdges || [])
+    .filter((edge) => edge && ids.has(edge.source) && ids.has(edge.target) && edge.source !== edge.target)
+    .filter((edge) => !(edge.source === ORCHESTRATION_FLOW_END_ID)) // Stop never fans out
+    .filter((edge) => !(edge.target === ORCHESTRATION_FLOW_START_ID)) // Start never receives
+    .map((edge) => ({
+      source: String(edge.source),
+      target: String(edge.target),
+      ...(edge.kind ? { kind: String(edge.kind) } : {}),
+      ...(edge.branch != null ? { branch: edge.branch } : {}),
+    }));
+}
+
+function ensureOrchestrationBoardEdgesSeeded(nodes) {
+  // Board arrows are human-drawn only — never invent edges from lane order here.
+  orchestrationBoardEdges = sanitizeOrchestrationBoardEdges((nodes || []).map((node) => node.id));
+}
+
+function connectOrchestrationBoardEdge(sourceId, targetId, kind = "") {
+  const source = String(sourceId || "").trim();
+  const target = String(targetId || "").trim();
+  const edgeKind = String(kind || orchestrationWireFromKind || "").trim();
+  if (!source || !target || source === target) return false;
+  if (target === ORCHESTRATION_FLOW_START_ID || source === ORCHESTRATION_FLOW_END_ID) return false;
+  if (!getOrchestrationBoardEntityById(source) || !getOrchestrationBoardEntityById(target)) return false;
+  ensureOrchestrationBoardEdgesSeeded(flattenOrchestrationNodes());
+  pushOrchestrationHistorySnapshot("wire edge");
+  // One primary successor per source for default wires (branch kinds stay multi-edge).
+  if (!edgeKind) {
+    orchestrationBoardEdges = orchestrationBoardEdges.filter(
+      (edge) => !(edge.source === source && !edge.kind),
+    );
+  } else {
+    orchestrationBoardEdges = orchestrationBoardEdges.filter(
+      (edge) => !(edge.source === source && (edge.target === target || edge.kind === edgeKind)),
+    );
+  }
+  orchestrationBoardEdges.push(edgeKind ? { source, target, kind: edgeKind } : { source, target });
+  orchestrationSuppressedSyntheticEdges.delete(`${source}>>${target}`);
+  applyOrchestrationBranchWireToNode(source, target, edgeKind);
+  orchestrationWireFromNodeId = "";
+  orchestrationWireFromKind = "";
+  clearOrchestrationBoardEdgeSelection();
+  return true;
+}
+
+function applyOrchestrationBranchWireToNode(sourceId, targetId, kind) {
+  const sourceNode = getOrchestrationNodeById(sourceId);
+  if (!sourceNode) return;
+  sourceNode.config = sourceNode.config || {};
+  if (kind === "true") {
+    sourceNode.config.true_branch = targetId;
+  } else if (kind === "false") {
+    sourceNode.config.false_branch = targetId;
+  } else if (kind === "body") {
+    sourceNode.config.body_branch = targetId;
+  } else if (kind === "exit") {
+    sourceNode.config.exit_branch = targetId;
+  } else if (kind === "error") {
+    sourceNode.config.error_branch = targetId;
+  } else if (kind === "default" && sourceNode.type === "switch") {
+    sourceNode.config.default_branch = targetId;
+  }
+}
+
+function clearOrchestrationBranchWireFromNode(sourceId, targetId) {
+  const sourceNode = getOrchestrationNodeById(sourceId);
+  if (!sourceNode?.config) return;
+  if (String(sourceNode.config.true_branch || "") === targetId) sourceNode.config.true_branch = "";
+  if (String(sourceNode.config.false_branch || "") === targetId) sourceNode.config.false_branch = "";
+  if (String(sourceNode.config.body_branch || "") === targetId) sourceNode.config.body_branch = "";
+  if (String(sourceNode.config.exit_branch || "") === targetId) sourceNode.config.exit_branch = "";
+  if (String(sourceNode.config.error_branch || "") === targetId) sourceNode.config.error_branch = "";
+  if (String(sourceNode.config.default_branch || "") === targetId) sourceNode.config.default_branch = "";
+}
+
+function disconnectOrchestrationBoardEdge(sourceId, targetId) {
+  const source = String(sourceId || "").trim();
+  const target = String(targetId || "").trim();
+  if (!source || !target) return false;
+  pushOrchestrationHistorySnapshot("delete edge");
+  const before = orchestrationBoardEdges.length;
+  orchestrationBoardEdges = orchestrationBoardEdges.filter(
+    (edge) => !(edge.source === source && edge.target === target),
+  );
+  clearOrchestrationBranchWireFromNode(source, target);
+  const key = `${source}>>${target}`;
+  // Suppress auto Start/Stop links so they stay deleted until re-linked.
+  if (
+    source === ORCHESTRATION_FLOW_START_ID ||
+    target === ORCHESTRATION_FLOW_END_ID ||
+    orchestrationBoardEdges.length === before
+  ) {
+    orchestrationSuppressedSyntheticEdges.add(key);
+  }
+  if (
+    orchestrationSelectedBoardEdge?.source === source &&
+    orchestrationSelectedBoardEdge?.target === target
+  ) {
+    orchestrationSelectedBoardEdge = null;
+  }
+  return true;
+}
+
+function selectOrchestrationBoardEdge(sourceId, targetId) {
+  const source = String(sourceId || "").trim();
+  const target = String(targetId || "").trim();
+  if (!source || !target) {
+    orchestrationSelectedBoardEdge = null;
+    return;
+  }
+  orchestrationSelectedBoardEdge = { source, target };
+}
+
+function clearOrchestrationBoardEdgeSelection() {
+  orchestrationSelectedBoardEdge = null;
+}
+
+function isOrchestrationSyntheticEdgeSuppressed(sourceId, targetId) {
+  return orchestrationSuppressedSyntheticEdges.has(`${sourceId}>>${targetId}`);
+}
+
 function buildOrchestrationGraphJson() {
   syncOrchestrationBuilderConfigs();
   assignOrchestrationNodePositions();
   const nodes = [];
-  const edges = [];
-  let prevTerminal = null;
 
   orchestrationBuilderItems.forEach((item) => {
     if (isOrchestrationStepItem(item)) {
@@ -30074,11 +43614,10 @@ function buildOrchestrationGraphJson() {
       nodes.push({
         id: node.id,
         type: node.type,
+        name: normalizeOrchestrationNodeName(node.name) || getOrchestrationNodeDisplayName(node),
         config: node.config || {},
         position: node.position,
       });
-      if (prevTerminal) edges.push({ source: prevTerminal, target: node.id });
-      prevTerminal = node.id;
       return;
     }
 
@@ -30090,46 +43629,133 @@ function buildOrchestrationGraphJson() {
       nodes.push({
         id: forkId,
         type: "parallel_fork",
+        name: "Parallel fork",
         config: { group_id: groupId, branch_count: branchCount },
         position: { x: 280, y: 0 },
       });
       nodes.push({
         id: joinId,
         type: "parallel_join",
+        name: "Parallel join",
         config: { group_id: groupId, fork_node_id: forkId },
         position: { x: 280, y: 0 },
       });
-      if (prevTerminal) edges.push({ source: prevTerminal, target: forkId });
 
-      item.branches.forEach((branch, branchIndex) => {
+      item.branches.forEach((branch) => {
         if (!branch.length) return;
         branch.forEach((node) => {
           nodes.push({
             id: node.id,
             type: node.type,
+            name: normalizeOrchestrationNodeName(node.name) || getOrchestrationNodeDisplayName(node),
             config: node.config || {},
             position: node.position,
           });
         });
-        edges.push({ source: forkId, target: branch[0].id, branch: branchIndex });
-        for (let i = 0; i < branch.length - 1; i += 1) {
-          edges.push({ source: branch[i].id, target: branch[i + 1].id });
-        }
-        edges.push({ source: branch[branch.length - 1].id, target: joinId });
       });
-
-      prevTerminal = joinId;
     }
   });
 
-  return JSON.stringify({ nodes, edges });
+  let edges;
+  if (orchestrationCanvasLayout === "board") {
+    ensureOrchestrationBoardEdgesSeeded(nodes);
+    edges = sanitizeOrchestrationBoardEdges(nodes.map((node) => node.id));
+    // Ensure condition/error branch targets are present as edges for runtime.
+    nodes.forEach((node) => {
+      const config = node.config || {};
+      ["true_branch", "false_branch", "body_branch", "exit_branch", "error_branch", "default_branch"].forEach((field) => {
+        const target = String(config[field] || "").trim();
+        if (!target || !nodes.some((item) => item.id === target)) return;
+        if (edges.some((edge) => edge.source === node.id && edge.target === target)) return;
+        const kind =
+          field === "true_branch"
+            ? "true"
+            : field === "false_branch"
+              ? "false"
+              : field === "body_branch"
+                ? "body"
+                : field === "exit_branch"
+                  ? "exit"
+                  : field === "error_branch"
+                    ? "error"
+                    : "default";
+        edges.push({ source: node.id, target, kind });
+      });
+      if (node.type === "switch") {
+        try {
+          const cases = JSON.parse(String(config.cases_json || "[]"));
+          if (Array.isArray(cases)) {
+            cases.forEach((item) => {
+              const target = String(item?.branch || "").trim();
+              if (!target || !nodes.some((n) => n.id === target)) return;
+              if (edges.some((edge) => edge.source === node.id && edge.target === target)) return;
+              edges.push({ source: node.id, target, kind: "case" });
+            });
+          }
+        } catch (_err) {
+          /* ignore while editing */
+        }
+      }
+    });
+  } else {
+    edges = buildLaneDerivedOrchestrationEdges(nodes);
+  }
+
+  const runtimeEdges = edges.filter(
+    (edge) => !isOrchestrationAnchorId(edge.source) && !isOrchestrationAnchorId(edge.target),
+  );
+  const boardEdges = sanitizeOrchestrationBoardEdges(nodes.map((node) => node.id));
+
+  return JSON.stringify({
+    nodes,
+    edges: runtimeEdges,
+    anchors: {
+      start: getOrchestrationAnchorPosition("start"),
+      end: getOrchestrationAnchorPosition("end"),
+    },
+    board_edges: boardEdges,
+    suppressed_anchor_edges: Array.from(orchestrationSuppressedSyntheticEdges),
+  });
 }
 
 function parseOrchestrationGraphIntoBuilder(graphJson) {
   try {
     const graph = JSON.parse(graphJson || '{"nodes":[],"edges":[]}');
     const rawNodes = Array.isArray(graph.nodes) ? graph.nodes : [];
-    const rawEdges = Array.isArray(graph.edges) ? graph.edges : [];
+    const rawEdges = Array.isArray(graph.board_edges) && graph.board_edges.length
+      ? graph.board_edges
+      : Array.isArray(graph.edges)
+        ? graph.edges
+        : [];
+    if (graph.anchors && typeof graph.anchors === "object") {
+      orchestrationAnchorPositions = {
+        start: {
+          x: Number(graph.anchors.start?.x ?? 80),
+          y: Number(graph.anchors.start?.y ?? 80),
+        },
+        end: {
+          x: Number(graph.anchors.end?.x ?? 80),
+          y: Number(graph.anchors.end?.y ?? 520),
+        },
+      };
+    } else {
+      orchestrationAnchorPositions = { start: { x: 80, y: 80 }, end: { x: 80, y: 520 } };
+    }
+    orchestrationSuppressedSyntheticEdges = new Set(
+      Array.isArray(graph.suppressed_anchor_edges)
+        ? graph.suppressed_anchor_edges.map((item) => String(item || "")).filter(Boolean)
+        : [],
+    );
+    orchestrationSelectedBoardEdge = null;
+    orchestrationBoardEdges = rawEdges
+      .filter((edge) => edge?.source && edge?.target)
+      .map((edge) => ({
+        source: String(edge.source),
+        target: String(edge.target),
+        ...(edge.kind ? { kind: String(edge.kind) } : {}),
+        ...(edge.branch != null ? { branch: edge.branch } : {}),
+      }));
+    orchestrationWireFromNodeId = "";
     const hasParallel = rawNodes.some((node) => node?.type === "parallel_fork");
 
     if (!hasParallel) {
@@ -30137,12 +43763,7 @@ function parseOrchestrationGraphIntoBuilder(graphJson) {
         .filter((node) => node?.type !== "flow_start" && node?.type !== "flow_end")
         .map((node, index) => ({
           kind: "step",
-          node: {
-            id: String(node.id || `node-${index + 1}`),
-            type: String(node.type || "llm_chat"),
-            config: node.config && typeof node.config === "object" ? node.config : {},
-            position: node.position && typeof node.position === "object" ? node.position : null,
-          },
+          node: orchestrationNodeFromGraphPayload(node, index),
         }));
     } else {
       const nodesById = {};
@@ -30189,12 +43810,7 @@ function parseOrchestrationGraphIntoBuilder(graphJson) {
               const branchNode = nodesById[current];
               if (!branchNode || branchNode.type === "parallel_fork" || branchNode.type === "parallel_join") break;
               consumed.add(current);
-              branchNodes.push({
-                id: String(branchNode.id),
-                type: String(branchNode.type || "llm_chat"),
-                config: branchNode.config && typeof branchNode.config === "object" ? branchNode.config : {},
-                position: branchNode.position && typeof branchNode.position === "object" ? branchNode.position : null,
-              });
+              branchNodes.push(orchestrationNodeFromGraphPayload(branchNode));
               const successors = (outgoing[current] || []).filter((target) => target !== joinId);
               current = successors[0] || null;
             }
@@ -30227,12 +43843,7 @@ function parseOrchestrationGraphIntoBuilder(graphJson) {
         consumed.add(nodeId);
         items.push({
           kind: "step",
-          node: {
-            id: String(node.id),
-            type: String(node.type || "llm_chat"),
-            config: node.config && typeof node.config === "object" ? node.config : {},
-            position: node.position && typeof node.position === "object" ? node.position : null,
-          },
+          node: orchestrationNodeFromGraphPayload(node),
         });
         const next = (outgoing[nodeId] || [])[0];
         if (next) walk(next);
@@ -30244,12 +43855,7 @@ function parseOrchestrationGraphIntoBuilder(graphJson) {
         if (node.type === "parallel_fork" || node.type === "parallel_join") return;
         items.push({
           kind: "step",
-          node: {
-            id: String(node.id),
-            type: String(node.type || "llm_chat"),
-            config: node.config && typeof node.config === "object" ? node.config : {},
-            position: node.position && typeof node.position === "object" ? node.position : null,
-          },
+          node: orchestrationNodeFromGraphPayload(node),
         });
       });
       orchestrationBuilderItems = items;
@@ -30262,81 +43868,6 @@ function parseOrchestrationGraphIntoBuilder(graphJson) {
   orchestrationSelectedNodeId =
     flattenOrchestrationNodes()[0]?.id || ORCHESTRATION_FLOW_START_ID;
   renderOrchestrationStudio();
-}
-
-function renderOrchestrationPalette() {
-  const palette = qs("#orchestrationNodePalette");
-  if (!palette) return;
-  ensureOrchestrationNodeTypesCatalog();
-  updateOrchestrationToolkitHint();
-  const query = String(qs("#orchestrationPaletteSearch")?.value || "").trim().toLowerCase();
-  palette.textContent = "";
-  const widgetTypes = orchestrationNodeTypes.filter((item) => {
-    const visual = getOrchestrationNodeVisual(item.type);
-    if (visual.category === "trigger" || visual.category === "control") return false;
-    if (orchestrationPaletteCategoryFilter !== "all" && visual.category !== orchestrationPaletteCategoryFilter) {
-      return false;
-    }
-    if (!query) return true;
-    const keywords = (visual.keywords || []).join(" ");
-    const hay = `${item.type} ${item.label} ${item.description} ${visual.label} ${keywords}`.toLowerCase();
-    return hay.includes(query);
-  });
-  if (!widgetTypes.length) {
-    palette.innerHTML = query || orchestrationPaletteCategoryFilter !== "all"
-      ? '<p class="flow-sidebar-empty">No components match — try another category or search.</p>'
-      : '<p class="flow-sidebar-empty">No components loaded — click Reload above.</p>';
-    return;
-  }
-  const categoriesToRender =
-    orchestrationPaletteCategoryFilter === "all"
-      ? ORCHESTRATION_PALETTE_CATEGORIES.filter((item) => item.id !== "all" && item.id !== "trigger")
-      : ORCHESTRATION_PALETTE_CATEGORIES.filter((item) => item.id === orchestrationPaletteCategoryFilter);
-  categoriesToRender.forEach((category) => {
-    const items = widgetTypes.filter((item) => getOrchestrationNodeVisual(item.type).category === category.id);
-    if (!items.length) return;
-    const section = document.createElement("section");
-    section.className = "flow-palette-category";
-    section.innerHTML = `<h5>${safeText(category.label)}</h5>${category.hint ? `<p class="flow-palette-category-hint">${safeText(category.hint)}</p>` : ""}`;
-    const list = document.createElement("div");
-    list.className = "flow-toolkit-list-inner";
-    items.forEach((item) => {
-      const visual = getOrchestrationNodeVisual(item.type);
-      const row = document.createElement("div");
-      row.className = "flow-toolkit-item";
-      if (orchestrationPaletteArmedType === item.type) row.classList.add("is-armed");
-      row.setAttribute("data-palette-node-type", item.type);
-      row.title = item.description || visual.help || item.label;
-      row.draggable = true;
-      row.addEventListener("dragstart", (event) => beginOrchestrationPaletteDrag(item.type, event));
-      row.addEventListener("dragend", clearOrchestrationDragState);
-      row.addEventListener("click", (event) => {
-        if (event.target.closest(".flow-toolkit-add")) return;
-        armOrchestrationPaletteWidget(item.type);
-      });
-      row.addEventListener("dblclick", (event) => {
-        event.preventDefault();
-        addOrchestrationNodeFromPalette(item.type);
-      });
-      row.innerHTML = `
-        <span class="flow-toolkit-grip" aria-hidden="true" title="Drag to canvas">⋮⋮</span>
-        <span class="flow-toolkit-icon" style="--node-color:${visual.color}">${safeText(visual.icon)}</span>
-        <div class="flow-toolkit-copy">
-          <strong>${safeText(item.label || visual.label)} <span class="flow-toolkit-category-badge">${safeText(getOrchestrationCategoryBadge(visual.category))}</span></strong>
-          <small>${safeText(visual.help || item.description || "")}</small>
-        </div>
-        <button type="button" class="flow-toolkit-add" title="Add to flow" aria-label="Add ${safeText(item.label || visual.label)} to flow">+</button>
-      `;
-      row.querySelector(".flow-toolkit-add")?.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        addOrchestrationNodeFromPalette(item.type);
-      });
-      list.appendChild(row);
-    });
-    section.appendChild(list);
-    palette.appendChild(section);
-  });
 }
 
 function switchOrchestrationSidebarTab(tabId) {
@@ -30363,22 +43894,14 @@ function updateOrchestrationToolkitHint() {
   if (!hint) return;
   if (orchestrationPaletteArmedType) {
     const visual = getOrchestrationNodeVisual(orchestrationPaletteArmedType);
-    hint.innerHTML = `<strong>${safeText(visual.label)}</strong> selected — click <strong>+</strong> on the lane or drag to a slot (serial or inside a parallel branch). Double-click the row to add at the end.`;
+    hint.innerHTML = `<strong>${safeText(visual.label)}</strong> ready — click <strong>+</strong> on the canvas.`;
     return;
   }
   if (orchestrationInsertAtIndex !== null && orchestrationInsertAtIndex !== undefined) {
-    const branchLabel =
-      orchestrationInsertBranchIndex !== null && orchestrationInsertBranchIndex !== undefined
-        ? `branch ${orchestrationInsertBranchIndex + 1} at `
-        : "";
-    const stepNum =
-      orchestrationInsertBranchIndex !== null && orchestrationInsertBranchIndex !== undefined
-        ? (orchestrationInsertBranchNodeIndex ?? 0) + 1
-        : orchestrationInsertAtIndex + 1;
-    hint.innerHTML = `Insert at ${branchLabel}step ${stepNum} — select a component below or drag one to the highlighted slot.`;
+    hint.innerHTML = "Choose a step below to insert at the highlighted slot.";
     return;
   }
-  hint.innerHTML = "Select a component, then click <strong>+</strong> on the lane — or drag to a slot between steps. Use <strong>+</strong> inside a parallel branch to add there.";
+  hint.innerHTML = "Pick a step, then click <strong>+</strong> on the canvas.";
 }
 
 function armOrchestrationPaletteWidget(type) {
@@ -30394,7 +43917,7 @@ function armOrchestrationPaletteWidget(type) {
   renderOrchestrationPalette();
   renderOrchestrationCanvas();
   const visual = getOrchestrationNodeVisual(nodeType);
-  setOrchestrationFeedback(`"${visual.label}" selected — click + on the serial lane or drag between steps.`, "orchestrationBuilderFeedback", "info");
+  setOrchestrationFeedback(`"${visual.label}" ready — click + on the canvas.`, "orchestrationBuilderFeedback", "info");
 }
 
 function updateOrchestrationDragUi(active) {
@@ -30405,6 +43928,22 @@ function updateOrchestrationDragUi(active) {
   if (viewport) viewport.classList.toggle("is-drop-active", Boolean(active));
   const lane = qs("#orchestrationCanvasLane");
   if (lane) lane.classList.toggle("is-drop-ready", Boolean(active || orchestrationPaletteArmedType));
+}
+
+function setOrchestrationDragGhost(event, label) {
+  if (!event?.dataTransfer?.setDragImage) return;
+  const existing = qs(".flow-drag-ghost");
+  if (existing) existing.remove();
+  const ghost = document.createElement("div");
+  ghost.className = "flow-drag-ghost";
+  ghost.textContent = String(label || "Move").slice(0, 48);
+  document.body.appendChild(ghost);
+  try {
+    event.dataTransfer.setDragImage(ghost, 20, 16);
+  } catch (_err) {
+    /* some browsers reject setDragImage outside dragstart */
+  }
+  window.setTimeout(() => ghost.remove(), 0);
 }
 
 function formatOrchestrationNodePreview(node, catalog) {
@@ -30423,6 +43962,19 @@ function formatOrchestrationNodePreview(node, catalog) {
       return `${config.source_node_id} ${config.json_path} ${op}${val}`.trim();
     }
     if (config.expression) return String(config.expression);
+  }
+  if (node.type === "foreach_map") {
+    const path = String(config.items_path || "$").trim() || "$";
+    return `Loop each item at ${config.source_node_id || "prior"} ${path}`;
+  }
+  if (node.type === "set_fields" || node.type === "static_data") {
+    try {
+      const fields = JSON.parse(String(config.fields_json || "{}"));
+      const keys = Object.keys(fields || {});
+      if (keys.length) return `Vars: ${keys.slice(0, 4).join(", ")}${keys.length > 4 ? "…" : ""}`;
+    } catch (_err) {
+      /* ignore */
+    }
   }
   if (node.type === "human_approval") {
     if (config.approver_source === "json_path" && config.approver_id_json_path) {
@@ -30591,10 +44143,25 @@ function buildOrchestrationMappingSnippets(step) {
   const nodeId = step.id;
   const templateRef = `{{steps['${nodeId}'].output}}`;
   const templateMessage = `{{steps['${nodeId}'].output.message}}`;
-  const jsonPathExpr = `jsonPath(steps['${nodeId}'].output, '$.status')`;
-  const outputExample = getOrchestrationNodeOutputExample(step.type);
+  const history = orchestrationHistoryOutputShapes[nodeId];
+  const livePaths = history ? listOrchestrationOutputFieldPaths(history) : [];
+  const primaryLivePath = livePaths.find((path) => path.includes("message") || path.includes("content")) || livePaths[0];
+  const jsonPathExpr = primaryLivePath
+    ? `jsonPath(steps['${nodeId}'].output, '${primaryLivePath}')`
+    : `jsonPath(steps['${nodeId}'].output, '$.status')`;
+  const outputExample = history || getOrchestrationNodeOutputExample(step.type);
+  const fromLiveRun = Boolean(history);
   const templateFields = getOrchestrationTemplateFields(step.type);
-  return { nodeId, templateRef, templateMessage, jsonPathExpr, outputExample, templateFields };
+  return {
+    nodeId,
+    templateRef,
+    templateMessage,
+    jsonPathExpr,
+    outputExample,
+    templateFields,
+    fromLiveRun,
+    livePaths,
+  };
 }
 
 function toggleOrchestrationDataMapping(focusNodeId = null) {
@@ -30697,7 +44264,7 @@ function renderOrchestrationDataMappingPanel() {
             <div class="flow-var-picker flow-var-picker-compact">
               <select class="flow-data-map-var-insert" data-step-id="${safeText(step.id)}" aria-label="Quick insert variable from ${safeText(step.label)}">
                 <option value="">Quick insert field…</option>
-                ${renderOrchestrationVariableFieldOptions(step.type)}
+                ${renderOrchestrationVariableFieldOptions(step.type, true, step.id)}
               </select>
             </div>
             <div class="flow-data-map-snippet-list">
@@ -30713,8 +44280,9 @@ function renderOrchestrationDataMappingPanel() {
               </div>
             </div>
             ${outputHintList}
-            <details class="flow-data-map-output-details">
-              <summary>Output parameters (example shape)</summary>
+            <details class="flow-data-map-output-details" ${snippets.fromLiveRun ? "open" : ""}>
+              <summary>${snippets.fromLiveRun ? "Output parameters (from last run)" : "Output parameters (example shape)"}</summary>
+              ${snippets.fromLiveRun ? '<p class="flow-data-map-live-badge">Live history shape — preferred over stubs</p>' : ""}
               <pre class="flow-data-map-code mono">${safeText(outputJson)}</pre>
             </details>
           </article>`;
@@ -30816,37 +44384,260 @@ function syncOrchestrationHttpAuthConfig(node) {
   }
 }
 
-async function loadOrchestrationCredentialBindingOptions(selectedValue = "") {
-  const select = qs("#orchestrationHttpAuthBindingSelect");
+async function loadOrchestrationAgentConfigOptions(selectedValue = "") {
+  const select = qs("#orchestrationLlmAgentKeySelect");
   if (!select) return;
-  const env = getOrchestrationFlowFormValues()?.environment || "dev";
-  setSelectOptions(select, [], { placeholder: "Loading credential bindings…" });
+  setSelectOptions(select, [], { placeholder: "Loading agent configs…" });
   try {
-    const query = buildQueryString({ status: "active", environment: env, limit: 100 });
+    const rows = await api("/agent-configs", { headers: { "X-Actor-Role": "Auditor" } });
+    const options = (Array.isArray(rows) ? rows : [])
+      .filter((row) => row.enabled !== false)
+      .map((row) => ({
+        value: row.agent_key,
+        label: `${row.display_name || row.agent_key} · ${row.provider}/${row.model}`,
+      }));
+    setLabeledSelectOptions(select, options, {
+      placeholder: options.length ? "Select agent config (optional)" : "No agent configs — create in Agents",
+      selectedValue,
+    });
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "None — pick model below";
+    select.insertBefore(empty, select.firstChild);
+    select.value = selectedValue || "";
+  } catch {
+    setLabeledSelectOptions(select, [], { placeholder: "Unable to load agent configs", selectedValue });
+  }
+}
+
+async function loadOrchestrationModelOptions(selectedValue = "") {
+  const select = qs("#orchestrationLlmModelSelect");
+  if (!select) return;
+  setSelectOptions(select, [], { placeholder: "Loading models…" });
+  try {
+    const payload = await api("/providers/models/available?limit=500", { headers: { "X-Actor-Role": "Auditor" } });
+    const rows = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+    const options = rows
+      .map((row) => {
+        const value = String(row.model_name || row.model_id || row.id || "").trim();
+        if (!value) return null;
+        const display = String(row.display_name || value).trim();
+        const provider = String(row.provider_type || "").trim();
+        return { value, label: provider ? `${display} · ${provider}` : display };
+      })
+      .filter(Boolean);
+    const unique = [];
+    const seen = new Set();
+    options.forEach((opt) => {
+      if (seen.has(opt.value)) return;
+      seen.add(opt.value);
+      unique.push(opt);
+    });
+    if (selectedValue && !seen.has(selectedValue)) {
+      unique.unshift({ value: selectedValue, label: `${selectedValue} (custom)` });
+    }
+    setLabeledSelectOptions(select, unique, {
+      placeholder: unique.length ? "Select model" : "Type a model id",
+      selectedValue,
+    });
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = selectedValue ? "Use agent config model" : "Select model…";
+    select.insertBefore(empty, select.firstChild);
+    select.value = selectedValue || "";
+  } catch {
+    setLabeledSelectOptions(
+      select,
+      selectedValue ? [{ value: selectedValue, label: selectedValue }] : [],
+      { placeholder: "Unable to load models — enter in advanced JSON", selectedValue },
+    );
+  }
+}
+
+async function loadOrchestrationRouteOptions(selectedValue = "") {
+  const select = qs("#orchestrationLlmRouteSelect");
+  if (!select) return;
+  setSelectOptions(select, [], { placeholder: "Loading routes…" });
+  try {
+    const rows = await api("/gateway/routes", { headers: { "X-Actor-Role": "Auditor" } });
+    const options = (Array.isArray(rows) ? rows : [])
+      .map((row) => {
+        const value = String(row.route_policy_id || row.id || "").trim();
+        if (!value) return null;
+        const name = String(row.name || row.route_name || value).trim();
+        return { value, label: name === value ? value : `${name} (${value})` };
+      })
+      .filter(Boolean);
+    setLabeledSelectOptions(select, options, {
+      placeholder: options.length ? "Optional gateway route" : "No routes configured",
+      selectedValue,
+    });
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "None";
+    select.insertBefore(empty, select.firstChild);
+    select.value = selectedValue || "";
+  } catch {
+    setLabeledSelectOptions(select, [], { placeholder: "Unable to load routes", selectedValue });
+  }
+}
+
+function renderOrchestrationLlmChatInspector(node) {
+  const config = node.config || {};
+  const continueOnError = String(config.continue_on_error || "false").toLowerCase() === "true";
+  const maxRetries = String(config.max_retries ?? "0");
+  const cacheMode = String(config.cache_mode || "inherit");
+  const responseFormat = String(config.response_format || "");
+  return `
+    <fieldset class="flow-inspector-fieldset">
+      <legend>Governed model</legend>
+      <p class="flow-mapping-section-intro">Pick a saved agent config (credentials + defaults) or choose a catalog model — Portkey/n8n-style operator UX without raw secret paste.</p>
+      <div class="form-grid flow-inspector-form">
+        <label class="wide-field">Agent config
+          <select id="orchestrationLlmAgentKeySelect" data-inspector-config-field="agent_key"></select>
+        </label>
+        <label class="wide-field">Model
+          <select id="orchestrationLlmModelSelect" data-inspector-config-field="model_id"></select>
+        </label>
+        <label class="wide-field">Gateway route
+          <select id="orchestrationLlmRouteSelect" data-inspector-config-field="route_id"></select>
+        </label>
+        <label>Temperature<input data-inspector-config-field="temperature" type="number" min="0" max="2" step="0.1" value="${escapeOrchestrationFieldAttr(config.temperature ?? "")}" placeholder="0.3" /></label>
+        <label>Max tokens<input data-inspector-config-field="max_tokens" type="number" min="1" max="128000" step="1" value="${escapeOrchestrationFieldAttr(config.max_tokens ?? "")}" placeholder="1024" /></label>
+        <label>Response format
+          <select data-inspector-config-field="response_format">
+            <option value="" ${!responseFormat ? "selected" : ""}>Default (text)</option>
+            <option value="text" ${responseFormat === "text" ? "selected" : ""}>Text</option>
+            <option value="json_object" ${responseFormat === "json_object" ? "selected" : ""}>JSON object</option>
+          </select>
+        </label>
+        <label>Cache mode
+          <select data-inspector-config-field="cache_mode">
+            <option value="inherit" ${cacheMode === "inherit" ? "selected" : ""}>Inherit gateway policy</option>
+            <option value="bypass" ${cacheMode === "bypass" ? "selected" : ""}>Bypass cache</option>
+            <option value="read" ${cacheMode === "read" ? "selected" : ""}>Read cache</option>
+            <option value="write" ${cacheMode === "write" ? "selected" : ""}>Write cache</option>
+          </select>
+        </label>
+        <label class="wide-field">Credential binding override
+          <select id="orchestrationLlmBindingSelect" data-inspector-config-field="binding_id" data-credential-binding-select aria-label="Credential binding override">
+            <option value="">Use agent config binding (default)</option>
+            ${
+              config.binding_id
+                ? `<option value="${escapeOrchestrationFieldAttr(config.binding_id)}" selected>${escapeOrchestrationFieldAttr(config.binding_id)} (loading…)</option>`
+                : ""
+            }
+          </select>
+        </label>
+        <label class="wide-field">Prompt registry ID<input data-inspector-config-field="prompt_registry_id" value="${escapeOrchestrationFieldAttr(config.prompt_registry_id || "")}" placeholder="Optional governed prompt id" /></label>
+      </div>
+    </fieldset>
+    <fieldset class="flow-inspector-fieldset">
+      <legend>Resilience (n8n-style)</legend>
+      <div class="form-grid flow-inspector-form">
+        <label>On failure
+          <select data-inspector-config-field="continue_on_error">
+            <option value="false" ${!continueOnError ? "selected" : ""}>Stop the flow</option>
+            <option value="true" ${continueOnError ? "selected" : ""}>Continue — expose output.error</option>
+          </select>
+        </label>
+        <label>Retries
+          <select data-inspector-config-field="max_retries">
+            <option value="0" ${maxRetries === "0" ? "selected" : ""}>None</option>
+            <option value="1" ${maxRetries === "1" ? "selected" : ""}>1</option>
+            <option value="2" ${maxRetries === "2" ? "selected" : ""}>2</option>
+            <option value="3" ${maxRetries === "3" ? "selected" : ""}>3</option>
+          </select>
+        </label>
+        <label>Retry delay (s)<input data-inspector-config-field="retry_delay_seconds" type="number" min="0" max="30" step="0.5" value="${escapeOrchestrationFieldAttr(config.retry_delay_seconds ?? "0")}" /></label>
+      </div>
+    </fieldset>`;
+}
+
+async function loadOrchestrationCredentialBindingOptions(selectedValue = "", selectEl = null) {
+  const selects = selectEl
+    ? [selectEl].filter(Boolean)
+    : [
+        qs("#orchestrationHttpAuthBindingSelect"),
+        qs("#orchestrationLlmBindingSelect"),
+        ...qsa("[data-credential-binding-select]"),
+      ].filter(Boolean);
+  const uniqueSelects = [...new Set(selects)];
+  if (!uniqueSelects.length) return;
+
+  const env = getOrchestrationFlowFormValues()?.environment || "dev";
+  uniqueSelects.forEach((select) => {
+    const current = String(selectedValue || select.value || "").trim();
+    select.textContent = "";
+    const loading = document.createElement("option");
+    loading.value = current;
+    loading.textContent = current ? `${current} (loading…)` : "Loading credential bindings…";
+    loading.selected = true;
+    select.appendChild(loading);
+  });
+
+  let options = [];
+  try {
+    const query = buildQueryString({ status: "active", environment: env, limit: 200 });
     const rows = await api(`/providers/credential-bindings${query}`, {
       headers: { "X-Actor-Role": "Auditor" },
     });
-    const options = (Array.isArray(rows) ? rows : [])
-      .filter((row) => row.configured)
+    options = (Array.isArray(rows) ? rows : [])
+      .filter((row) => row && row.binding_id)
       .map((row) => ({
-        value: row.binding_id,
-        label: `${row.binding_name} (${row.credential_plane})`,
+        value: String(row.binding_id),
+        label: `${row.binding_name || row.binding_id}${row.credential_plane ? ` · ${row.credential_plane}` : ""}${
+          row.configured === false ? " · not configured" : ""
+        }`,
       }));
-    setLabeledSelectOptions(select, options, {
-      placeholder: options.length ? "Select credential binding" : "No bindings — create in Providers",
-      selectedValue,
-    });
-    const emptyOption = document.createElement("option");
-    emptyOption.value = "";
-    emptyOption.textContent = "None";
-    select.insertBefore(emptyOption, select.firstChild);
-    select.value = selectedValue || "";
   } catch {
-    setLabeledSelectOptions(select, [], {
-      placeholder: "Unable to load credential bindings",
-      selectedValue,
+    uniqueSelects.forEach((select) => {
+      const current = String(selectedValue || select.value || "").trim();
+      select.textContent = "";
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "Unable to load credential bindings";
+      select.appendChild(empty);
+      if (current) {
+        const orphan = document.createElement("option");
+        orphan.value = current;
+        orphan.textContent = `${current} (saved)`;
+        orphan.selected = true;
+        select.appendChild(orphan);
+      }
     });
+    return;
   }
+
+  uniqueSelects.forEach((select) => {
+    const field = select.getAttribute("data-inspector-config-field") || "";
+    const current = String(selectedValue || select.value || "").trim();
+    const emptyLabel =
+      field === "binding_id" && select.id === "orchestrationLlmBindingSelect"
+        ? "Use agent config binding (default)"
+        : options.length
+          ? "Select credential binding…"
+          : "No bindings — create in Providers";
+    select.textContent = "";
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = emptyLabel;
+    select.appendChild(empty);
+    options.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      select.appendChild(option);
+    });
+    if (current && !options.some((opt) => opt.value === current)) {
+      const orphan = document.createElement("option");
+      orphan.value = current;
+      orphan.textContent = `${current} (saved)`;
+      select.appendChild(orphan);
+    }
+    select.value = current || "";
+    select.setAttribute("data-credential-binding-select", "true");
+  });
 }
 
 function renderOrchestrationHttpRequestInspector(node) {
@@ -30896,7 +44687,7 @@ function renderOrchestrationHttpRequestInspector(node) {
         </label>
         <div id="orchestrationHttpAuthBindingWrap" class="wide-field" ${showAuthFields ? "" : "hidden"}>
           <label>Credential binding
-            <select id="orchestrationHttpAuthBindingSelect" data-inspector-config-field="auth_binding_id"></select>
+            <select id="orchestrationHttpAuthBindingSelect" data-inspector-config-field="auth_binding_id" data-credential-binding-select aria-label="Credential binding"></select>
           </label>
         </div>
         <label id="orchestrationHttpAuthHeaderWrap" class="wide-field" ${showHeaderName ? "" : "hidden"}>API key header name
@@ -30907,6 +44698,82 @@ function renderOrchestrationHttpRequestInspector(node) {
       <p class="flow-inspector-tip"><a href="#" class="inline-link-button" data-nav-view="providers">Open Providers</a> to store secrets and create bindings before linking them here.</p>
     </fieldset>
   `;
+}
+
+/** Schema-driven inspector for declarative widgets (RabbitMQ, GitHub, Telegram, PagerDuty, …). */
+function renderOrchestrationSchemaInspector(node) {
+  const schema = ORCH_REG?.getInspectorSchema?.(node.type) || null;
+  const groups = Array.isArray(schema?.groups) && schema.groups.length
+    ? schema.groups.filter((group) => Array.isArray(group.fields) && group.fields.length)
+    : isOrchestrationProviderHttpApiType(node.type)
+      ? [
+          {
+            legend: "API request",
+            fields: [
+              "base_url",
+              "path_template",
+              "method",
+              "query_template",
+              "body_template",
+              "auth_type",
+              "auth_binding_id",
+              "auth_header_name",
+              "continue_on_error",
+              "error_branch",
+            ],
+            required: ["path_template", "method", "auth_binding_id"],
+          },
+        ]
+      : [];
+  if (!groups.length) return "";
+  const mappingFields = getOrchestrationMappingFieldSet();
+  const prior = getOrchestrationPriorSteps(node.id);
+  const priorHint = prior.length
+    ? `<p class="flow-inspector-tip flow-mapping-section-tip">Prior steps: ${prior.map((s) => safeText(s.label)).join(", ")}. Use Fill from previous step on template fields, or open <button type="button" class="inline-link-button orchestration-open-data-map">Variable map ⇄</button>.</p>`
+    : `<p class="flow-inspector-tip flow-inspector-warn">Add steps above this widget before mapping variables from their output. Run input uses <code class="mono">{{input}}</code>.</p>`;
+  const typeLabel =
+    orchestrationNodeTypes.find((item) => item.type === node.type)?.label ||
+    getOrchestrationNodeVisual(node.type).label ||
+    node.type;
+  const needsBinding = Boolean(
+    ORCH_REG?.requiresCredentialBinding?.(node.type) ||
+      groups.some((group) => (group.fields || []).some((field) => isOrchestrationCredentialBindingField(field))),
+  );
+  const groupsMarkup = groups
+    .map((group) => {
+      const required = new Set(group.required || []);
+      const fields = (group.fields || []).filter(Boolean);
+      if (!fields.length) return "";
+      const fieldMarkup = fields
+        .map((field) => {
+          if (mappingFields.has(field)) {
+            return renderOrchestrationMappingField(field, node, required.has(field));
+          }
+          return renderOrchestrationConfigFieldControl(field, node, required.has(field));
+        })
+        .join("");
+      return `
+        <fieldset class="flow-inspector-fieldset flow-mapping-section">
+          <legend>${safeText(group.legend || typeLabel)}</legend>
+          <p class="flow-mapping-section-intro">Configure required settings for this widget. Templates may use <code class="mono">{{input}}</code> and <code class="mono">{{steps['NODE_ID'].output…}}</code>.</p>
+          <div class="form-grid flow-inspector-form">${fieldMarkup}</div>
+        </fieldset>`;
+    })
+    .join("");
+  return `
+    ${groupsMarkup}
+    ${priorHint}
+    ${
+      needsBinding
+        ? `<p class="flow-inspector-tip"><a href="#" class="inline-link-button" data-nav-view="providers">Open Providers</a> to create a credential binding, then select it under Credential binding. Do not paste secrets into the flow.</p>`
+        : ""
+    }
+  `;
+}
+
+/** @deprecated Use renderOrchestrationSchemaInspector — kept for call-site clarity on API widgets. */
+function renderOrchestrationProviderHttpApiInspector(node) {
+  return renderOrchestrationSchemaInspector(node);
 }
 
 function bindOrchestrationHttpRequestInspector(node) {
@@ -31106,7 +44973,7 @@ function renderOrchestrationVectorStoreInspector(node) {
         <p class="flow-mapping-section-intro">${inputIntro}</p>
         <div class="form-grid flow-inspector-form">${queryMarkup}</div>
       </fieldset>
-      <p class="flow-inspector-tip">Stores are configured in Routing & Gateway → Memory & Context. Do not paste API keys here.</p>
+      <p class="flow-inspector-tip">Stores are configured in Routing & Gateway → Memory & Context. Credentials come from the store / MCP bridge — do not paste API keys here.</p>
       <p class="flow-inspector-tip"><a href="#" class="inline-link-button" data-nav-view="routing-gateway">Open Routing & Gateway</a> to register Qdrant, Pinecone, pgvector, or MCP bridge stores.</p>
     </fieldset>
   `;
@@ -31133,7 +45000,7 @@ function bindOrchestrationVectorStoreInspector(node) {
     renderOrchestrationCanvas();
     renderOrchestrationValidationPanel();
   });
-  qs("[data-nav-view='routing-gateway']")?.addEventListener("click", (event) => {
+  qs("#orchestrationInspectorPanel")?.querySelector("[data-nav-view='routing-gateway']")?.addEventListener("click", (event) => {
     event.preventDefault();
     switchView("routing-gateway");
   });
@@ -31247,6 +45114,21 @@ function renderOrchestrationPriorStepOptions(currentNodeId, selectedId) {
     .join("");
 }
 
+function renderOrchestrationBranchTargetOptions(currentNodeId, selectedId) {
+  const nodes = flattenOrchestrationNodes().filter((node) => node.id !== currentNodeId);
+  if (!nodes.length) {
+    return '<option value="">Add more steps to wire branches</option>';
+  }
+  return nodes
+    .map((node) => {
+      const catalog = orchestrationNodeTypes.find((item) => item.type === node.type) || {};
+      const visual = getOrchestrationNodeVisual(node.type);
+      const label = catalog.label || visual.label || node.type;
+      return `<option value="${safeText(node.id)}" ${node.id === selectedId ? "selected" : ""}>${safeText(label)} (${safeText(node.id)})</option>`;
+    })
+    .join("");
+}
+
 function renderOrchestrationConditionInspector(node, stepIndex) {
   const config = node.config || {};
   const prior = getOrchestrationPriorSteps(node.id);
@@ -31257,9 +45139,11 @@ function renderOrchestrationConditionInspector(node, stepIndex) {
   const priorWarning = prior.length
     ? ""
     : '<p class="flow-inspector-tip flow-inspector-warn">Add at least one step above this widget to reference its response.</p>';
+  const trueId = String(config.true_branch || "").trim();
+  const falseId = String(config.false_branch || "").trim();
   return `
     <fieldset class="flow-inspector-fieldset">
-      <legend>Response condition (JSON path)</legend>
+      <legend>If / else condition</legend>
       ${priorWarning}
       <div class="form-grid flow-inspector-form">
         <label>Prior step
@@ -31281,6 +45165,34 @@ function renderOrchestrationConditionInspector(node, stepIndex) {
         <label class="wide-field">Generated expression (read-only)
           <textarea id="orchestrationConditionExpressionPreview" rows="2" readonly>${safeText(config.expression || buildOrchestrationConditionExpression(config))}</textarea>
         </label>
+      </div>
+      <div class="flow-condition-branch-panels" role="group" aria-label="True and False paths">
+        <div class="flow-condition-branch-panel is-true">
+          <header>
+            <strong>True</strong>
+            <span>when condition matches</span>
+          </header>
+          <label>Next step
+            <select data-inspector-config-field="true_branch">
+              <option value="">Choose True path…</option>
+              ${renderOrchestrationBranchTargetOptions(node.id, trueId)}
+            </select>
+          </label>
+          <button type="button" class="ghost" data-condition-branch-create="${safeText(node.id)}" data-branch-kind="true">+ Create True step</button>
+        </div>
+        <div class="flow-condition-branch-panel is-false">
+          <header>
+            <strong>False</strong>
+            <span>when condition does not match</span>
+          </header>
+          <label>Next step
+            <select data-inspector-config-field="false_branch">
+              <option value="">Choose False path…</option>
+              ${renderOrchestrationBranchTargetOptions(node.id, falseId)}
+            </select>
+          </label>
+          <button type="button" class="ghost" data-condition-branch-create="${safeText(node.id)}" data-branch-kind="false">+ Create False step</button>
+        </div>
       </div>
       <datalist id="orchestrationJsonPathExamples">
         ${(ORCH_REG?.JSON_PATH_PRESETS || [])
@@ -31306,9 +45218,442 @@ function renderOrchestrationConditionInspector(node, stepIndex) {
         </div>
         <output id="orchestrationConditionSampleResult" class="flow-condition-sample-result" aria-live="polite"></output>
       </div>
-      <p class="flow-inspector-tip">At run time, the executor resolves <code>steps['&lt;node_id&gt;'].output</code> from prior HTTP, LLM, or MCP results. Edit Advanced JSON to override the expression directly.</p>
+      <p class="flow-inspector-tip">On the board, drag the green <strong>T</strong> or orange <strong>F</strong> ports to wire True/False paths. At run time the executor follows <code>true_branch</code> or <code>false_branch</code>.</p>
     </fieldset>
   `;
+}
+
+function renderOrchestrationWhileSourceOptions(node, selectedId) {
+  const selected = String(selectedId || "");
+  const selfOpt = `<option value="${safeText(node.id)}" ${selected === node.id ? "selected" : ""}>This loop · index / iteration</option>`;
+  const prior = getOrchestrationPriorSteps(node.id);
+  const priorOpts = prior
+    .map(
+      (step) =>
+        `<option value="${safeText(step.id)}" ${step.id === selected ? "selected" : ""}>${safeText(step.label)} (${safeText(step.id)})</option>`,
+    )
+    .join("");
+  return `${selfOpt}${priorOpts || '<option value="" disabled>No prior steps yet</option>'}`;
+}
+
+function applyOrchestrationWhilePreset(node, preset, options = {}) {
+  if (!node) return;
+  node.config = node.config || {};
+  const repeatCount = Math.max(
+    1,
+    Math.min(100, Number(options.repeatCount || node.config.compare_value || 3) || 3),
+  );
+  if (preset === "index") {
+    node.config.source_node_id = node.id;
+    node.config.json_path = "$.index";
+    node.config.operator = "<";
+    node.config.compare_value = String(repeatCount);
+    const maxIter = Math.max(Number(node.config.max_iterations) || 25, repeatCount);
+    node.config.max_iterations = String(Math.min(100, maxIter));
+    node.config.expression = `steps['${node.id}'].output.index < ${repeatCount}`;
+  } else if (preset === "flag_false") {
+    const prior = getOrchestrationPriorSteps(node.id);
+    if (!String(node.config.source_node_id || "").trim() || node.config.source_node_id === node.id) {
+      if (prior[0]) node.config.source_node_id = prior[0].id;
+    }
+    node.config.json_path = "$.done";
+    node.config.operator = "==";
+    node.config.compare_value = "false";
+    node.config.expression = "";
+  } else if (preset === "flag_true") {
+    const prior = getOrchestrationPriorSteps(node.id);
+    if (!String(node.config.source_node_id || "").trim() || node.config.source_node_id === node.id) {
+      if (prior[0]) node.config.source_node_id = prior[0].id;
+    }
+    node.config.json_path = "$.done";
+    node.config.operator = "!=";
+    node.config.compare_value = "true";
+    node.config.expression = "";
+  }
+}
+
+function scaffoldOrchestrationWhileLoop(nodeId, mode) {
+  const node = getOrchestrationNodeById(nodeId);
+  if (!node || (node.type !== "while_loop" && node.type !== "do_while")) return;
+  pushOrchestrationHistorySnapshot(`scaffold ${mode} loop`);
+  const repeatInput = qs("#orchestrationWhileRepeatCount");
+  const repeatCount = Number(repeatInput?.value || node.config?.compare_value || 3) || 3;
+  applyOrchestrationWhilePreset(node, mode === "until_flag" ? "flag_false" : "index", { repeatCount });
+  if (!String(node.config.body_branch || "").trim()) {
+    createOrchestrationConditionBranch(nodeId, "body");
+  }
+  const refreshed = getOrchestrationNodeById(nodeId);
+  if (refreshed && !String(refreshed.config?.exit_branch || "").trim()) {
+    createOrchestrationConditionBranch(nodeId, "exit");
+  }
+  const loopNode = getOrchestrationNodeById(nodeId);
+  const body = getOrchestrationNodeById(loopNode?.config?.body_branch);
+  if (body && (body.type === "noop" || !body.type)) {
+    if (mode === "until_flag") {
+      body.type = "set_fields";
+      body.name = "Update flag";
+      body.config = {
+        fields_json: JSON.stringify(
+          {
+            done: "true",
+            note: "Set done to stop the loop. Use loop_break: true to break early.",
+          },
+          null,
+          2,
+        ),
+      };
+      // Point condition at body output (works cleanly with do-while; while should prefer index or a prior flag).
+      loopNode.config.source_node_id = body.id;
+      loopNode.config.json_path = "$.done";
+      loopNode.config.operator = "==";
+      loopNode.config.compare_value = "false";
+    } else {
+      body.type = "set_fields";
+      body.name = "Loop body";
+      body.config = {
+        fields_json: JSON.stringify(
+          {
+            note: "Iteration {{loop.iteration}} (index {{loop.index}})",
+            loop_index: "{{loop.index}}",
+          },
+          null,
+          2,
+        ),
+      };
+    }
+  }
+  orchestrationSelectedNodeId = nodeId;
+  setOrchestrationFeedback(
+    mode === "until_flag"
+      ? "Scaffolded until-flag loop — body sets done=true; point condition at a prior flag step if needed."
+      : `Scaffolded counter loop — repeats while index < ${repeatCount}.`,
+    "orchestrationBuilderFeedback",
+    "success",
+  );
+  renderOrchestrationStudio();
+}
+
+function renderOrchestrationWhileInspector(node) {
+  const config = node.config || {};
+  const isDoWhile = node.type === "do_while";
+  const operatorOptions = ORCHESTRATION_CONDITION_OPERATORS.map(
+    (item) =>
+      `<option value="${safeText(item.value)}" ${item.value === (config.operator || "<") ? "selected" : ""}>${safeText(item.label)}</option>`,
+  ).join("");
+  const bodyId = String(config.body_branch || "").trim();
+  const exitId = String(config.exit_branch || "").trim();
+  const collectResults = String(config.collect_results || "false").toLowerCase() === "true";
+  const repeatDefault = String(config.compare_value || "3");
+  return `
+    <fieldset class="flow-inspector-fieldset">
+      <legend>${isDoWhile ? "Do while" : "While"} loop</legend>
+      <p class="flow-inspector-tip">${
+        isDoWhile
+          ? "Runs the body once, then repeats while the condition stays true."
+          : "Checks the condition first, then repeats the body while it stays true."
+      } Hard cap: max 100 iterations (default 25).</p>
+      <div class="flow-while-presets" role="group" aria-label="Loop presets">
+        <label class="flow-while-repeat">Repeat count
+          <input id="orchestrationWhileRepeatCount" type="number" min="1" max="100" value="${safeText(repeatDefault)}" />
+        </label>
+        <button type="button" class="ghost" data-while-preset="index">Use loop index</button>
+        <button type="button" class="ghost" data-while-preset="flag_false">Until flag is false</button>
+        <button type="button" class="ghost" data-while-scaffold="counter">Build counter loop</button>
+        <button type="button" class="ghost" data-while-scaffold="until_flag">Build until-flag loop</button>
+      </div>
+      <div class="form-grid flow-inspector-form">
+        <label>Condition source
+          <select data-inspector-config-field="source_node_id">
+            ${renderOrchestrationWhileSourceOptions(node, config.source_node_id || node.id)}
+          </select>
+        </label>
+        <label>JSON path
+          <div class="flow-field-helper-row">${renderOrchestrationJsonPathPicker(node, "json_path")}</div>
+          <input data-inspector-config-field="json_path" value="${safeText(config.json_path || "$.index")}" placeholder="e.g. $.index or $.done" list="orchestrationWhilePathExamples" />
+        </label>
+        <label>Operator
+          <select data-inspector-config-field="operator">${operatorOptions}</select>
+        </label>
+        <label>Compare value
+          <input data-inspector-config-field="compare_value" value="${safeText(config.compare_value || "")}" placeholder="e.g. 3 or false" ${config.operator === "exists" ? "disabled" : ""} />
+        </label>
+        <label>Max iterations
+          <input data-inspector-config-field="max_iterations" type="number" min="1" max="100" value="${safeText(config.max_iterations || "25")}" />
+        </label>
+        <label>Collect body results
+          <select data-inspector-config-field="collect_results">
+            <option value="false" ${!collectResults ? "selected" : ""}>No</option>
+            <option value="true" ${collectResults ? "selected" : ""}>Yes — last body step each iteration</option>
+          </select>
+        </label>
+        <label class="wide-field">Generated expression (read-only)
+          <textarea id="orchestrationConditionExpressionPreview" rows="2" readonly>${safeText(config.expression || buildOrchestrationConditionExpression(config))}</textarea>
+        </label>
+      </div>
+      <div class="flow-condition-branch-panels" role="group" aria-label="Body and Exit paths">
+        <div class="flow-condition-branch-panel is-body">
+          <header>
+            <strong>Body</strong>
+            <span>steps repeated each iteration</span>
+          </header>
+          <label>First body step
+            <select data-inspector-config-field="body_branch">
+              <option value="">Choose body start…</option>
+              ${renderOrchestrationBranchTargetOptions(node.id, bodyId)}
+            </select>
+          </label>
+          <button type="button" class="ghost" data-condition-branch-create="${safeText(node.id)}" data-branch-kind="body">+ Create body step</button>
+        </div>
+        <div class="flow-condition-branch-panel is-exit">
+          <header>
+            <strong>Exit</strong>
+            <span>continues here when done</span>
+          </header>
+          <label>After loop
+            <select data-inspector-config-field="exit_branch">
+              <option value="">Choose exit step…</option>
+              ${renderOrchestrationBranchTargetOptions(node.id, exitId)}
+            </select>
+          </label>
+          <button type="button" class="ghost" data-condition-branch-create="${safeText(node.id)}" data-branch-kind="exit">+ Create exit step</button>
+        </div>
+      </div>
+      <datalist id="orchestrationWhilePathExamples">
+        <option value="$.index"></option>
+        <option value="$.iteration"></option>
+        <option value="$.done"></option>
+        <option value="$.continue"></option>
+      </datalist>
+      <div class="flow-condition-tester">
+        <p class="flow-inspector-tip"><strong>Test condition</strong> — sample JSON should match the condition source shape (for This loop use <code>{"index":0}</code>).</p>
+        <label class="wide-field">Sample JSON
+          <textarea id="orchestrationConditionSamplePayload" rows="3" placeholder='{"index":0,"done":false}'>${
+            config.source_node_id === node.id ? '{"index":0}' : ""
+          }</textarea>
+        </label>
+        <div class="inline-actions flow-condition-tester-actions">
+          <button type="button" class="ghost" id="orchestrationConditionSampleRun">Test path</button>
+        </div>
+        <output id="orchestrationConditionSampleResult" class="flow-condition-sample-result" aria-live="polite"></output>
+      </div>
+      <p class="flow-inspector-tip">Body templates: <code>{{loop.index}}</code>, <code>{{loop.iteration}}</code>, or <code>{{steps['${safeText(node.id)}'].output.index}}</code>. Early exit: set <code>loop_break: true</code> on any body step output (e.g. Set variables).</p>
+      <p class="flow-inspector-tip">Board ports: blue <strong>B</strong> = body, slate <strong>X</strong> = exit.</p>
+    </fieldset>
+  `;
+}
+
+function parseOrchestrationJsonObjectField(raw) {
+  try {
+    const parsed = JSON.parse(String(raw || "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (_err) {
+    return {};
+  }
+}
+
+function renderOrchestrationKeyValueEditor(fieldName, rawJson, options = {}) {
+  const rows = Object.entries(parseOrchestrationJsonObjectField(rawJson));
+  if (!rows.length) rows.push(["", ""]);
+  const keyPlaceholder = options.keyPlaceholder || "variable_name";
+  const valuePlaceholder = options.valuePlaceholder || "value or {{steps['id'].output.field}}";
+  const rowMarkup = rows
+    .map(
+      ([key, value], index) => `
+      <div class="flow-kv-row" data-kv-index="${index}">
+        <input class="flow-kv-key" data-kv-role="key" value="${safeText(key)}" placeholder="${safeText(keyPlaceholder)}" aria-label="Variable name" />
+        <input class="flow-kv-value" data-kv-role="value" value="${safeText(typeof value === "string" ? value : JSON.stringify(value))}" placeholder="${safeText(valuePlaceholder)}" aria-label="Variable value" />
+        <button type="button" class="ghost flow-kv-remove" data-kv-remove="${index}" title="Remove" aria-label="Remove row">×</button>
+      </div>`,
+    )
+    .join("");
+  return `
+    <div class="flow-kv-editor" data-kv-field="${safeText(fieldName)}">
+      <div class="flow-kv-rows">${rowMarkup}</div>
+      <button type="button" class="ghost flow-kv-add" data-kv-add="${safeText(fieldName)}">+ Add variable</button>
+      <input type="hidden" data-inspector-config-field="${safeText(fieldName)}" value="${safeText(typeof rawJson === "string" ? rawJson : JSON.stringify(rawJson || {}, null, 2))}" />
+    </div>
+  `;
+}
+
+function syncOrchestrationKeyValueEditor(editor) {
+  if (!editor) return;
+  const field = editor.getAttribute("data-kv-field");
+  const hidden = editor.querySelector(`[data-inspector-config-field="${field}"]`);
+  const obj = {};
+  qsa(".flow-kv-row", editor).forEach((row) => {
+    const key = String(row.querySelector('[data-kv-role="key"]')?.value || "").trim();
+    const value = String(row.querySelector('[data-kv-role="value"]')?.value || "");
+    if (!key) return;
+    obj[key] = value;
+  });
+  const serialized = JSON.stringify(obj, null, 2);
+  if (hidden) hidden.value = serialized;
+  return serialized;
+}
+
+function bindOrchestrationKeyValueEditor(panel, node) {
+  qsa(".flow-kv-editor", panel).forEach((editor) => {
+    const field = editor.getAttribute("data-kv-field");
+    const refresh = () => {
+      const serialized = syncOrchestrationKeyValueEditor(editor);
+      node.config = node.config || {};
+      node.config[field] = serialized;
+      const advanced = qs("#orchestrationInspectorConfigJson");
+      if (advanced) {
+        try {
+          const parsed = JSON.parse(advanced.value || "{}");
+          parsed[field] = JSON.parse(serialized);
+          advanced.value = JSON.stringify(parsed, null, 2);
+        } catch (_err) {
+          /* ignore */
+        }
+      }
+      renderOrchestrationCanvas();
+    };
+    editor.addEventListener("input", (event) => {
+      if (event.target.closest("[data-kv-role]")) refresh();
+    });
+    editor.addEventListener("click", (event) => {
+      if (event.target.closest("[data-kv-add]")) {
+        event.preventDefault();
+        const rows = editor.querySelector(".flow-kv-rows");
+        if (!rows) return;
+        const index = rows.children.length;
+        const wrap = document.createElement("div");
+        wrap.innerHTML = `
+          <div class="flow-kv-row" data-kv-index="${index}">
+            <input class="flow-kv-key" data-kv-role="key" value="" placeholder="variable_name" aria-label="Variable name" />
+            <input class="flow-kv-value" data-kv-role="value" value="" placeholder="value or {{template}}" aria-label="Variable value" />
+            <button type="button" class="ghost flow-kv-remove" data-kv-remove="${index}" title="Remove" aria-label="Remove row">×</button>
+          </div>`;
+        rows.appendChild(wrap.firstElementChild);
+        refresh();
+        return;
+      }
+      const removeBtn = event.target.closest("[data-kv-remove]");
+      if (removeBtn) {
+        event.preventDefault();
+        removeBtn.closest(".flow-kv-row")?.remove();
+        if (!editor.querySelector(".flow-kv-row")) {
+          event.target.closest(".flow-kv-editor")?.querySelector("[data-kv-add]")?.click();
+        }
+        refresh();
+      }
+    });
+  });
+}
+
+function renderOrchestrationLoopInspector(node) {
+  const config = node.config || {};
+  const prior = getOrchestrationPriorSteps(node.id);
+  return `
+    <fieldset class="flow-inspector-fieldset">
+      <legend>Loop · for each item</legend>
+      <p class="flow-inspector-tip">Iterate a capped array from a prior step (max 100 items). Map each item with <code>{{item.field}}</code> templates — no unbounded while-loops.</p>
+      ${prior.length ? "" : '<p class="flow-inspector-tip flow-inspector-warn">Add a prior step that outputs an array first.</p>'}
+      <div class="form-grid flow-inspector-form">
+        <label>Array source step
+          <select data-inspector-config-field="source_node_id">
+            <option value="">Select prior step…</option>
+            ${renderOrchestrationPriorStepOptions(node.id, config.source_node_id || "")}
+          </select>
+        </label>
+        <label>Items JSON path
+          <input data-inspector-config-field="items_path" value="${safeText(config.items_path || "$")}" placeholder="$ or $.items" />
+        </label>
+      </div>
+      <div class="flow-inspector-fieldset-inner">
+        <h5 class="flow-inspector-subhead">Output fields per item</h5>
+        <p class="flow-inspector-tip">Declare local fields produced for each loop item. Use <code>{{item}}</code> or <code>{{item.name}}</code>.</p>
+        ${renderOrchestrationKeyValueEditor("mapping_json", config.mapping_json || '{"value":"{{item}}"}', {
+          keyPlaceholder: "output_field",
+          valuePlaceholder: "{{item.field}}",
+        })}
+      </div>
+      <p class="flow-inspector-tip">For large lists, place <strong>Split in batches</strong> before this Loop and wire <code>has_more</code> with If/else.</p>
+    </fieldset>
+  `;
+}
+
+function renderOrchestrationSetVariablesInspector(node) {
+  const config = node.config || {};
+  const isStatic = node.type === "static_data";
+  return `
+    <fieldset class="flow-inspector-fieldset">
+      <legend>${isStatic ? "Declare constants" : "Declare local variables"}</legend>
+      <p class="flow-inspector-tip">${
+        isStatic
+          ? "Emit a fixed JSON object for later steps."
+          : "Assign named local variables for this run. Values support templates like {{input}} and {{steps['id'].output.field}}."
+      }</p>
+      ${renderOrchestrationKeyValueEditor("fields_json", config.fields_json || '{"my_var":""}', {
+        keyPlaceholder: "variable_name",
+        valuePlaceholder: 'value or {{steps[\'prior\'].output.field}}',
+      })}
+      <p class="flow-inspector-tip">Later steps read these as <code>{{steps['${safeText(node.id)}'].output.variable_name}}</code>.</p>
+    </fieldset>
+  `;
+}
+
+function createOrchestrationConditionBranch(conditionNodeId, branchKind) {
+  const kind = String(branchKind || "true").trim().toLowerCase();
+  const allowed = new Set(["true", "false", "body", "exit"]);
+  if (!allowed.has(kind)) return;
+  const conditionNode = getOrchestrationNodeById(conditionNodeId);
+  if (!conditionNode) return;
+  const isWhile = conditionNode.type === "while_loop" || conditionNode.type === "do_while";
+  const isCondition = conditionNode.type === "condition";
+  if (!isWhile && !isCondition) return;
+  if (isCondition && (kind === "body" || kind === "exit")) return;
+  if (isWhile && (kind === "true" || kind === "false")) return;
+  const located = findOrchestrationNodeLocation(conditionNodeId);
+  if (!located) return;
+  pushOrchestrationHistorySnapshot(`create ${kind} branch`);
+  const newNode = createOrchestrationStepNode("noop");
+  const nameByKind = {
+    true: "True path",
+    false: "False path",
+    body: "Loop body",
+    exit: "Loop exit",
+  };
+  newNode.name = nameByKind[kind] || "Branch";
+  if (located.branchIndex !== null && located.branchIndex !== undefined) {
+    const item = orchestrationBuilderItems[located.itemIndex];
+    const branch = item.branches[located.branchIndex];
+    branch.splice(located.nodeIndex + 1, 0, newNode);
+  } else {
+    orchestrationBuilderItems.splice(located.itemIndex + 1, 0, { kind: "step", node: newNode });
+  }
+  if (orchestrationCanvasLayout === "board") {
+    const baseX = Number(conditionNode.position?.x || 80);
+    const baseY = Number(conditionNode.position?.y || 80);
+    const offsetX = kind === "true" || kind === "body" ? -160 : 160;
+    newNode.position = {
+      x: baseX + offsetX,
+      y: baseY + 180,
+    };
+  }
+  conditionNode.config = conditionNode.config || {};
+  const fieldByKind = {
+    true: "true_branch",
+    false: "false_branch",
+    body: "body_branch",
+    exit: "exit_branch",
+  };
+  const field = fieldByKind[kind];
+  conditionNode.config[field] = newNode.id;
+  ensureOrchestrationBoardEdgesSeeded(flattenOrchestrationNodes());
+  orchestrationBoardEdges = orchestrationBoardEdges.filter(
+    (edge) => !(edge.source === conditionNodeId && (edge.kind === kind || edge.target === newNode.id)),
+  );
+  orchestrationBoardEdges.push({ source: conditionNodeId, target: newNode.id, kind });
+  orchestrationSelectedNodeId = newNode.id;
+  setOrchestrationFeedback(
+    `Created ${kind.toUpperCase()} path step and linked it.`,
+    "orchestrationBuilderFeedback",
+    "success",
+  );
+  renderOrchestrationStudio();
 }
 
 function renderOrchestrationHumanApprovalInspector(node, stepIndex) {
@@ -31410,6 +45755,25 @@ function bindOrchestrationConditionInspector(node) {
     }
     output.className = `flow-condition-sample-result ${result.matched ? "is-match" : "is-no-match"}`;
     output.textContent = `Resolved value: ${JSON.stringify(result.value)} · Would ${result.matched ? "match" : "not match"} (${node.config?.operator || "=="})`;
+  });
+  const panel = qs("#orchestrationInspectorPanel");
+  qsa("[data-while-preset]", panel).forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      const preset = btn.getAttribute("data-while-preset");
+      const repeatCount = Number(qs("#orchestrationWhileRepeatCount")?.value || 3) || 3;
+      pushOrchestrationHistorySnapshot(`while preset ${preset}`);
+      applyOrchestrationWhilePreset(node, preset, { repeatCount });
+      renderOrchestrationInspector();
+      renderOrchestrationCanvas();
+      setOrchestrationFeedback(`Applied ${preset === "index" ? "loop index" : "flag"} preset`, "orchestrationBuilderFeedback", "success");
+    });
+  });
+  qsa("[data-while-scaffold]", panel).forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      scaffoldOrchestrationWhileLoop(node.id, btn.getAttribute("data-while-scaffold") || "counter");
+    });
   });
 }
 
@@ -31641,7 +46005,8 @@ function renderOrchestrationInsertSlot(index, branchIndex = null, branchNodeInde
   const isArmed = Boolean(orchestrationPaletteArmedType);
   const armedClass = isArmed || isActiveInsert ? " is-armed-target" : "";
   const activeClass = isActiveInsert ? " active" : "";
-  const label = isArmed ? "Drop here" : isActiveInsert ? "Pick a component" : "";
+  // Avoid rendering labels on every slot — that reflows the whole lane. Label only the active insert.
+  const label = isActiveInsert ? "Pick a component" : "";
   const branchAttr = branchIndex === null ? "" : ` data-insert-branch="${branchIndex}" data-drop-branch="${branchIndex}"`;
   const branchNodeAttr =
     branchNodeIndex !== null && branchNodeIndex !== undefined
@@ -31832,7 +46197,7 @@ function renderOrchestrationEndNode() {
     <article class="flow-anchor-node flow-anchor-end${selected ? " selected" : ""}" data-node-id="${ORCHESTRATION_FLOW_END_ID}" style="--node-accent:#64748b">
       <span class="flow-anchor-icon">■</span>
       <div class="flow-anchor-copy">
-        <span class="flow-anchor-label">End</span>
+        <span class="flow-anchor-label">Stop</span>
         <strong>Finish</strong>
         <small>Flow completes when all widgets finish</small>
       </div>
@@ -31840,12 +46205,46 @@ function renderOrchestrationEndNode() {
   `;
 }
 
+function renderOrchestrationBoardAnchorNode(kind = "start") {
+  const isStart = kind !== "end" && kind !== "stop";
+  const id = isStart ? ORCHESTRATION_FLOW_START_ID : ORCHESTRATION_FLOW_END_ID;
+  const visual = isStart ? getOrchestrationStartVisual() : { icon: "■", color: "#64748b", label: "Stop", hint: "Flow completes here" };
+  const pos = getOrchestrationAnchorPosition(isStart ? "start" : "end");
+  const selected = orchestrationSelectedNodeId === id;
+  const wiringFrom = id === orchestrationWireFromNodeId;
+  const wireTarget = Boolean(orchestrationWireFromNodeId) && !wiringFrom && !isStart;
+  return `
+    <article class="flow-board-node flow-board-anchor ${isStart ? "flow-board-anchor-start" : "flow-board-anchor-stop"}${selected ? " selected" : ""}${wiringFrom ? " is-wiring-source" : ""}${wireTarget ? " is-wire-target" : ""}"
+      data-node-id="${safeText(id)}" data-board-node="true" data-board-anchor="${isStart ? "start" : "end"}"
+      style="--node-accent:${visual.color}; left:${pos.x}px; top:${pos.y}px;">
+      ${
+        isStart
+          ? ""
+          : `<button type="button" class="flow-board-port flow-board-port-in" data-wire-in="${safeText(id)}" title="Drop wire here" aria-label="Stop input port"></button>`
+      }
+      <div class="flow-board-node-head" data-board-drag-handle="true" title="Drag to reposition">
+        <span class="flow-lane-step-icon">${safeText(visual.icon)}</span>
+        <div class="flow-board-node-title">
+          <strong>${isStart ? "Start" : "Stop"}</strong>
+          <small>${safeText(isStart ? visual.label : "Finish")}</small>
+        </div>
+      </div>
+      <p class="flow-lane-step-preview">${safeText(isStart ? visual.hint : "Every flow ends here")}</p>
+      ${
+        isStart
+          ? `<button type="button" class="flow-board-port flow-board-port-out${wiringFrom ? " is-active" : ""}" data-wire-out="${safeText(id)}" title="Drag to first activity" aria-label="Start output port"></button>`
+          : ""
+      }
+    </article>`;
+}
+
 function renderOrchestrationStepNode(node, index, context = {}) {
   const visual = getOrchestrationNodeVisual(node.type);
   const catalog = orchestrationNodeTypes.find((item) => item.type === node.type) || {};
   const selected = node.id === orchestrationSelectedNodeId;
   const preview = formatOrchestrationNodePreview(node, catalog);
-  const subtitle = catalog.label || visual.label;
+  const displayName = getOrchestrationNodeDisplayName(node);
+  const typeLabel = catalog.label || visual.label;
   const stepLabel =
     context.branchIndex !== undefined && context.branchIndex !== null
       ? `Branch ${context.branchIndex + 1} · Step ${index + 1}`
@@ -31859,21 +46258,899 @@ function renderOrchestrationStepNode(node, index, context = {}) {
     ? `<span class="flow-node-validation-badge" title="${safeText(validationIssues.join("; "))}">${validationIssues.length}</span>`
     : "";
   const errorClass = validationIssues.length ? " has-validation-error" : "";
+  const searchMiss = !orchestrationNodeMatchesBoardSearch(node);
+  const searchClass = searchMiss ? " is-search-dimmed" : orchestrationBoardSearchQuery.trim() ? " is-search-match" : "";
+  const typeHint =
+    displayName !== typeLabel
+      ? `<small class="flow-lane-step-type">${safeText(typeLabel)}</small>`
+      : "";
+  const conditionFork =
+    node.type === "condition"
+      ? renderOrchestrationConditionFork(node)
+      : node.type === "while_loop" || node.type === "do_while"
+        ? renderOrchestrationWhileFork(node)
+        : "";
   return `
-    <article class="flow-lane-step${selected ? " selected" : ""}${errorClass}" data-node-id="${safeText(node.id)}" data-node-index="${index}" style="--node-accent:${visual.color}">
+    <article class="flow-lane-step${selected ? " selected" : ""}${errorClass}${searchClass}${node.type === "condition" || node.type === "while_loop" || node.type === "do_while" ? " is-condition" : ""}" data-node-id="${safeText(node.id)}" data-node-index="${index}" style="--node-accent:${visual.color}">
       <div class="flow-lane-step-head"${selected ? ' draggable="true" data-step-drag-head="true"' : ""}>
         <span class="flow-drag-handle" draggable="true" data-drag-step="${index}" title="Drag to reorder${selected ? " — or drag from the step header" : ""}" aria-label="Drag to reorder">⋮⋮</span>
         <span class="flow-lane-step-icon">${safeText(visual.icon)}</span>
         <div class="flow-lane-step-title">
           <span class="flow-lane-step-num">${safeText(stepLabel)}</span>
-          <strong>${safeText(subtitle)}${errorBadge}</strong>
+          <strong title="${safeText(displayName)}">${safeText(displayName)}${errorBadge}</strong>
+          ${typeHint}
         </div>
         <button type="button" class="ghost flow-node-delete"${deleteAttrs} title="Remove widget" aria-label="Remove widget">×</button>
         <button type="button" class="ghost flow-data-map-btn" data-data-map="${safeText(node.id)}" title="Variable mapping — URL, JSON, input, and output parameters" aria-label="Variable mapping for this step">⇄</button>
       </div>
       <p class="flow-lane-step-preview">${safeText(preview)}</p>
+      ${conditionFork}
     </article>
   `;
+}
+
+function renderOrchestrationConditionFork(node) {
+  const config = node.config || {};
+  const trueId = String(config.true_branch || "").trim();
+  const falseId = String(config.false_branch || "").trim();
+  const trueNode = trueId ? getOrchestrationNodeById(trueId) : null;
+  const falseNode = falseId ? getOrchestrationNodeById(falseId) : null;
+  const trueLabel = trueNode ? getOrchestrationNodeDisplayName(trueNode) : trueId || "Wire a True path";
+  const falseLabel = falseNode ? getOrchestrationNodeDisplayName(falseNode) : falseId || "Wire a False path";
+  return `
+    <div class="flow-condition-fork" aria-label="If/else branches">
+      <div class="flow-condition-arm is-true${!trueId ? " is-empty" : ""}">
+        <span class="flow-condition-arm-badge">True</span>
+        <span class="flow-condition-arm-target" title="${safeText(trueLabel)}">${safeText(trueLabel)}</span>
+        <button type="button" class="ghost flow-condition-arm-btn" data-condition-branch-create="${safeText(node.id)}" data-branch-kind="true" title="Create True path step">+</button>
+      </div>
+      <div class="flow-condition-arm is-false${!falseId ? " is-empty" : ""}">
+        <span class="flow-condition-arm-badge">False</span>
+        <span class="flow-condition-arm-target" title="${safeText(falseLabel)}">${safeText(falseLabel)}</span>
+        <button type="button" class="ghost flow-condition-arm-btn" data-condition-branch-create="${safeText(node.id)}" data-branch-kind="false" title="Create False path step">+</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderOrchestrationWhileFork(node) {
+  const config = node.config || {};
+  const bodyId = String(config.body_branch || "").trim();
+  const exitId = String(config.exit_branch || "").trim();
+  const bodyNode = bodyId ? getOrchestrationNodeById(bodyId) : null;
+  const exitNode = exitId ? getOrchestrationNodeById(exitId) : null;
+  const bodyLabel = bodyNode ? getOrchestrationNodeDisplayName(bodyNode) : bodyId || "Wire loop body";
+  const exitLabel = exitNode ? getOrchestrationNodeDisplayName(exitNode) : exitId || "Wire exit path";
+  const mode = node.type === "do_while" ? "Do while" : "While";
+  return `
+    <div class="flow-condition-fork" aria-label="${safeText(mode)} branches">
+      <div class="flow-condition-arm is-body${!bodyId ? " is-empty" : ""}">
+        <span class="flow-condition-arm-badge">Body</span>
+        <span class="flow-condition-arm-target" title="${safeText(bodyLabel)}">${safeText(bodyLabel)}</span>
+        <button type="button" class="ghost flow-condition-arm-btn" data-condition-branch-create="${safeText(node.id)}" data-branch-kind="body" title="Create loop body step">+</button>
+      </div>
+      <div class="flow-condition-arm is-exit${!exitId ? " is-empty" : ""}">
+        <span class="flow-condition-arm-badge">Exit</span>
+        <span class="flow-condition-arm-target" title="${safeText(exitLabel)}">${safeText(exitLabel)}</span>
+        <button type="button" class="ghost flow-condition-arm-btn" data-condition-branch-create="${safeText(node.id)}" data-branch-kind="exit" title="Create exit path step">+</button>
+      </div>
+    </div>
+  `;
+}
+
+function syncOrchestrationLayoutToggleUi() {
+  const laneBtn = qs("#orchestrationLayoutLane");
+  const boardBtn = qs("#orchestrationLayoutBoard");
+  if (laneBtn) laneBtn.classList.toggle("active", orchestrationCanvasLayout !== "board");
+  if (boardBtn) boardBtn.classList.toggle("active", orchestrationCanvasLayout === "board");
+}
+
+function setOrchestrationCanvasLayout(layout) {
+  const previous = orchestrationCanvasLayout;
+  orchestrationCanvasLayout = layout === "board" ? "board" : "lane";
+  try {
+    localStorage.setItem("orchestrationCanvasLayout", orchestrationCanvasLayout);
+  } catch (_err) {
+    /* ignore */
+  }
+  if (orchestrationCanvasLayout === "board") {
+    const nodes = flattenOrchestrationNodes();
+    // Keep existing human wires; if switching from Lane with no wires yet, seed once from order.
+    if (!orchestrationBoardEdges.length && previous === "lane" && nodes.length > 1) {
+      orchestrationBoardEdges = buildLaneDerivedOrchestrationEdges(nodes);
+    } else {
+      ensureOrchestrationBoardEdgesSeeded(nodes);
+    }
+  } else {
+    orchestrationWireFromNodeId = "";
+  }
+  syncOrchestrationLayoutToggleUi();
+  renderOrchestrationCanvas();
+}
+
+function ensureOrchestrationBoardPositions() {
+  let col = 0;
+  orchestrationBuilderItems.forEach((item, itemIndex) => {
+    if (isOrchestrationStepItem(item)) {
+      if (!item.node.position || item.node.position.x == null || item.node.position.y == null) {
+        item.node.position = { x: 80 + (col % 3) * 280, y: 80 + Math.floor(col / 3) * 160 };
+      }
+      col += 1;
+      return;
+    }
+    if (isOrchestrationParallelItem(item)) {
+      item.branches.forEach((branch, branchIndex) => {
+        branch.forEach((node, nodeIndex) => {
+          if (!node.position || node.position.x == null || node.position.y == null) {
+            node.position = {
+              x: 80 + branchIndex * 280,
+              y: 80 + itemIndex * 40 + nodeIndex * 160,
+            };
+          }
+        });
+      });
+    }
+  });
+}
+
+function renderOrchestrationBoardNode(node) {
+  const visual = getOrchestrationNodeVisual(node.type);
+  const catalog = orchestrationNodeTypes.find((item) => item.type === node.type) || {};
+  const selected = node.id === orchestrationSelectedNodeId;
+  const wiringFrom = node.id === orchestrationWireFromNodeId;
+  const wireTarget = Boolean(orchestrationWireFromNodeId) && !wiringFrom;
+  const preview = formatOrchestrationNodePreview(node, catalog);
+  const displayName = getOrchestrationNodeDisplayName(node);
+  const typeLabel = catalog.label || visual.label;
+  const x = Number(node.position?.x || 80);
+  const y = Number(node.position?.y || 80);
+  const validationIssues = getOrchestrationNodeValidationIssues(node.id);
+  const errorClass = validationIssues.length ? " has-validation-error" : "";
+  const pinned = Boolean(node.config?.pin_data);
+  const searchMiss = !orchestrationNodeMatchesBoardSearch(node);
+  const searchClass = searchMiss ? " is-search-dimmed" : orchestrationBoardSearchQuery.trim() ? " is-search-match" : "";
+  const isCondition = node.type === "condition";
+  const isWhile = node.type === "while_loop" || node.type === "do_while";
+  const trueArmed = wiringFrom && orchestrationWireFromKind === "true";
+  const falseArmed = wiringFrom && orchestrationWireFromKind === "false";
+  const bodyArmed = wiringFrom && orchestrationWireFromKind === "body";
+  const exitArmed = wiringFrom && orchestrationWireFromKind === "exit";
+  let outPorts = `<button type="button" class="flow-board-port flow-board-port-out${wiringFrom && !orchestrationWireFromKind ? " is-active" : ""}" data-wire-out="${safeText(node.id)}" title="Drag to another activity to draw the arrow" aria-label="Output port — drag to next activity"></button>`;
+  if (isCondition) {
+    outPorts = `<div class="flow-board-port-row" role="group" aria-label="True and False outputs">
+        <button type="button" class="flow-board-port flow-board-port-out is-true${trueArmed ? " is-active" : ""}" data-wire-out="${safeText(node.id)}" data-wire-kind="true" title="Drag True path" aria-label="True output">T</button>
+        <button type="button" class="flow-board-port flow-board-port-out is-false${falseArmed ? " is-active" : ""}" data-wire-out="${safeText(node.id)}" data-wire-kind="false" title="Drag False path" aria-label="False output">F</button>
+      </div>`;
+  } else if (isWhile) {
+    outPorts = `<div class="flow-board-port-row" role="group" aria-label="Body and Exit outputs">
+        <button type="button" class="flow-board-port flow-board-port-out is-body${bodyArmed ? " is-active" : ""}" data-wire-out="${safeText(node.id)}" data-wire-kind="body" title="Drag loop body" aria-label="Body output">B</button>
+        <button type="button" class="flow-board-port flow-board-port-out is-exit${exitArmed ? " is-active" : ""}" data-wire-out="${safeText(node.id)}" data-wire-kind="exit" title="Drag exit path" aria-label="Exit output">X</button>
+      </div>`;
+  }
+  const branchBadges = isCondition
+    ? `<div class="flow-board-branch-badges">
+        <span class="flow-board-branch-badge is-true" title="True path">${safeText(node.config?.true_branch || "True · unwired")}</span>
+        <span class="flow-board-branch-badge is-false" title="False path">${safeText(node.config?.false_branch || "False · unwired")}</span>
+      </div>`
+    : isWhile
+      ? `<div class="flow-board-branch-badges">
+        <span class="flow-board-branch-badge is-body" title="Loop body">${safeText(node.config?.body_branch || "Body · unwired")}</span>
+        <span class="flow-board-branch-badge is-exit" title="Exit path">${safeText(node.config?.exit_branch || "Exit · unwired")}</span>
+      </div>`
+      : "";
+  return `
+    <article class="flow-board-node${selected ? " selected" : ""}${wiringFrom ? " is-wiring-source" : ""}${wireTarget ? " is-wire-target" : ""}${errorClass}${pinned ? " has-pin-data" : ""}${searchClass}${isCondition || isWhile ? " is-condition" : ""}" data-node-id="${safeText(node.id)}" data-board-node="true" style="--node-accent:${visual.color}; left:${x}px; top:${y}px;">
+      <button type="button" class="flow-board-port flow-board-port-in" data-wire-in="${safeText(node.id)}" title="Drop wire here" aria-label="Input port — drop incoming arrow"></button>
+      <div class="flow-board-node-head" data-board-drag-handle="true" title="Drag to reposition">
+        <span class="flow-lane-step-icon">${safeText(visual.icon)}</span>
+        <div class="flow-board-node-title">
+          <strong title="${safeText(displayName)}">${safeText(displayName)}</strong>
+          ${displayName !== typeLabel ? `<small>${safeText(typeLabel)}</small>` : ""}
+        </div>
+        ${pinned ? '<span class="flow-pin-badge" title="Pinned dry-run data">📌</span>' : ""}
+        <button type="button" class="ghost flow-data-map-btn" data-data-map="${safeText(node.id)}" title="Variable map">⇄</button>
+        <button type="button" class="ghost flow-node-delete" data-node-delete-id="${safeText(node.id)}" title="Remove widget" aria-label="Remove widget">×</button>
+        ${pinned ? `<button type="button" class="ghost flow-data-map-btn" data-clear-pin="${safeText(node.id)}" title="Clear pinned data">⌫</button>` : ""}
+      </div>
+      <p class="flow-lane-step-preview">${safeText(preview)}</p>
+      ${branchBadges}
+      <code class="mono flow-board-node-id">${safeText(node.id)}</code>
+      ${outPorts}
+    </article>`;
+}
+
+function buildOrchestrationBoardEdges() {
+  const nodes = flattenOrchestrationNodes();
+  ensureOrchestrationBoardPositions();
+  ensureOrchestrationAnchorLayout(nodes);
+  ensureOrchestrationBoardEdgesSeeded(nodes);
+  const startEntity = getOrchestrationBoardEntityById(ORCHESTRATION_FLOW_START_ID);
+  const endEntity = getOrchestrationBoardEntityById(ORCHESTRATION_FLOW_END_ID);
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  nodesById.set(ORCHESTRATION_FLOW_START_ID, startEntity);
+  nodesById.set(ORCHESTRATION_FLOW_END_ID, endEntity);
+  const edges = [];
+  const seen = new Set();
+
+  const pushEdge = (sourceId, targetId, kind = "default") => {
+    if (!nodesById.has(sourceId) || !nodesById.has(targetId) || sourceId === targetId) return;
+    const key = `${sourceId}->${targetId}:${kind}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const source = nodesById.get(sourceId);
+    const target = nodesById.get(targetId);
+    const sourceEl = Array.from(document.querySelectorAll(".flow-board-node")).find(
+      (el) => el.getAttribute("data-node-id") === sourceId,
+    );
+    const targetEl = Array.from(document.querySelectorAll(".flow-board-node")).find(
+      (el) => el.getAttribute("data-node-id") === targetId,
+    );
+    const sourceWidth = sourceEl?.offsetWidth || 248;
+    const sourceHeight = sourceEl?.offsetHeight || 96;
+    edges.push({
+      source: sourceId,
+      target: targetId,
+      x1: Number(source.position?.x || 80) + sourceWidth / 2,
+      y1: Number(source.position?.y || 80) + sourceHeight,
+      x2: Number(target.position?.x || 80) + (targetEl?.offsetWidth || 248) / 2,
+      y2: Number(target.position?.y || 80),
+      kind,
+    });
+  };
+
+  const activityIds = nodes.map((node) => node.id);
+  const stored = sanitizeOrchestrationBoardEdges(activityIds);
+  stored.forEach((edge) => {
+    let kind = edge.kind || "default";
+    if (edge.source === ORCHESTRATION_FLOW_START_ID) kind = "start";
+    if (edge.target === ORCHESTRATION_FLOW_END_ID) kind = "stop";
+    const source = nodesById.get(edge.source);
+    if (source && !isOrchestrationAnchorId(edge.source)) {
+      const trueBranch = String(source.config?.true_branch || "").trim();
+      const falseBranch = String(source.config?.false_branch || "").trim();
+      const bodyBranch = String(source.config?.body_branch || "").trim();
+      const exitBranch = String(source.config?.exit_branch || "").trim();
+      const errorBranch = String(source.config?.error_branch || source.config?.on_error || "").trim();
+      if (trueBranch && edge.target === trueBranch) kind = "true";
+      else if (falseBranch && edge.target === falseBranch) kind = "false";
+      else if (bodyBranch && edge.target === bodyBranch) kind = "body";
+      else if (exitBranch && edge.target === exitBranch) kind = "exit";
+      else if (errorBranch && edge.target === errorBranch) kind = "error";
+    }
+    if (edge.kind === "error" || edge.kind === "true" || edge.kind === "false" || edge.kind === "body" || edge.kind === "exit") {
+      kind = edge.kind;
+    }
+    pushEdge(edge.source, edge.target, kind);
+  });
+
+  nodes.forEach((node) => {
+    ["true_branch", "false_branch", "body_branch", "exit_branch", "error_branch", "default_branch"].forEach((field) => {
+      const targetId = String(node.config?.[field] || "").trim();
+      if (!targetId) return;
+      const kind =
+        field === "true_branch"
+          ? "true"
+          : field === "false_branch"
+            ? "false"
+            : field === "body_branch"
+              ? "body"
+              : field === "exit_branch"
+                ? "exit"
+                : field === "error_branch"
+                  ? "error"
+                  : "default";
+      pushEdge(node.id, targetId, kind);
+    });
+    if (node.type === "switch") {
+      try {
+        const cases = JSON.parse(String(node.config?.cases_json || "[]"));
+        if (Array.isArray(cases)) {
+          cases.forEach((item) => {
+            const targetId = String(item?.branch || "").trim();
+            if (targetId) pushEdge(node.id, targetId, "case");
+          });
+        }
+      } catch (_err) {
+        /* ignore invalid cases_json while editing */
+      }
+    }
+  });
+
+  // Always show Start → entry activities and exit activities → Stop when not explicitly wired.
+  const incoming = new Set(stored.map((e) => e.target));
+  const outgoing = new Set(stored.map((e) => e.source));
+  if (!activityIds.length) {
+    if (!isOrchestrationSyntheticEdgeSuppressed(ORCHESTRATION_FLOW_START_ID, ORCHESTRATION_FLOW_END_ID)) {
+      pushEdge(ORCHESTRATION_FLOW_START_ID, ORCHESTRATION_FLOW_END_ID, "start");
+    }
+  } else {
+    const hasStartWire = stored.some((e) => e.source === ORCHESTRATION_FLOW_START_ID);
+    const hasStopWire = stored.some((e) => e.target === ORCHESTRATION_FLOW_END_ID);
+    if (!hasStartWire) {
+      activityIds.forEach((id) => {
+        if (incoming.has(id)) return;
+        if (isOrchestrationSyntheticEdgeSuppressed(ORCHESTRATION_FLOW_START_ID, id)) return;
+        pushEdge(ORCHESTRATION_FLOW_START_ID, id, "start");
+      });
+    }
+    if (!hasStopWire) {
+      activityIds.forEach((id) => {
+        if (outgoing.has(id)) return;
+        if (isOrchestrationSyntheticEdgeSuppressed(id, ORCHESTRATION_FLOW_END_ID)) return;
+        pushEdge(id, ORCHESTRATION_FLOW_END_ID, "stop");
+      });
+    }
+  }
+
+  return edges;
+}
+
+function renderOrchestrationBoardEdgesSvg(width, height) {
+  const edges = buildOrchestrationBoardEdges();
+  const defs = `
+    <defs>
+      <marker id="flowBoardArrow" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="9" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M 0 0 L 10 4 L 0 8 z" fill="rgba(126, 184, 201, 0.95)"></path>
+      </marker>
+      <marker id="flowBoardArrowTrue" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="9" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M 0 0 L 10 4 L 0 8 z" fill="rgba(74, 222, 128, 0.95)"></path>
+      </marker>
+      <marker id="flowBoardArrowFalse" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="9" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M 0 0 L 10 4 L 0 8 z" fill="rgba(251, 146, 60, 0.95)"></path>
+      </marker>
+      <marker id="flowBoardArrowError" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="9" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M 0 0 L 10 4 L 0 8 z" fill="rgba(248, 113, 113, 0.95)"></path>
+      </marker>
+      <marker id="flowBoardArrowCase" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="9" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M 0 0 L 10 4 L 0 8 z" fill="rgba(251, 191, 36, 0.95)"></path>
+      </marker>
+      <marker id="flowBoardArrowStart" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="9" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M 0 0 L 10 4 L 0 8 z" fill="rgba(196, 163, 90, 0.95)"></path>
+      </marker>
+    </defs>`;
+  const paths = edges
+    .map((edge) => {
+      const midY = (edge.y1 + edge.y2) / 2;
+      const midX = (edge.x1 + edge.x2) / 2;
+      const selected =
+        orchestrationSelectedBoardEdge?.source === edge.source &&
+        orchestrationSelectedBoardEdge?.target === edge.target;
+      const kindClass =
+        edge.kind === "true"
+          ? " flow-board-edge-true"
+          : edge.kind === "false"
+            ? " flow-board-edge-false"
+            : edge.kind === "body"
+              ? " flow-board-edge-body"
+              : edge.kind === "exit"
+                ? " flow-board-edge-exit"
+            : edge.kind === "error"
+              ? " flow-board-edge-error"
+              : edge.kind === "case" || edge.kind === "default"
+                ? " flow-board-edge-case"
+                : edge.kind === "start" || edge.kind === "stop"
+                  ? " flow-board-edge-anchor"
+                  : "";
+      const marker =
+        edge.kind === "true"
+          ? "url(#flowBoardArrowTrue)"
+          : edge.kind === "false"
+            ? "url(#flowBoardArrowFalse)"
+            : edge.kind === "body"
+              ? "url(#flowBoardArrowTrue)"
+              : edge.kind === "exit"
+                ? "url(#flowBoardArrowFalse)"
+            : edge.kind === "error"
+              ? "url(#flowBoardArrowError)"
+              : edge.kind === "case" || edge.kind === "default"
+                ? "url(#flowBoardArrowCase)"
+                : edge.kind === "start" || edge.kind === "stop"
+                  ? "url(#flowBoardArrowStart)"
+                  : "url(#flowBoardArrow)";
+      const d = `M ${edge.x1} ${edge.y1} C ${edge.x1} ${midY}, ${edge.x2} ${midY}, ${edge.x2} ${edge.y2}`;
+      const unlink = selected
+        ? `<g class="flow-board-edge-unlink" data-edge-unlink="true" data-edge-source="${safeText(edge.source)}" data-edge-target="${safeText(edge.target)}" transform="translate(${midX}, ${midY})" role="button" tabindex="0" aria-label="Delete arrow">
+            <circle r="11" class="flow-board-edge-unlink-bg"></circle>
+            <text text-anchor="middle" dominant-baseline="central" class="flow-board-edge-unlink-x">×</text>
+          </g>`
+        : "";
+      const kindLabel =
+        edge.kind === "true"
+          ? "TRUE"
+          : edge.kind === "false"
+            ? "FALSE"
+            : edge.kind === "body"
+              ? "BODY"
+              : edge.kind === "exit"
+                ? "EXIT"
+            : edge.kind === "error"
+              ? "ERROR"
+              : "";
+      const kindLabelMarkup = kindLabel
+        ? `<g class="flow-board-edge-label" transform="translate(${midX}, ${(edge.y1 + midY) / 2})">
+            <rect x="-22" y="-9" width="44" height="18" rx="4" class="flow-board-edge-label-bg${kindClass}"></rect>
+            <text text-anchor="middle" dominant-baseline="central" class="flow-board-edge-label-text">${kindLabel}</text>
+          </g>`
+        : "";
+      return `<g class="flow-board-edge-group${selected ? " is-selected" : ""}" data-edge-source="${safeText(edge.source)}" data-edge-target="${safeText(edge.target)}" data-edge-kind="${safeText(edge.kind || "")}">
+        <path class="flow-board-edge-hit" d="${d}"></path>
+        <path class="flow-board-edge${kindClass}" d="${d}" marker-end="${marker}"></path>
+        ${kindLabelMarkup}
+        ${unlink}
+      </g>`;
+    })
+    .join("");
+  return `<svg class="flow-board-edges" id="orchestrationBoardEdges" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${defs}${paths}</svg>`;
+}
+
+function refreshOrchestrationBoardEdges() {
+  const surface = qs("#orchestrationBoardSurface");
+  const svg = qs("#orchestrationBoardEdges");
+  if (!surface || !svg) return;
+  const width = Math.max(1200, surface.offsetWidth || 1200);
+  const height = Math.max(800, surface.offsetHeight || 800);
+  svg.outerHTML = renderOrchestrationBoardEdgesSvg(width, height);
+}
+
+function renderOrchestrationBoardCanvas(lane) {
+  if (!lane) return;
+  ensureOrchestrationBoardPositions();
+  const nodes = flattenOrchestrationNodes().filter((node) => node && node.id);
+  ensureOrchestrationAnchorLayout(nodes);
+  const cards = [
+    renderOrchestrationBoardAnchorNode("start"),
+    ...nodes.map((node) => renderOrchestrationBoardNode(node)),
+    renderOrchestrationBoardAnchorNode("end"),
+  ].join("");
+  const viewport = qs("#orchestrationCanvasViewport");
+  const vw = Math.max(640, viewport?.clientWidth || 1200);
+  const vh = Math.max(400, viewport?.clientHeight || 800);
+  const startPos = getOrchestrationAnchorPosition("start");
+  const endPos = getOrchestrationAnchorPosition("end");
+  const contentRight = Math.max(
+    startPos.x + 280,
+    endPos.x + 280,
+    ...(nodes.length ? nodes.map((n) => Number(n.position?.x || 0) + 300) : [400]),
+  );
+  const contentBottom = Math.max(
+    startPos.y + 180,
+    endPos.y + 180,
+    ...(nodes.length ? nodes.map((n) => Number(n.position?.y || 0) + 200) : [300]),
+  );
+  // Extra pad so users can pan left/right/up/down past the cards (n8n-style room).
+  const width = Math.max(vw + 1200, contentRight + 900, 2800);
+  const height = Math.max(vh + 900, contentBottom + 700, 1800);
+  lane.innerHTML = `
+    <div class="flow-board-surface" id="orchestrationBoardSurface" style="min-width:${width}px; min-height:${height}px; width:${width}px; height:${height}px;">
+      ${renderOrchestrationBoardEdgesSvg(width, height)}
+      <div class="flow-board-hint">${
+        orchestrationWireFromNodeId
+          ? `Drag the arrow onto the next activity to connect from <strong>${safeText(orchestrationWireFromNodeId)}</strong>. Esc cancels.`
+          : "Link: drag ● → next box (or click ● then click target). Delete arrow: click it, then × / Delete."
+      }</div>
+      ${cards}
+    </div>`;
+  lane.classList.add("flow-lane--board");
+  wireOrchestrationBoardDrag();
+  wireOrchestrationBoardPorts();
+  wireOrchestrationBoardPan();
+}
+
+function getOrchestrationBoardSurfacePoint(surface, clientX, clientY) {
+  const rect = surface.getBoundingClientRect();
+  const scale = Math.max(0.01, (orchestrationCanvasZoom || 100) / 100);
+  return {
+    x: (clientX - rect.left) / scale,
+    y: (clientY - rect.top) / scale,
+  };
+}
+
+function findOrchestrationBoardDropTarget(clientX, clientY, sourceId) {
+  const stack = document.elementsFromPoint(clientX, clientY) || [];
+  for (const el of stack) {
+    if (!(el instanceof Element)) continue;
+    const wireIn = el.closest("[data-wire-in]");
+    if (wireIn) {
+      const id = wireIn.getAttribute("data-wire-in") || "";
+      if (id && id !== sourceId) return id;
+    }
+    const card = el.closest("[data-board-node]");
+    if (card) {
+      const id = card.getAttribute("data-node-id") || "";
+      if (id && id !== sourceId) return id;
+    }
+  }
+  return "";
+}
+
+function wireOrchestrationBoardPorts() {
+  const surface = qs("#orchestrationBoardSurface");
+  if (!surface || surface.dataset.boardWireBound === "1") return;
+  surface.dataset.boardWireBound = "1";
+
+  let draft = null;
+  let hoverTargetId = "";
+
+  const clearDraft = () => {
+    if (draft?.preview?.parentNode) draft.preview.remove();
+    draft = null;
+    hoverTargetId = "";
+    surface.classList.remove("is-wiring-drag");
+    surface.querySelectorAll(".flow-board-node.is-wire-hover").forEach((el) => el.classList.remove("is-wire-hover"));
+  };
+
+  const updateHover = (targetId) => {
+    if (hoverTargetId === targetId) return;
+    hoverTargetId = targetId;
+    surface.querySelectorAll(".flow-board-node").forEach((card) => {
+      card.classList.toggle("is-wire-hover", card.getAttribute("data-node-id") === targetId);
+    });
+  };
+
+  const finishWire = (sourceId, targetId, kind = "") => {
+    clearDraft();
+    if (!sourceId || !targetId || sourceId === targetId) {
+      orchestrationWireFromNodeId = "";
+      orchestrationWireFromKind = "";
+      renderOrchestrationCanvas();
+      return;
+    }
+    if (connectOrchestrationBoardEdge(sourceId, targetId, kind)) {
+      renderOrchestrationStudio();
+      const kindNote = kind ? ` (${kind})` : "";
+      setOrchestrationFeedback(`Arrow drawn${kindNote}: ${sourceId} → ${targetId}`, "orchestrationBuilderFeedback", "success");
+    } else {
+      orchestrationWireFromNodeId = "";
+      orchestrationWireFromKind = "";
+      renderOrchestrationCanvas();
+    }
+  };
+
+  surface.addEventListener("pointerdown", (event) => {
+    const out = event.target.closest("[data-wire-out]");
+    if (!out || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const sourceId = out.getAttribute("data-wire-out") || "";
+    if (!sourceId) return;
+    const wireKind = String(out.getAttribute("data-wire-kind") || "").trim();
+    const sourceCard = out.closest("[data-board-node]");
+    const priorArmedId = String(orchestrationWireFromNodeId || "");
+    orchestrationWireFromNodeId = sourceId;
+    orchestrationWireFromKind = wireKind;
+    surface.classList.add("is-wiring-drag");
+    surface.querySelectorAll(".flow-board-node").forEach((card) => {
+      const id = card.getAttribute("data-node-id");
+      card.classList.toggle("is-wiring-source", id === sourceId);
+      card.classList.toggle("is-wire-target", Boolean(id && id !== sourceId));
+    });
+    out.classList.add("is-active");
+    const start = getOrchestrationBoardSurfacePoint(surface, event.clientX, event.clientY);
+    // Anchor preview at the source card bottom center when available.
+    if (sourceCard) {
+      const portRect = out.getBoundingClientRect();
+      const surfaceRect = surface.getBoundingClientRect();
+      const zoom = Number(qs("#orchestrationCanvasStage")?.dataset?.zoom || 100) / 100;
+      start.x = (portRect.left + portRect.width / 2 - surfaceRect.left) / (zoom || 1) + (surface.scrollLeft || 0);
+      start.y = (portRect.top + portRect.height / 2 - surfaceRect.top) / (zoom || 1) + (surface.scrollTop || 0);
+    }
+    const preview = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    preview.setAttribute("class", `flow-board-wire-preview${wireKind ? ` is-${wireKind}` : ""}`);
+    const fill =
+      wireKind === "true" || wireKind === "body"
+        ? "rgba(74, 222, 128, 0.95)"
+        : wireKind === "false" || wireKind === "exit"
+          ? "rgba(251, 146, 60, 0.95)"
+          : "rgba(126, 184, 201, 0.95)";
+    preview.innerHTML = `
+      <defs>
+        <marker id="flowBoardPreviewArrow" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="9" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M 0 0 L 10 4 L 0 8 z" fill="${fill}"></path>
+        </marker>
+      </defs>
+      <path class="flow-board-wire-preview-path" marker-end="url(#flowBoardPreviewArrow)" d="M ${start.x} ${start.y} L ${start.x} ${start.y}" />`;
+    surface.appendChild(preview);
+    draft = {
+      sourceId,
+      wireKind,
+      startX: start.x,
+      startY: start.y,
+      preview,
+      moved: false,
+      pointerId: event.pointerId,
+      priorArmedId,
+    };
+    try {
+      surface.setPointerCapture(event.pointerId);
+    } catch (_err) {
+      /* ignore */
+    }
+  });
+
+  surface.addEventListener("pointermove", (event) => {
+    if (!draft || draft.pointerId !== event.pointerId) return;
+    const point = getOrchestrationBoardSurfacePoint(surface, event.clientX, event.clientY);
+    if (Math.hypot(point.x - draft.startX, point.y - draft.startY) > 6) draft.moved = true;
+    const path = draft.preview.querySelector("path.flow-board-wire-preview-path");
+    if (path) {
+      const midY = (draft.startY + point.y) / 2;
+      path.setAttribute(
+        "d",
+        `M ${draft.startX} ${draft.startY} C ${draft.startX} ${midY}, ${point.x} ${midY}, ${point.x} ${point.y}`,
+      );
+    }
+    draft.preview.style.visibility = "hidden";
+    const targetId = findOrchestrationBoardDropTarget(event.clientX, event.clientY, draft.sourceId);
+    draft.preview.style.visibility = "";
+    updateHover(targetId);
+  });
+
+  surface.addEventListener("pointerup", (event) => {
+    if (!draft || draft.pointerId !== event.pointerId) return;
+    const sourceId = draft.sourceId;
+    const moved = draft.moved;
+    const priorArmedId = draft.priorArmedId;
+    const wireKind = draft.wireKind || "";
+    if (draft.preview) draft.preview.style.visibility = "hidden";
+    const targetId = findOrchestrationBoardDropTarget(event.clientX, event.clientY, sourceId);
+    try {
+      surface.releasePointerCapture(event.pointerId);
+    } catch (_err) {
+      /* ignore */
+    }
+    if (moved && targetId) {
+      finishWire(sourceId, targetId, wireKind);
+      return;
+    }
+    clearDraft();
+    if (!moved && priorArmedId === sourceId) {
+      orchestrationWireFromNodeId = "";
+      orchestrationWireFromKind = "";
+      renderOrchestrationCanvas();
+      setOrchestrationFeedback("Wire cancelled.", "orchestrationBuilderFeedback", "info");
+      return;
+    }
+    orchestrationWireFromNodeId = sourceId;
+    orchestrationWireFromKind = wireKind;
+    renderOrchestrationCanvas();
+    const kindHint = wireKind ? ` ${wireKind.toUpperCase()} path` : "";
+    setOrchestrationFeedback(
+      `Wiring${kindHint} from "${sourceId}" — drop on the next activity (or click it).`,
+      "orchestrationBuilderFeedback",
+      "info",
+    );
+  });
+
+  surface.addEventListener("pointercancel", (event) => {
+    if (!draft || draft.pointerId !== event.pointerId) return;
+    clearDraft();
+    orchestrationWireFromNodeId = "";
+    orchestrationWireFromKind = "";
+    renderOrchestrationCanvas();
+  });
+}
+
+function wireOrchestrationBoardDrag() {
+  const surface = qs("#orchestrationBoardSurface");
+  const viewport = qs("#orchestrationCanvasViewport");
+  const lane = qs("#orchestrationCanvasLane");
+  if (!surface || surface.dataset.boardDragBound === "1") return;
+  surface.dataset.boardDragBound = "1";
+  let drag = null;
+  let lockedScroll = null;
+  let edgeRaf = 0;
+
+  const setBoardDragging = (active) => {
+    viewport?.classList.toggle("is-board-dragging", Boolean(active));
+    lane?.classList.toggle("is-board-dragging", Boolean(active));
+  };
+
+  const scheduleEdgeRefresh = () => {
+    if (edgeRaf) return;
+    edgeRaf = requestAnimationFrame(() => {
+      edgeRaf = 0;
+      refreshOrchestrationBoardEdges();
+    });
+  };
+
+  surface.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("[data-wire-out], [data-wire-in], .flow-node-delete, [data-node-delete-id], [data-data-map], [data-clear-pin]")) return;
+    if (viewport?.classList.contains("is-board-panning")) return;
+    const handle = event.target.closest("[data-board-drag-handle]");
+    const card = event.target.closest("[data-board-node]");
+    if (!handle || !card || event.button !== 0) return;
+    const nodeId = card.getAttribute("data-node-id");
+    const anchorKind = card.getAttribute("data-board-anchor");
+    const node = anchorKind
+      ? getOrchestrationBoardEntityById(nodeId)
+      : getOrchestrationNodeById(nodeId);
+    if (!node) return;
+    event.preventDefault();
+    pushOrchestrationHistorySnapshot(anchorKind ? "move anchor" : "move node");
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const ox = Number(node.position?.x || 0);
+    const oy = Number(node.position?.y || 0);
+    drag = { node, startX, startY, originX: ox, originY: oy, card, nextX: ox, nextY: oy, anchorKind };
+    card.classList.add("is-dragging");
+    card.style.left = `${ox}px`;
+    card.style.top = `${oy}px`;
+    card.style.transform = "translate(0px, 0px)";
+    card.setPointerCapture?.(event.pointerId);
+    if (viewport) {
+      lockedScroll = { left: viewport.scrollLeft, top: viewport.scrollTop };
+    }
+    setBoardDragging(true);
+  });
+  surface.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    // Edge auto-pan while dragging a card near the viewport borders.
+    if (viewport) {
+      const rect = viewport.getBoundingClientRect();
+      const edge = 48;
+      let panX = 0;
+      let panY = 0;
+      if (event.clientX < rect.left + edge) panX = -14;
+      else if (event.clientX > rect.right - edge) panX = 14;
+      if (event.clientY < rect.top + edge) panY = -14;
+      else if (event.clientY > rect.bottom - edge) panY = 14;
+      if (panX || panY) {
+        viewport.scrollLeft += panX;
+        viewport.scrollTop += panY;
+        if (lockedScroll) {
+          lockedScroll.left = viewport.scrollLeft;
+          lockedScroll.top = viewport.scrollTop;
+        }
+        drag.startX -= panX;
+        drag.startY -= panY;
+      } else if (lockedScroll) {
+        viewport.scrollLeft = lockedScroll.left;
+        viewport.scrollTop = lockedScroll.top;
+      }
+    }
+    const scale = (orchestrationCanvasZoom || 100) / 100;
+    const dx = (event.clientX - drag.startX) / scale;
+    const dy = (event.clientY - drag.startY) / scale;
+    const nextX = Math.max(16, drag.originX + dx);
+    const nextY = Math.max(16, drag.originY + dy);
+    drag.nextX = nextX;
+    drag.nextY = nextY;
+    if (drag.anchorKind) {
+      setOrchestrationAnchorPosition(drag.anchorKind, { x: nextX, y: nextY });
+    } else {
+      drag.node.position = { x: nextX, y: nextY };
+    }
+    drag.card.style.transform = `translate(${nextX - drag.originX}px, ${nextY - drag.originY}px)`;
+    scheduleEdgeRefresh();
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    if (drag.anchorKind) {
+      setOrchestrationAnchorPosition(drag.anchorKind, { x: drag.nextX, y: drag.nextY });
+    } else {
+      drag.node.position = { x: drag.nextX, y: drag.nextY };
+    }
+    drag.card.style.left = `${drag.nextX}px`;
+    drag.card.style.top = `${drag.nextY}px`;
+    drag.card.style.transform = "";
+    drag.card.classList.remove("is-dragging");
+    drag = null;
+    lockedScroll = null;
+    setBoardDragging(false);
+    if (edgeRaf) {
+      cancelAnimationFrame(edgeRaf);
+      edgeRaf = 0;
+    }
+    refreshOrchestrationBoardEdges();
+  };
+  surface.addEventListener("pointerup", endDrag);
+  surface.addEventListener("pointercancel", endDrag);
+}
+
+function wireOrchestrationBoardPan() {
+  const viewport = qs("#orchestrationCanvasViewport");
+  const surface = qs("#orchestrationBoardSurface");
+  const lane = qs("#orchestrationCanvasLane");
+  if (!viewport || !surface || surface.dataset.boardPanBound === "1") return;
+  surface.dataset.boardPanBound = "1";
+
+  let pan = null;
+  let spaceDown = false;
+
+  const setPanning = (active) => {
+    viewport.classList.toggle("is-board-panning", Boolean(active));
+    lane?.classList.toggle("is-board-panning", Boolean(active));
+    surface.classList.toggle("is-board-panning", Boolean(active));
+  };
+
+  const isEditableTarget = (target) => {
+    const el = target instanceof Element ? target : null;
+    if (!el) return false;
+    return Boolean(el.closest("input, textarea, select, [contenteditable='true']"));
+  };
+
+  const onKeyDown = (event) => {
+    if (event.code !== "Space" || isEditableTarget(event.target)) return;
+    if (!qs("#orchestration.active") || orchestrationCanvasLayout !== "board") return;
+    spaceDown = true;
+    viewport.classList.add("is-board-pan-ready");
+    if (!event.repeat) event.preventDefault();
+  };
+  const onKeyUp = (event) => {
+    if (event.code !== "Space") return;
+    spaceDown = false;
+    viewport.classList.remove("is-board-pan-ready");
+    if (!pan) setPanning(false);
+  };
+  document.addEventListener("keydown", onKeyDown);
+  document.addEventListener("keyup", onKeyUp);
+
+  const canStartPan = (event) => {
+    if (orchestrationWireFromNodeId) return false;
+    if (event.target.closest("[data-wire-out], [data-wire-in], [data-board-drag-handle], .flow-data-map-btn, .flow-node-delete")) {
+      return false;
+    }
+    const middle = event.button === 1;
+    const spacePan = spaceDown && event.button === 0;
+    const emptyPan =
+      event.button === 0 &&
+      !spaceDown &&
+      !event.target.closest("[data-board-node]") &&
+      (event.target === surface ||
+        event.target.classList.contains("flow-board-hint") ||
+        event.target.closest(".flow-board-edges") ||
+        event.target.classList.contains("flow-lane-empty-hint"));
+    return middle || spacePan || emptyPan;
+  };
+
+  surface.addEventListener("pointerdown", (event) => {
+    if (!canStartPan(event)) return;
+    event.preventDefault();
+    pan = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: viewport.scrollLeft,
+      scrollTop: viewport.scrollTop,
+    };
+    setPanning(true);
+    surface.setPointerCapture?.(event.pointerId);
+  });
+
+  surface.addEventListener("pointermove", (event) => {
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    const dx = event.clientX - pan.startX;
+    const dy = event.clientY - pan.startY;
+    viewport.scrollLeft = pan.scrollLeft - dx;
+    viewport.scrollTop = pan.scrollTop - dy;
+  });
+
+  const endPan = (event) => {
+    if (!pan || (event && pan.pointerId !== event.pointerId)) return;
+    pan = null;
+    setPanning(false);
+  };
+  surface.addEventListener("pointerup", endPan);
+  surface.addEventListener("pointercancel", endPan);
+
+  // Shift+wheel pans horizontally; plain wheel stays vertical (native).
+  viewport.addEventListener(
+    "wheel",
+    (event) => {
+      if (orchestrationCanvasLayout !== "board") return;
+      if (event.shiftKey) {
+        event.preventDefault();
+        viewport.scrollLeft += event.deltaY || event.deltaX;
+        return;
+      }
+      // Trackpads often send horizontal deltaX — honor it.
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+        event.preventDefault();
+        viewport.scrollLeft += event.deltaX;
+      }
+    },
+    { passive: false },
+  );
 }
 
 function renderOrchestrationCanvas() {
@@ -31881,6 +47158,7 @@ function renderOrchestrationCanvas() {
   const empty = qs("#orchestrationCanvasEmpty");
   const summary = qs("#orchestrationFlowSummaryStrip");
   if (!lane) return;
+  syncOrchestrationLayoutToggleUi();
 
   if (!isOrchestrationFlowActive()) {
     lane.hidden = true;
@@ -31899,13 +47177,47 @@ function renderOrchestrationCanvas() {
     const widgets = countOrchestrationWidgets();
     const parallelGroups = countOrchestrationParallelGroups();
     summary.hidden = false;
+    const policy = orchestrationPolicySnapshot || {};
+    const liveEnabled = String(policy.live_executor_enabled || "false").toLowerCase() === "true";
+    const liveProd = String(policy.live_executor_prod_enabled || "false").toLowerCase() === "true";
+    const hosts = Array.isArray(policy.http_allowed_hosts) ? policy.http_allowed_hosts : [];
+    const env = String(qs("#orchestrationToolbarEnvironment")?.value || "dev").toLowerCase();
+    const liveActive = env === "prod" ? liveEnabled && liveProd : liveEnabled;
+    const liveBadge =
+      env === "prod"
+        ? liveProd && liveEnabled
+          ? "Live prod ON"
+          : "Prod live OFF — flag gated"
+        : liveEnabled
+          ? "Live executor ON"
+          : "Simulated executor";
+    const hostBadge = hosts.length ? `${hosts.length} allowlisted host${hosts.length === 1 ? "" : "s"}` : "No HTTP hosts";
+    const readiness = orchestrationLiveReadinessSnapshot || {};
+    const nonProdReady = readiness.non_prod_live_ready === true;
+    const prodLive = readiness.prod_live_enabled === true;
+    const readinessBadge = prodLive
+      ? "Prod live ON"
+      : nonProdReady
+        ? "Non-prod live ready"
+        : "Live not ready";
     summary.innerHTML = `
       <span class="flow-summary-chip">${widgets} step${widgets === 1 ? "" : "s"}</span>
       ${parallelGroups ? `<span class="flow-summary-chip flow-summary-chip-parallel">⑂ ${parallelGroups} parallel group${parallelGroups === 1 ? "" : "s"}</span>` : ""}
-      <span class="flow-summary-chip flow-summary-chip-muted">${parallelGroups ? "Fork → branches → join" : "Serial steps top to bottom"}</span>
+      <span class="flow-summary-chip ${liveActive ? "flow-summary-chip-live" : "flow-summary-chip-muted"}" title="orchestration.live_executor_enabled / live_executor_prod_enabled">${safeText(liveBadge)}</span>
+      <span class="flow-summary-chip ${hosts.length ? "" : "flow-summary-chip-muted"}" title="${safeText(hosts.join(", ") || "Configure orchestration.http_allowed_hosts_json")}">${safeText(hostBadge)}</span>
+      <span class="flow-summary-chip ${nonProdReady && !prodLive ? "flow-summary-chip-live" : "flow-summary-chip-muted"}" title="GET /orchestration/live-readiness">${safeText(readinessBadge)}</span>
+      <span class="flow-summary-chip flow-summary-chip-muted">${orchestrationCanvasLayout === "board" ? "Freeform board" : parallelGroups ? "Fork → branches → join" : "Serial steps top to bottom"}</span>
     `;
   }
 
+  if (orchestrationCanvasLayout === "board") {
+    renderOrchestrationBoardCanvas(lane);
+    applyOrchestrationCanvasZoom();
+    renderOrchestrationConsoleSummary();
+    return;
+  }
+
+  lane.classList.remove("flow-lane--board");
   let html = renderOrchestrationStartNode();
   html += renderOrchestrationLaneConnector();
   html += renderOrchestrationInsertSlot(0);
@@ -31941,8 +47253,9 @@ function renderOrchestrationCanvas() {
     requestAnimationFrame(() => {
       syncAllParallelBranchScrollUi();
       window.setTimeout(() => syncAllParallelBranchScrollUi(), 120);
-      if (orchestrationSelectedNodeId.startsWith("parallel:")) {
-        const groupId = orchestrationSelectedNodeId.slice("parallel:".length);
+      const selectedId = String(orchestrationSelectedNodeId || "");
+      if (selectedId.startsWith("parallel:")) {
+        const groupId = selectedId.slice("parallel:".length);
         if (orchestrationFocusedParallelBranchIndex !== null && orchestrationFocusedParallelBranchIndex !== undefined) {
           scrollParallelBranchIntoView(groupId, orchestrationFocusedParallelBranchIndex);
         }
@@ -32072,6 +47385,26 @@ function renderOrchestrationInspector() {
     const visual = getOrchestrationStartVisual();
     const values = getOrchestrationFlowFormValues();
     const trigger = values?.trigger_type || "manual";
+    const triggerCfg = parseOrchestrationTriggerConfig(values?.trigger_config_json);
+    const cronValue = String(triggerCfg.cron_expression || "0 9 * * *").trim() || "0 9 * * *";
+    const webhookPath = String(triggerCfg.webhook_path_ref || triggerCfg.path_ref || "flow-hook").trim() || "flow-hook";
+    const webhookTokenBinding = String(triggerCfg.token_binding_id || "").trim();
+    const webhookHmacBinding = String(triggerCfg.hmac_secret_binding_id || "").trim();
+    const cronPresets = [
+      ["*/5 * * * *", "Every 5 minutes"],
+      ["*/15 * * * *", "Every 15 minutes"],
+      ["0 * * * *", "Hourly"],
+      ["0 9 * * *", "Daily 09:00 UTC"],
+      ["0 9 * * 1-5", "Weekdays 09:00 UTC"],
+      ["0 0 * * 0", "Weekly Sunday midnight"],
+      ["0 0 1 * *", "Monthly 1st midnight"],
+    ];
+    const cronPresetOptions = cronPresets
+      .map(
+        ([value, label]) =>
+          `<option value="${safeText(value)}" ${value === cronValue ? "selected" : ""}>${safeText(label)}</option>`,
+      )
+      .join("");
     const triggerExample =
       ORCH_REG?.TRIGGER_CONFIG_EXAMPLES?.[trigger] ||
       (trigger === "schedule" ? '{"cron_expression": "0 9 * * *"}' : "{}");
@@ -32089,16 +47422,118 @@ function renderOrchestrationInspector() {
             <option value="webhook" ${values?.trigger_type === "webhook" ? "selected" : ""}>Webhook event</option>
           </select>
         </label>
-        <label class="wide-field">Trigger settings (JSON)<textarea id="orchestrationInspectorTriggerConfig" rows="5" placeholder="${safeText(triggerExample)}">${safeText(values?.trigger_config_json || triggerExample)}</textarea></label>
+        ${
+          trigger === "schedule"
+            ? `<label>Schedule preset
+                <select id="orchestrationInspectorCronPreset">
+                  <option value="">Custom expression…</option>
+                  ${cronPresetOptions}
+                </select>
+              </label>
+              <label class="wide-field">Cron expression (5-field)
+                <input id="orchestrationInspectorCron" value="${safeText(cronValue)}" placeholder="0 9 * * *" />
+              </label>
+              <p class="flow-inspector-tip">Format: minute hour day-of-month month day-of-week. Scheduler ticks poll due flows.</p>`
+            : ""
+        }
+        ${
+          trigger === "webhook"
+            ? `<label class="wide-field">Webhook path
+                <input id="orchestrationInspectorWebhookPath" value="${safeText(webhookPath)}" placeholder="support-triage" />
+              </label>
+              <p class="flow-inspector-tip">POST <code class="mono">/orchestration/webhooks/&lt;path&gt;/trigger</code> — use the toolbar Test webhook control after saving.</p>
+              ${renderOrchestrationCredentialBindingSelect("token_binding_id", webhookTokenBinding, {
+                required: false,
+                label: "Bearer token binding (optional)",
+                helper: "Requires Authorization: Bearer <token> resolved from this Providers binding.",
+                wide: true,
+              }).replace('data-inspector-config-field="token_binding_id"', 'id="orchestrationInspectorWebhookTokenBinding" data-inspector-config-field="token_binding_id"')}
+              ${renderOrchestrationCredentialBindingSelect("hmac_secret_binding_id", webhookHmacBinding, {
+                required: false,
+                label: "HMAC secret binding (optional)",
+                helper: "Validates X-Hub-Signature-256 using the secret from this Providers binding.",
+                wide: true,
+              }).replace('data-inspector-config-field="hmac_secret_binding_id"', 'id="orchestrationInspectorWebhookHmacBinding" data-inspector-config-field="hmac_secret_binding_id"')}
+              <p class="flow-inspector-tip"><a href="#" class="inline-link-button" data-nav-view="providers">Open Providers</a> to create webhook auth bindings.</p>`
+            : ""
+        }
+        <details class="flow-inspector-advanced">
+          <summary>Advanced trigger JSON</summary>
+          <label class="wide-field"><textarea id="orchestrationInspectorTriggerConfig" rows="4" placeholder="${safeText(triggerExample)}">${safeText(values?.trigger_config_json || triggerExample)}</textarea></label>
+        </details>
       </div>
     `;
     qs("#orchestrationInspectorTriggerType")?.addEventListener("change", (event) => {
-      setOrchestrationFormFields({ trigger_type: event.target.value });
+      const next = event.target.value;
+      setOrchestrationFormFields({ trigger_type: next });
       const toolbar = qs("#orchestrationToolbarTrigger");
-      if (toolbar) toolbar.value = event.target.value;
+      if (toolbar) toolbar.value = next;
+      if (next === "schedule") {
+        setOrchestrationFormFields({ trigger_config_json: JSON.stringify({ cron_expression: cronValue }) });
+      } else if (next === "webhook") {
+        setOrchestrationFormFields({
+          trigger_config_json: JSON.stringify({ webhook_path_ref: webhookPath }),
+        });
+      }
+      syncOrchestrationToolbarFromForm();
       renderOrchestrationCanvas();
       renderOrchestrationInspector();
     });
+    const applyCron = (cron) => {
+      const normalized = String(cron || "0 9 * * *").trim() || "0 9 * * *";
+      setOrchestrationFormFields({ trigger_config_json: JSON.stringify({ cron_expression: normalized }) });
+      const toolbarCron = qs("#orchestrationToolbarCron");
+      if (toolbarCron) toolbarCron.value = normalized;
+      const cfg = qs("#orchestrationInspectorTriggerConfig");
+      if (cfg) cfg.value = JSON.stringify({ cron_expression: normalized }, null, 2);
+    };
+    qs("#orchestrationInspectorCronPreset")?.addEventListener("change", (event) => {
+      if (!event.target.value) return;
+      const cronInput = qs("#orchestrationInspectorCron");
+      if (cronInput) cronInput.value = event.target.value;
+      applyCron(event.target.value);
+    });
+    qs("#orchestrationInspectorCron")?.addEventListener("input", (event) => {
+      applyCron(event.target.value);
+    });
+    qs("#orchestrationInspectorWebhookPath")?.addEventListener("input", (event) => {
+      const pathRef = String(event.target.value || "").trim() || "flow-hook";
+      const payload = {
+        ...parseOrchestrationTriggerConfig(getOrchestrationFlowFormValues()?.trigger_config_json),
+        webhook_path_ref: pathRef,
+      };
+      delete payload.path_ref;
+      setOrchestrationFormFields({ trigger_config_json: JSON.stringify(payload) });
+      const toolbarPath = qs("#orchestrationToolbarWebhookPath");
+      if (toolbarPath) toolbarPath.value = pathRef;
+      const cfg = qs("#orchestrationInspectorTriggerConfig");
+      if (cfg) cfg.value = JSON.stringify(payload, null, 2);
+    });
+    const syncWebhookAuthBinding = () => {
+      const payload = {
+        ...parseOrchestrationTriggerConfig(getOrchestrationFlowFormValues()?.trigger_config_json),
+        webhook_path_ref:
+          String(qs("#orchestrationInspectorWebhookPath")?.value || webhookPath).trim() || "flow-hook",
+      };
+      const token = String(qs("#orchestrationInspectorWebhookTokenBinding")?.value || "").trim();
+      const hmac = String(qs("#orchestrationInspectorWebhookHmacBinding")?.value || "").trim();
+      if (token) payload.token_binding_id = token;
+      else delete payload.token_binding_id;
+      if (hmac) payload.hmac_secret_binding_id = hmac;
+      else delete payload.hmac_secret_binding_id;
+      setOrchestrationFormFields({ trigger_config_json: JSON.stringify(payload) });
+      const cfg = qs("#orchestrationInspectorTriggerConfig");
+      if (cfg) cfg.value = JSON.stringify(payload, null, 2);
+    };
+    qs("#orchestrationInspectorWebhookTokenBinding")?.addEventListener("change", syncWebhookAuthBinding);
+    qs("#orchestrationInspectorWebhookHmacBinding")?.addEventListener("change", syncWebhookAuthBinding);
+    if (trigger === "webhook") {
+      void loadOrchestrationCredentialBindingOptions(webhookTokenBinding || webhookHmacBinding || "");
+      panel.querySelector("[data-nav-view='providers']")?.addEventListener("click", (event) => {
+        event.preventDefault();
+        switchView("providers");
+      });
+    }
     qs("#orchestrationInspectorTriggerConfig")?.addEventListener("input", (event) => {
       setOrchestrationFormFields({ trigger_config_json: event.target.value.trim() || "{}" });
     });
@@ -32106,18 +47541,18 @@ function renderOrchestrationInspector() {
   }
 
   if (orchestrationSelectedNodeId === ORCHESTRATION_FLOW_END_ID) {
-    if (title) title.textContent = "End";
-    if (hint) hint.textContent = "Every flow ends here after all widgets complete successfully.";
+    if (title) title.textContent = "Stop";
+    if (hint) hint.textContent = "Every flow stops here after all widgets complete successfully.";
     if (closeBtn) closeBtn.hidden = true;
     panel.innerHTML = `
-      <div class="flow-inspector-node-badge flow-inspector-end-badge" style="--node-accent:#64748b">■ End · Finish</div>
+      <div class="flow-inspector-node-badge flow-inspector-end-badge" style="--node-accent:#64748b">■ Stop · Finish</div>
       <p class="flow-inspector-empty">No settings needed. Save and run your flow when Start and widgets are configured.</p>
     `;
     return;
   }
 
-  if (orchestrationSelectedNodeId.startsWith("parallel:")) {
-    const located = findOrchestrationParallelItemByGroupId(orchestrationSelectedNodeId.slice("parallel:".length));
+  if (String(orchestrationSelectedNodeId || "").startsWith("parallel:")) {
+    const located = findOrchestrationParallelItemByGroupId(String(orchestrationSelectedNodeId).slice("parallel:".length));
     if (located) {
       renderOrchestrationParallelInspector(located.item, located.itemIndex);
       return;
@@ -32148,18 +47583,46 @@ function renderOrchestrationInspector() {
   }
   const catalog = orchestrationNodeTypes.find((item) => item.type === node.type) || {};
   const visual = getOrchestrationNodeVisual(node.type);
+  const displayName = getOrchestrationNodeDisplayName(node);
+  const typeLabel = catalog.label || visual.label;
   const located = findOrchestrationNodeLocation(node.id);
   const stepIndex = (located ? listOrchestrationNodesBefore(node.id).length : 0) + 1;
   const inParallelBranch = located?.branchIndex !== null && located?.branchIndex !== undefined;
-  if (title) title.textContent = catalog.label || visual.label;
-  if (hint) hint.textContent = catalog.description || "Adjust this step's settings below.";
+  if (title) title.textContent = displayName;
+  if (hint) hint.textContent = catalog.description || "Rename this step and adjust its settings below.";
   if (closeBtn) closeBtn.hidden = false;
   const typeOptions = (orchestrationNodeTypes.length ? orchestrationNodeTypes : [{ type: node.type, label: node.type }])
     .map((item) => `<option value="${safeText(item.type)}" ${item.type === node.type ? "selected" : ""}>${safeText(item.label || item.type)}</option>`)
     .join("");
   const requiredFields = catalog.required_config_fields || [];
   const optionalFields = catalog.optional_config_fields || [];
-  const customInspectorFields = getOrchestrationCustomInspectorFields(node.type);
+  const isProviderHttpApi = isOrchestrationProviderHttpApiType(node.type);
+  // Only suppress generic/mapping fields when a specialized inspector will actually render them.
+  let specializedMarkup = "";
+  try {
+    if (node.type === "llm_chat") specializedMarkup = renderOrchestrationLlmChatInspector(node);
+    else if (node.type === "condition") specializedMarkup = renderOrchestrationConditionInspector(node, stepIndex);
+    else if (node.type === "while_loop" || node.type === "do_while") specializedMarkup = renderOrchestrationWhileInspector(node);
+    else if (node.type === "foreach_map") specializedMarkup = renderOrchestrationLoopInspector(node);
+    else if (node.type === "set_fields" || node.type === "static_data") specializedMarkup = renderOrchestrationSetVariablesInspector(node);
+    else if (node.type === "human_approval") specializedMarkup = renderOrchestrationHumanApprovalInspector(node, stepIndex);
+    else if (node.type === "http_request") specializedMarkup = renderOrchestrationHttpRequestInspector(node);
+    else if (usesOrchestrationSchemaInspector(node.type)) specializedMarkup = renderOrchestrationSchemaInspector(node);
+    else if (node.type === "vector_query" || node.type === "vector_ingest" || node.type === "rag_query") {
+      specializedMarkup = renderOrchestrationVectorStoreInspector(node);
+    } else if (node.type === "memory_read" || node.type === "memory_write") {
+      specializedMarkup = renderOrchestrationMemoryInspector(node);
+    } else if (node.type === "email_send" || node.type === "sms_send") {
+      specializedMarkup = renderOrchestrationNotificationChannelInspector(node);
+    }
+  } catch (err) {
+    console.error(`Orchestration inspector failed for ${node.type}`, err);
+    specializedMarkup = "";
+  }
+  const customInspectorFields =
+    specializedMarkup
+      ? getOrchestrationCustomInspectorFields(node.type)
+      : new Set();
   const mappingFields = getOrchestrationMappingFieldSet();
   const allFields = [...requiredFields, ...optionalFields.filter((f) => !requiredFields.includes(f))].filter(
     (field) => !customInspectorFields.has(field) && !mappingFields.has(field),
@@ -32174,33 +47637,42 @@ function renderOrchestrationInspector() {
   const fieldMarkup = allFields
     .map((field) => renderOrchestrationConfigFieldControl(field, node, requiredFields.includes(field)))
     .join("");
-  const specializedMarkup =
-    node.type === "condition"
-      ? renderOrchestrationConditionInspector(node, stepIndex)
-      : node.type === "human_approval"
-        ? renderOrchestrationHumanApprovalInspector(node, stepIndex)
-        : node.type === "http_request"
-          ? renderOrchestrationHttpRequestInspector(node)
-          : node.type === "vector_query" || node.type === "vector_ingest" || node.type === "rag_query"
-            ? renderOrchestrationVectorStoreInspector(node)
-            : node.type === "memory_read" || node.type === "memory_write"
-              ? renderOrchestrationMemoryInspector(node)
-            : node.type === "email_send" || node.type === "sms_send"
-              ? renderOrchestrationNotificationChannelInspector(node)
-              : "";
+  const hasSettings = Boolean(specializedMarkup || mappingInputMarkup || fieldMarkup);
+  // Seed safe defaults for common required fields on already-placed widgets.
+  if (isProviderHttpApi && !String(node.config?.method || "").trim()) {
+    node.config = { ...(node.config || {}), method: "GET" };
+  }
+  if (node.type === "embedding_create") {
+    node.config = node.config || {};
+    if (!String(node.config.model_id || "").trim()) node.config.model_id = "text-embedding-3-small";
+    if (!String(node.config.input_template || "").trim()) node.config.input_template = "{{input}}";
+    refreshOrchestrationValidationCache();
+  }
   panel.innerHTML = `
-    <div class="flow-inspector-node-badge" style="--node-accent:${visual.color}"><span class="flow-inspector-step">Step ${stepIndex}</span> ${safeText(visual.icon)} ${safeText(catalog.label || visual.label)}</div>
+    <div class="flow-inspector-node-badge" style="--node-accent:${visual.color}"><span class="flow-inspector-step">Step ${stepIndex}</span> ${safeText(visual.icon)} ${safeText(displayName)}</div>
     ${visual.help || catalog.description ? `<p class="flow-inspector-tip">${safeText(catalog.description || visual.help)}</p>` : ""}
+    <div class="form-grid flow-inspector-form flow-inspector-form-stack">
+      <label class="wide-field">Step name
+        <input id="orchestrationInspectorNodeName" type="text" maxlength="120" value="${safeText(node.name || "")}" placeholder="e.g. Summarize ticket, Call CRM, Wait for approval" aria-label="Logical step name" />
+      </label>
+      <p class="flow-inspector-tip flow-inspector-tip-muted">Saved in graph JSON as <code class="mono">name</code>. Widget type remains ${safeText(typeLabel)}.</p>
+    </div>
     ${specializedMarkup}
     ${mappingInputMarkup}
-    <div class="form-grid flow-inspector-form">
-      <label>Widget type<select id="orchestrationInspectorNodeType">${typeOptions}</select></label>
-      ${fieldMarkup || (!specializedMarkup && !mappingInputMarkup ? '<p class="flow-inspector-empty">No extra settings for this widget.</p>' : "")}
-      <details class="flow-inspector-advanced">
-        <summary>Advanced JSON</summary>
-        <label class="wide-field"><textarea id="orchestrationInspectorConfigJson" rows="5">${safeText(JSON.stringify(node.config || {}, null, 2))}</textarea></label>
-      </details>
+    <div class="form-grid flow-inspector-form flow-inspector-form-stack">
+      <label class="wide-field">Widget type<select id="orchestrationInspectorNodeType">${typeOptions}</select></label>
+      ${fieldMarkup}
+      ${hasSettings ? "" : '<p class="flow-inspector-empty">No extra settings for this widget.</p>'}
     </div>
+    <details class="flow-inspector-advanced"${hasSettings ? "" : " open"}>
+      <summary>Advanced JSON</summary>
+      <label class="wide-field"><textarea id="orchestrationInspectorConfigJson" rows="8">${safeText(JSON.stringify(node.config || {}, null, 2))}</textarea></label>
+      ${
+        isProviderHttpApi || node.type === "http_request"
+          ? `<p class="flow-inspector-tip flow-inspector-tip-muted">Prefer the form fields above. Advanced JSON can set <code class="mono">base_url</code>, <code class="mono">path_template</code>, <code class="mono">method</code>, and <code class="mono">auth_binding_id</code> — blur the field to apply.</p>`
+          : `<p class="flow-inspector-tip flow-inspector-tip-muted">Raw step <code class="mono">config</code> JSON. Prefer the form fields above when available; blur this field to apply edits.</p>`
+      }
+    </details>
     ${outputParamsMarkup}
     <div class="inline-actions flow-inspector-actions">
       <button type="button" class="ghost" id="orchestrationInspectorMoveUp" ${canMoveOrchestrationNode(node.id, -1) ? "" : "disabled"}>Move up</button>
@@ -32215,9 +47687,26 @@ function renderOrchestrationInspector() {
     </div>
     <p class="flow-inspector-tip flow-inspector-tip-muted">Tip: drag the ⋮⋮ handle or the selected step; use ↑ ↓ to reorder${inParallelBranch ? ", ← → to move between branches" : ""}.</p>
   `;
+  qs("#orchestrationInspectorNodeName")?.addEventListener("input", (event) => {
+    node.name = normalizeOrchestrationNodeName(event.target.value);
+    if (title) title.textContent = getOrchestrationNodeDisplayName(node);
+    const badge = panel.querySelector(".flow-inspector-node-badge");
+    if (badge) {
+      badge.innerHTML = `<span class="flow-inspector-step">Step ${stepIndex}</span> ${safeText(visual.icon)} ${safeText(getOrchestrationNodeDisplayName(node))}`;
+    }
+    renderOrchestrationCanvas();
+  });
+  qs("#orchestrationInspectorNodeName")?.addEventListener("change", () => {
+    pushOrchestrationHistorySnapshot("rename step");
+  });
   qs("#orchestrationInspectorNodeType")?.addEventListener("change", (event) => {
     node.type = event.target.value;
     node.config = getOrchestrationDefaultNodeConfig(event.target.value);
+    if (!normalizeOrchestrationNodeName(node.name)) {
+      const nextVisual = getOrchestrationNodeVisual(event.target.value);
+      const nextCatalog = orchestrationNodeTypes.find((item) => item.type === event.target.value) || {};
+      node.name = String(nextCatalog.label || nextVisual.label || event.target.value).trim();
+    }
     syncOrchestrationInspectorToNode();
     renderOrchestrationStudio();
   });
@@ -32227,10 +47716,41 @@ function renderOrchestrationInspector() {
       if (!field) return;
       node.config = node.config || {};
       node.config[field] = input.value;
+      if (field === "true_branch" || field === "false_branch" || field === "body_branch" || field === "exit_branch" || field === "error_branch" || field === "default_branch") {
+        const kind =
+          field === "true_branch"
+            ? "true"
+            : field === "false_branch"
+              ? "false"
+              : field === "body_branch"
+                ? "body"
+                : field === "exit_branch"
+                  ? "exit"
+                  : field === "error_branch"
+                    ? "error"
+                    : "default";
+        const target = String(input.value || "").trim();
+        ensureOrchestrationBoardEdgesSeeded(flattenOrchestrationNodes());
+        orchestrationBoardEdges = orchestrationBoardEdges.filter(
+          (edge) => !(edge.source === node.id && edge.kind === kind),
+        );
+        if (target) {
+          orchestrationBoardEdges.push({ source: node.id, target, kind });
+        }
+      }
       renderOrchestrationCanvas();
     };
     input.addEventListener("input", syncField);
     input.addEventListener("change", syncField);
+  });
+  qsa("[data-condition-branch-create]", panel).forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      createOrchestrationConditionBranch(
+        btn.getAttribute("data-condition-branch-create"),
+        btn.getAttribute("data-branch-kind"),
+      );
+    });
   });
   qs("#orchestrationInspectorConfigJson")?.addEventListener("change", (event) => {
     try {
@@ -32248,18 +47768,43 @@ function renderOrchestrationInspector() {
   qsa(".orchestration-open-data-map", panel).forEach((btn) => {
     btn.addEventListener("click", () => toggleOrchestrationDataMapping(node.id));
   });
-  if (node.type === "condition") {
+  if (node.type === "llm_chat") {
+    void loadOrchestrationAgentConfigOptions(node.config?.agent_key || "");
+    void loadOrchestrationModelOptions(node.config?.model_id || "");
+    void loadOrchestrationRouteOptions(node.config?.route_id || "");
+    void loadOrchestrationCredentialBindingOptions(node.config?.binding_id || "");
+  } else if (node.type === "condition" || node.type === "while_loop" || node.type === "do_while") {
     bindOrchestrationConditionInspector(node);
+  } else if (node.type === "foreach_map" || node.type === "set_fields" || node.type === "static_data") {
+    bindOrchestrationKeyValueEditor(panel, node);
   } else if (node.type === "human_approval") {
     bindOrchestrationHumanApprovalInspector(node);
   } else if (node.type === "http_request") {
     bindOrchestrationHttpRequestInspector(node);
+  } else if (usesOrchestrationSchemaInspector(node.type)) {
+    panel.querySelector("[data-nav-view='providers']")?.addEventListener("click", (event) => {
+      event.preventDefault();
+      switchView("providers");
+    });
+    const bindingSelect = panel.querySelector("[data-credential-binding-select]");
+    if (bindingSelect) {
+      void loadOrchestrationCredentialBindingOptions(
+        bindingSelect.value || node.config?.auth_binding_id || node.config?.binding_id || "",
+      );
+    }
   } else if (node.type === "vector_query" || node.type === "vector_ingest" || node.type === "rag_query") {
     bindOrchestrationVectorStoreInspector(node);
   } else if (node.type === "memory_read" || node.type === "memory_write") {
     bindOrchestrationMemoryInspector(node);
   } else if (node.type === "email_send" || node.type === "sms_send") {
     bindOrchestrationNotificationChannelInspector(node);
+  } else {
+    const bindingSelect = panel.querySelector("[data-credential-binding-select]");
+    if (bindingSelect) {
+      void loadOrchestrationCredentialBindingOptions(
+        bindingSelect.value || node.config?.auth_binding_id || node.config?.binding_id || "",
+      );
+    }
   }
   bindOrchestrationVariablePickers(panel, node);
 }
@@ -32269,6 +47814,10 @@ function syncOrchestrationInspectorToNode() {
   if (!panel) return;
   const node = getOrchestrationNodeById(orchestrationSelectedNodeId);
   if (node) {
+    const nameInput = qs("#orchestrationInspectorNodeName");
+    if (nameInput) {
+      node.name = normalizeOrchestrationNodeName(nameInput.value);
+    }
     qsa("[data-inspector-config-field]", panel).forEach((input) => {
       const field = input.getAttribute("data-inspector-config-field");
       if (!field) return;
@@ -32315,18 +47864,51 @@ function syncOrchestrationInspectorFromForm() {
 }
 
 function renderOrchestrationStudio() {
-  syncOrchestrationToolbarFromForm();
-  refreshOrchestrationValidationCache();
-  renderOrchestrationWorkflowGuide();
-  renderOrchestrationFlowSidebar();
-  renderOrchestrationPaletteCategoryFilters();
-  renderOrchestrationPalette();
-  renderOrchestrationCanvas();
-  renderOrchestrationValidationPanel();
-  renderOrchestrationInspector();
-  renderOrchestrationDataMappingPanel();
-  syncOrchestrationRunModeUi();
-  if (!isOrchestrationFlowActive()) renderOrchestrationFlowTemplates();
+  try {
+    orchestrationBuilderItems = (Array.isArray(orchestrationBuilderItems) ? orchestrationBuilderItems : []).map((item) => {
+      if (item?.kind === "parallel") {
+        item.branches = normalizeOrchestrationBranches(item.branches);
+      }
+      return item;
+    });
+    syncOrchestrationToolbarFromForm();
+    refreshOrchestrationValidationCache();
+    renderOrchestrationWorkflowGuide();
+    renderOrchestrationFlowSidebar();
+    renderOrchestrationPaletteCategoryFilters();
+    renderOrchestrationPalette();
+    renderOrchestrationCanvas();
+    renderOrchestrationValidationPanel();
+    try {
+      renderOrchestrationInspector();
+    } catch (inspectorErr) {
+      console.error("Flow Studio inspector render failed", inspectorErr);
+      const panel = qs("#orchestrationInspectorPanel");
+      if (panel) {
+        panel.innerHTML = `<p class="flow-inspector-empty">Step settings failed to render: ${safeText(inspectorErr?.message || inspectorErr)}. Try selecting another step, or refresh.</p>`;
+      }
+      setOrchestrationFeedback(
+        `Inspector error: ${String(inspectorErr?.message || inspectorErr || "unknown")}`,
+        "orchestrationBuilderFeedback",
+        "warn",
+      );
+    }
+    renderOrchestrationDataMappingPanel();
+    syncOrchestrationRunModeUi();
+    if (!isOrchestrationFlowActive()) renderOrchestrationFlowTemplates();
+  } catch (err) {
+    console.error("Flow Studio render failed", err);
+    const lane = qs("#orchestrationCanvasLane");
+    if (lane) {
+      lane.hidden = false;
+      lane.innerHTML = `<p class="flow-lane-empty-hint">Studio hit a render error. Try Refresh, or open a blank flow.</p>`;
+    }
+    setOrchestrationFeedback(
+      `Studio render error: ${String(err.message || err || "unknown")}`,
+      "orchestrationBuilderFeedback",
+      "error",
+    );
+  }
 }
 
 function applyOrchestrationCanvasZoom() {
@@ -32395,27 +47977,140 @@ function insertOrchestrationNodeAt(index, type, options = {}) {
     orchestrationBuilderItems.splice(safeIndex, 0, { kind: "step", node });
   }
   assignOrchestrationNodePositions();
+  if (orchestrationCanvasLayout === "board") {
+    ensureOrchestrationBoardEdgesSeeded(flattenOrchestrationNodes());
+    // Board arrows come from human wire drag only — do not auto-link on insert.
+  }
   orchestrationSelectedNodeId = node.id;
   clearOrchestrationInsertState();
   orchestrationPaletteArmedType = "";
   if (!options.silent) {
-    const visual = getOrchestrationNodeVisual(type);
-    setOrchestrationFeedback(`Added "${visual.label}" to the flow.`, "orchestrationBuilderFeedback", "success");
+    setOrchestrationFeedback(`Added "${getOrchestrationNodeDisplayName(node)}" to the flow.`, "orchestrationBuilderFeedback", "success");
   }
   renderOrchestrationStudio();
+}
+
+function captureOrchestrationHistoryState(label = "edit") {
+  return {
+    label,
+    selectedNodeId: orchestrationSelectedNodeId,
+    items: JSON.parse(JSON.stringify(orchestrationBuilderItems)),
+    boardEdges: JSON.parse(JSON.stringify(orchestrationBoardEdges || [])),
+    wireFromNodeId: orchestrationWireFromNodeId || "",
+    selectedBoardEdge: orchestrationSelectedBoardEdge
+      ? { ...orchestrationSelectedBoardEdge }
+      : null,
+    suppressedSyntheticEdges: Array.from(orchestrationSuppressedSyntheticEdges || []),
+    anchors: JSON.parse(JSON.stringify(orchestrationAnchorPositions || { start: { x: 80, y: 80 }, end: { x: 80, y: 520 } })),
+  };
+}
+
+function pushOrchestrationHistorySnapshot(label = "edit") {
+  if (orchestrationHistorySuspended) return;
+  try {
+    orchestrationUndoStack.push(captureOrchestrationHistoryState(label));
+    if (orchestrationUndoStack.length > ORCHESTRATION_UNDO_LIMIT) {
+      orchestrationUndoStack.shift();
+    }
+    orchestrationRedoStack = [];
+  } catch (_err) {
+    /* ignore snapshot failures */
+  }
+}
+
+function restoreOrchestrationHistorySnapshot(snapshot) {
+  if (!snapshot) return;
+  orchestrationHistorySuspended = true;
+  try {
+    orchestrationBuilderItems = JSON.parse(JSON.stringify(snapshot.items || []));
+    orchestrationBoardEdges = JSON.parse(JSON.stringify(snapshot.boardEdges || []));
+    orchestrationWireFromNodeId = snapshot.wireFromNodeId || "";
+    orchestrationSelectedBoardEdge = snapshot.selectedBoardEdge
+      ? { ...snapshot.selectedBoardEdge }
+      : null;
+    orchestrationSuppressedSyntheticEdges = new Set(snapshot.suppressedSyntheticEdges || []);
+    if (snapshot.anchors) {
+      orchestrationAnchorPositions = JSON.parse(JSON.stringify(snapshot.anchors));
+    }
+    orchestrationSelectedNodeId = snapshot.selectedNodeId || flattenOrchestrationNodes()[0]?.id || ORCHESTRATION_FLOW_START_ID;
+    clearOrchestrationInsertState();
+    renderOrchestrationStudio();
+  } finally {
+    orchestrationHistorySuspended = false;
+  }
+}
+
+function undoOrchestrationEdit() {
+  if (!orchestrationUndoStack.length) {
+    setOrchestrationFeedback("Nothing to undo.", "orchestrationBuilderFeedback", "info");
+    return;
+  }
+  const current = captureOrchestrationHistoryState("current");
+  const previous = orchestrationUndoStack.pop();
+  orchestrationRedoStack.push(current);
+  restoreOrchestrationHistorySnapshot(previous);
+  setOrchestrationFeedback(`Undid ${previous.label || "edit"}.`, "orchestrationBuilderFeedback", "info");
+}
+
+function redoOrchestrationEdit() {
+  if (!orchestrationRedoStack.length) {
+    setOrchestrationFeedback("Nothing to redo.", "orchestrationBuilderFeedback", "info");
+    return;
+  }
+  const current = captureOrchestrationHistoryState("current");
+  const next = orchestrationRedoStack.pop();
+  orchestrationUndoStack.push(current);
+  restoreOrchestrationHistorySnapshot(next);
+  setOrchestrationFeedback(`Redid ${next.label || "edit"}.`, "orchestrationBuilderFeedback", "info");
+}
+
+function pinOrchestrationNodeData(nodeId, output) {
+  const node = getOrchestrationNodeById(nodeId);
+  if (!node) {
+    setOrchestrationFeedback("Select a step before pinning data.", "orchestrationBuilderFeedback", "warn");
+    return;
+  }
+  pushOrchestrationHistorySnapshot("pin data");
+  node.config = node.config || {};
+  node.config.pin_data = output && typeof output === "object" ? output : { value: output };
+  orchestrationSelectedNodeId = nodeId;
+  renderOrchestrationStudio();
+  setOrchestrationFeedback(`Pinned run output on "${nodeId}" for dry-run design.`, "orchestrationBuilderFeedback", "success");
+}
+
+function clearOrchestrationPinnedData(nodeId) {
+  const node = getOrchestrationNodeById(nodeId);
+  if (!node?.config?.pin_data) return;
+  pushOrchestrationHistorySnapshot("clear pin");
+  delete node.config.pin_data;
+  renderOrchestrationStudio();
+  setOrchestrationFeedback(`Cleared pinned data on "${nodeId}".`, "orchestrationBuilderFeedback", "info");
 }
 
 function removeOrchestrationNode(itemIndex, branchIndex, nodeIndex) {
   const item = orchestrationBuilderItems[itemIndex];
   if (!item) return;
+  pushOrchestrationHistorySnapshot("delete step");
   if (isOrchestrationStepItem(item)) {
     orchestrationBuilderItems.splice(itemIndex, 1);
   } else if (isOrchestrationParallelItem(item) && branchIndex !== null && branchIndex !== undefined) {
     item.branches[branchIndex]?.splice(nodeIndex, 1);
   }
-  orchestrationSelectedNodeId = flattenOrchestrationNodes()[0]?.id || ORCHESTRATION_FLOW_START_ID;
+  const remainingIds = flattenOrchestrationNodes().map((node) => node.id);
+  orchestrationBoardEdges = sanitizeOrchestrationBoardEdges(remainingIds);
+  if (orchestrationWireFromNodeId && !remainingIds.includes(orchestrationWireFromNodeId)) {
+    orchestrationWireFromNodeId = "";
+  }
+  orchestrationSelectedNodeId = remainingIds[0] || ORCHESTRATION_FLOW_START_ID;
   clearOrchestrationInsertState();
   renderOrchestrationStudio();
+}
+
+function removeOrchestrationNodeById(nodeId) {
+  const located = findOrchestrationNodeLocation(nodeId);
+  if (!located) return false;
+  removeOrchestrationNode(located.itemIndex, located.branchIndex, located.nodeIndex);
+  return true;
 }
 
 function addOrchestrationParallelBranch(itemIndex) {
@@ -32455,6 +48150,7 @@ function addOrchestrationNodeFromPalette(type) {
   if (!isOrchestrationFlowActive()) {
     activateBlankOrchestrationFlow();
   }
+  pushOrchestrationHistorySnapshot("add step");
   const at = orchestrationInsertAtIndex;
   const branchAt = orchestrationInsertBranchIndex;
   const branchNodeAt = orchestrationInsertBranchNodeIndex;
@@ -32465,16 +48161,65 @@ function addOrchestrationNodeFromPalette(type) {
   }
 }
 
-function selectOrchestrationFlow(flowId) {
-  const flow = orchestrationFlows.find((item) => item.flow_id === flowId);
+async function selectOrchestrationFlow(flowId) {
+  const id = String(flowId || "").trim();
+  if (!id) return;
+  let flow = orchestrationFlows.find((item) => item.flow_id === id);
+  try {
+    const fresh = await api(`/orchestration/flows/${encodeURIComponent(id)}`);
+    if (fresh?.flow_id) {
+      flow = fresh;
+      const idx = orchestrationFlows.findIndex((item) => item.flow_id === id);
+      if (idx >= 0) orchestrationFlows[idx] = fresh;
+      else orchestrationFlows.unshift(fresh);
+      renderOrchestrationFlowSidebar();
+      renderOrchestrationFlowsTable();
+    }
+  } catch (err) {
+    if (!flow) {
+      setOrchestrationFeedback(`Failed to open flow: ${err.message}`, "orchestrationBuilderFeedback", "error");
+      return;
+    }
+    setOrchestrationFeedback(
+      `Opened cached copy — live reload failed: ${err.message}`,
+      "orchestrationBuilderFeedback",
+      "warn",
+    );
+  }
   if (!flow) return;
-  jumpOrchestrationSidebarToFlow(flowId);
+  jumpOrchestrationSidebarToFlow(id);
   hydrateOrchestrationFormFromFlow(flow);
   parseOrchestrationGraphIntoBuilder(flow.graph_json);
   syncOrchestrationToolbarFromForm();
   setOrchestrationFeedback(`Opened "${flow.flow_name}"`, "orchestrationBuilderFeedback", "success");
   renderOrchestrationSecurityPanel();
   void loadFlowRuns();
+}
+
+async function deprecateOrchestrationFlow(flowId) {
+  const id = String(flowId || getOrchestrationFlowFormValues()?.flow_id || "").trim();
+  if (!id) {
+    setOrchestrationFeedback("Save or open a flow before deprecating.", "orchestrationBuilderFeedback", "warn");
+    return;
+  }
+  const flow = orchestrationFlows.find((item) => item.flow_id === id);
+  const label = flow?.flow_name || id;
+  if (!(await operatorConfirm(
+    `Deprecate "${label}"? It will be marked deprecated and removed from active use.`,
+    { title: "Deprecate flow", okLabel: "Deprecate", danger: true },
+  ))) {
+    return;
+  }
+  try {
+    await api(`/orchestration/flows/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (orchestrationSelectedFlowId === id) {
+      activateBlankOrchestrationFlow();
+    }
+    setOrchestrationFeedback(`Deprecated "${label}".`, "orchestrationBuilderFeedback", "success");
+    await loadOrchestrationFlows();
+  } catch (err) {
+    setOrchestrationFeedback(`Deprecate failed: ${err.message}`, "orchestrationBuilderFeedback", "error");
+  }
 }
 
 function resolveOrchestrationDropTarget(target) {
@@ -32672,6 +48417,8 @@ function beginOrchestrationPaletteDrag(nodeType, event) {
   event.dataTransfer.effectAllowed = "copy";
   event.dataTransfer.setData("text/plain", String(nodeType));
   event.target.closest(".flow-toolkit-item")?.classList.add("is-dragging");
+  const visual = getOrchestrationNodeVisual(nodeType);
+  setOrchestrationDragGhost(event, visual?.label || nodeType);
   if (!isOrchestrationFlowActive()) {
     orchestrationSelectedFlowId = "";
     orchestrationSelectedNodeId = ORCHESTRATION_FLOW_START_ID;
@@ -32693,7 +48440,7 @@ function beginOrchestrationPaletteDrag(nodeType, event) {
     renderOrchestrationInspector();
   }
   updateOrchestrationDragUi(true);
-  setOrchestrationFeedback("Drop on a + slot to reorder or insert.", "orchestrationBuilderFeedback", "info");
+  setOrchestrationFeedback("Drop on a + slot to insert.", "orchestrationBuilderFeedback", "info");
 }
 
 function beginOrchestrationStepDrag(nodeId, event) {
@@ -32701,7 +48448,13 @@ function beginOrchestrationStepDrag(nodeId, event) {
   orchestrationDragPayload = { kind: "step", nodeId: String(nodeId) };
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("text/plain", String(nodeId));
-  event.target.closest(".flow-lane-step")?.classList.add("is-dragging");
+  const step = event.target.closest(".flow-lane-step");
+  step?.classList.add("is-dragging");
+  const label =
+    step?.querySelector(".flow-lane-step-title strong")?.textContent ||
+    getOrchestrationNodeById(nodeId)?.type ||
+    "Step";
+  setOrchestrationDragGhost(event, label);
   event.stopPropagation();
 }
 
@@ -32845,6 +48598,7 @@ function renderOrchestrationRunDetail(detail) {
             <div class="flow-run-step-actions">
               ${nodeId ? `<button type="button" class="ghost flow-run-jump-node" data-run-jump-node="${safeText(nodeId)}">Open step</button>` : ""}
               ${nodeId ? `<button type="button" class="ghost flow-run-jump-map" data-run-jump-node="${safeText(nodeId)}">⇄ Data map</button>` : ""}
+              ${nodeId ? `<button type="button" class="ghost flow-run-pin-data" data-run-pin-node="${safeText(nodeId)}">📌 Pin for dry-run</button>` : ""}
             </div>
             <details class="flow-run-step-output">
               <summary>Output JSON</summary>
@@ -32972,6 +48726,22 @@ function bindOrchestrationRunDetailEvents(container) {
       renderOrchestrationStudio();
     });
   });
+  container.querySelectorAll(".flow-run-pin-data").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const nodeId = btn.getAttribute("data-run-pin-node");
+      if (!nodeId) return;
+      const card = btn.closest(".flow-run-step-card");
+      const pre = card?.querySelector(".flow-run-step-output pre");
+      let output = {};
+      try {
+        output = JSON.parse(pre?.textContent || "{}");
+      } catch (_err) {
+        output = { pinned_raw: pre?.textContent || "" };
+      }
+      pinOrchestrationNodeData(nodeId, output);
+      qs("#orchestration")?.querySelector('[data-console-tab="studio"]')?.click();
+    });
+  });
   container.querySelectorAll(".flow-run-pivot-observability").forEach((btn) => {
     btn.addEventListener("click", () => {
       const traceId = btn.getAttribute("data-trace-id");
@@ -32987,13 +48757,13 @@ function bindOrchestrationRunDetailEvents(container) {
 
 async function runOrchestrationPostSaveValidation(flowId) {
   refreshOrchestrationValidationCache();
-  renderOrchestrationValidationPanel();
+  renderOrchestrationValidationPanel({ forceShow: true });
   renderOrchestrationCanvas();
   if (!flowId) return;
   try {
     const result = await api(`/orchestration/flows/${encodeURIComponent(flowId)}/validate`, { method: "POST" });
     applyOrchestrationServerValidation(result);
-    renderOrchestrationValidationPanel();
+    renderOrchestrationValidationPanel({ forceShow: true });
     renderOrchestrationCanvas();
     if (!result.valid) {
       const firstNodeId = parseOrchestrationNodeIdFromError(String(result.errors?.[0] || orchestrationClientValidationCache?.errors?.[0] || ""));
@@ -33011,6 +48781,9 @@ function duplicateOrchestrationNode(nodeId) {
   const copy = {
     id: `${source.id}-copy-${Date.now().toString(36).slice(-4)}`,
     type: source.type,
+    name: normalizeOrchestrationNodeName(source.name)
+      ? `${normalizeOrchestrationNodeName(source.name)} (copy)`.slice(0, 120)
+      : getOrchestrationNodeDisplayName(source),
     config: JSON.parse(JSON.stringify(source.config || {})),
     position: { x: (source.position?.x || 280) + 40, y: (source.position?.y || 0) + 40 },
   };
@@ -33034,7 +48807,7 @@ function renderOrchestrationRunsTables(rows, options = {}) {
     if (!tbody) return;
     tbody.textContent = "";
     if (!rows.length) {
-      setTableMessage(tbody, tbody === compact ? 5 : 7, globalHistory ? "No runs found." : "No runs yet.");
+      setTableMessage(tbody, tbody === compact ? 5 : 7, globalHistory ? "No runs found." : "No laboratory runs on ledger.");
       resetOrchestrationTablePagination(tbody);
       return;
     }
@@ -33213,6 +48986,7 @@ function renderOrchestrationFlowsTable() {
   }
   flows.forEach((flow) => {
     const tr = document.createElement("tr");
+    const deprecated = String(flow.status || "").toLowerCase() === "deprecated";
     tr.innerHTML = `
       <td>${safeText(flow.flow_name)}</td>
       <td class="mono">${safeText(flow.environment)}</td>
@@ -33220,14 +48994,26 @@ function renderOrchestrationFlowsTable() {
       <td class="mono">${safeText(flow.status)}</td>
       <td class="mono">${safeText(flow.approval_status)}</td>
       <td class="mono">${safeText(flow.metadata_version)}</td>
-      <td><button type="button" class="ghost" data-flow-select-table="${safeText(flow.flow_id)}">Open in Studio</button></td>
+      <td class="flow-table-actions">
+        <button type="button" class="ghost" data-flow-select-table="${safeText(flow.flow_id)}">Open in Studio</button>
+        ${
+          deprecated
+            ? ""
+            : `<button type="button" class="ghost" data-flow-deprecate="${safeText(flow.flow_id)}" title="Deprecate flow">Deprecate</button>`
+        }
+      </td>
     `;
     tbody.appendChild(tr);
   });
   qsa("[data-flow-select-table]", tbody).forEach((button) => {
     button.addEventListener("click", () => {
-      selectOrchestrationFlow(button.getAttribute("data-flow-select-table"));
+      void selectOrchestrationFlow(button.getAttribute("data-flow-select-table"));
       qs("#orchestration")?.querySelector('[data-console-tab="studio"]')?.click();
+    });
+  });
+  qsa("[data-flow-deprecate]", tbody).forEach((button) => {
+    button.addEventListener("click", () => {
+      void deprecateOrchestrationFlow(button.getAttribute("data-flow-deprecate"));
     });
   });
   resetOrchestrationTablePagination(tbody);
@@ -33294,7 +49080,7 @@ async function validateFlow() {
   if (!values?.flow_id) {
     if (client && !client.valid) {
       applyOrchestrationServerValidation({ valid: false, errors: client.errors, warnings: client.warnings });
-      renderOrchestrationValidationPanel();
+      renderOrchestrationValidationPanel({ forceShow: true });
       renderOrchestrationCanvas();
       const firstNodeId = parseOrchestrationNodeIdFromError(String(client.errors?.[0] || ""));
       if (firstNodeId) selectOrchestrationValidationNode(firstNodeId);
@@ -33305,7 +49091,7 @@ async function validateFlow() {
   try {
     const result = await api(`/orchestration/flows/${encodeURIComponent(values.flow_id)}/validate`, { method: "POST" });
     applyOrchestrationServerValidation(result);
-    renderOrchestrationValidationPanel();
+    renderOrchestrationValidationPanel({ forceShow: true });
     renderOrchestrationCanvas();
     if (!result.valid) {
       const client = orchestrationClientValidationCache || runOrchestrationClientValidation();
@@ -33934,6 +49720,83 @@ async function approveFlow() {
   }
 }
 
+async function promoteOrchestrationFlow() {
+  const values = getOrchestrationFlowFormValues();
+  if (!values?.flow_id) {
+    setOrchestrationFeedback("Select a saved flow to promote.", "orchestrationBuilderFeedback", "warn");
+    return;
+  }
+  const current = String(values.environment || "dev").toLowerCase();
+  const target = window.prompt(
+    `Promote "${values.flow_name || values.flow_id}" to environment (dev|staging|prod). Current: ${current}`,
+    current === "dev" ? "staging" : "prod",
+  );
+  if (!target) return;
+  const changeTicket = window.prompt("Change ticket ID (optional)", "") || "";
+  try {
+    const headers = orchestrationDualApprovalHeaders(target);
+    const result = await api(`/orchestration/flows/${encodeURIComponent(values.flow_id)}/promote`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        target_environment: String(target).trim().toLowerCase(),
+        change_ticket_id: changeTicket.trim() || null,
+        change_reason: "Promoted from Flow Studio",
+      }),
+    });
+    setOrchestrationFeedback(
+      `Promoted to ${result.environment} as "${result.flow_name}" (${result.flow_id}) — approval reset to pending`,
+      "orchestrationBuilderFeedback",
+      "success",
+    );
+    await loadOrchestrationFlows();
+    void selectOrchestrationFlow(result.flow_id);
+  } catch (error) {
+    setOrchestrationFeedback(`Promote failed: ${error.message}`, "orchestrationBuilderFeedback", "error");
+  }
+}
+
+async function showOrchestrationFlowRevisions() {
+  const values = getOrchestrationFlowFormValues();
+  if (!values?.flow_id) {
+    setOrchestrationFeedback("Select a saved flow to view versions.", "orchestrationBuilderFeedback", "warn");
+    return;
+  }
+  try {
+    const payload = await api(`/orchestration/flows/${encodeURIComponent(values.flow_id)}/revisions?limit=20`);
+    const rows = Array.isArray(payload?.data) ? payload.data : [];
+    if (!rows.length) {
+      setOrchestrationFeedback("No revisions yet — save the flow to create version history.", "orchestrationBuilderFeedback", "info");
+      return;
+    }
+    const listing = rows
+      .slice(0, 12)
+      .map((row) => `v${row.version} · ${row.environment} · ${row.created_by} · ${row.change_reason || "update"}`)
+      .join("\n");
+    const chosen = window.prompt(
+      `Revision history (enter version number to rollback, or Cancel):\n\n${listing}`,
+      String(rows[0]?.version || ""),
+    );
+    if (!chosen) return;
+    const version = Number(chosen);
+    if (!Number.isFinite(version) || version < 1) {
+      setOrchestrationFeedback("Invalid revision version.", "orchestrationBuilderFeedback", "error");
+      return;
+    }
+    const headers = orchestrationDualApprovalHeaders(values.environment);
+    const result = await api(`/orchestration/flows/${encodeURIComponent(values.flow_id)}/revisions/rollback`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ version, change_reason: `Rollback to v${version} from Flow Studio` }),
+    });
+    setOrchestrationFeedback(`Rolled back to v${version} (now metadata v${result.metadata_version})`, "orchestrationBuilderFeedback", "success");
+    await loadOrchestrationFlows();
+    void selectOrchestrationFlow(values.flow_id);
+  } catch (error) {
+    setOrchestrationFeedback(`Versions failed: ${error.message}`, "orchestrationBuilderFeedback", "error");
+  }
+}
+
 async function runFlow(dryRun = false) {
   syncOrchestrationFormFromToolbar();
   syncOrchestrationInspectorToNode();
@@ -33954,6 +49817,15 @@ async function runFlow(dryRun = false) {
     setOrchestrationFeedback("Save the flow before running.", "orchestrationBuilderFeedback", "warn");
     return;
   }
+  const policy = orchestrationPolicySnapshot || {};
+  const liveProd = String(policy.live_executor_prod_enabled || "false").toLowerCase() === "true";
+  if (!dryRun && String(values.environment || "").toLowerCase() === "prod" && !liveProd) {
+    const proceed = await operatorConfirm(
+      "Production live executor is OFF (orchestration.live_executor_prod_enabled). Non-dry runs may still be stubbed or blocked. Continue anyway?",
+      { title: "Production live executor off", okLabel: "Continue", danger: true },
+    );
+    if (!proceed) return;
+  }
   if (orchestrationValidationState.errors?.length) {
     renderOrchestrationValidationPanel();
     renderOrchestrationCanvas();
@@ -33966,10 +49838,11 @@ async function runFlow(dryRun = false) {
   }
   try {
     const headers = values.environment === "prod" && !dryRun ? orchestrationDualApprovalHeaders("prod") : {};
+    const runInput = getOrchestrationToolbarRunInputText();
     const result = await api(`/orchestration/flows/${encodeURIComponent(values.flow_id)}/run`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ dry_run: dryRun }),
+      body: JSON.stringify({ dry_run: dryRun, run_input: runInput }),
     });
     setOrchestrationFeedback(
       `${dryRun ? "Test run" : "Run"} completed · ${result.status}`,
@@ -34060,20 +49933,144 @@ async function loadFlowRuns() {
   }
 }
 
+function exitOrchestrationCanvasChrome() {
+  const hadFocus = document.body.classList.contains("flow-canvas-focus");
+  document.body.classList.remove("flow-canvas-expanded", "flow-canvas-focus");
+  try {
+    localStorage.setItem("orchestrationCanvasExpanded", "0");
+    localStorage.setItem("orchestrationCanvasFocus", "0");
+  } catch (_err) {
+    /* ignore */
+  }
+  if (hadFocus && orchestrationFocusPrevRail !== null) {
+    setSidebarRail(Boolean(orchestrationFocusPrevRail));
+  }
+  orchestrationFocusPrevRail = null;
+  qsa("#orchestrationCanvasExpand, #orchestrationCanvasFocus, #orchestrationCanvasMaximize, #orchestrationCanvasMaximizeTop, #orchestrationEmptyMaximize").forEach((btn) => {
+    btn.setAttribute("aria-pressed", "false");
+  });
+  const expandBtn = qs("#orchestrationCanvasExpand");
+  const focusBtn = qs("#orchestrationCanvasFocus");
+  if (expandBtn) expandBtn.textContent = "Expand chrome";
+  if (focusBtn) focusBtn.textContent = "Focus panels";
+  qsa("#orchestrationCanvasMaximize, #orchestrationCanvasMaximizeTop").forEach((btn) => {
+    btn.textContent = "Maximize";
+  });
+  const emptyMax = qs("#orchestrationEmptyMaximize");
+  if (emptyMax) emptyMax.textContent = "Maximize canvas";
+  const exitChromeBtn = qs("#orchestrationCanvasExitChrome");
+  if (exitChromeBtn) {
+    exitChromeBtn.setAttribute("aria-hidden", "true");
+  }
+}
+
+function restoreOrchestrationCanvasChromeFromStorage() {
+  if (currentActiveView !== "orchestration") return;
+  let expanded = false;
+  let focused = false;
+  try {
+    expanded = localStorage.getItem("orchestrationCanvasExpanded") === "1";
+    focused = localStorage.getItem("orchestrationCanvasFocus") === "1";
+  } catch (_err) {
+    /* ignore */
+  }
+  document.body.classList.toggle("flow-canvas-expanded", expanded);
+  document.body.classList.toggle("flow-canvas-focus", focused);
+  if (focused) {
+    const shell = qs(".app-shell");
+    orchestrationFocusPrevRail = shell?.classList.contains("sidebar-rail") ?? false;
+    if (window.innerWidth > 1080) setSidebarRail(true);
+  }
+  const maximized = expanded && focused;
+  qsa("#orchestrationCanvasExpand, #orchestrationCanvasFocus, #orchestrationCanvasMaximize, #orchestrationCanvasMaximizeTop, #orchestrationEmptyMaximize").forEach((btn) => {
+    if (!btn) return;
+    if (btn.id === "orchestrationCanvasExpand") {
+      btn.setAttribute("aria-pressed", expanded ? "true" : "false");
+      btn.textContent = expanded ? "Exit expand" : "Expand chrome";
+    } else if (btn.id === "orchestrationCanvasFocus") {
+      btn.setAttribute("aria-pressed", focused ? "true" : "false");
+      btn.textContent = focused ? "Show panels" : "Focus panels";
+    } else {
+      btn.setAttribute("aria-pressed", maximized ? "true" : "false");
+      btn.textContent = btn.id === "orchestrationEmptyMaximize"
+        ? (maximized ? "Exit maximize" : "Maximize canvas")
+        : (maximized ? "Exit" : "Maximize");
+    }
+  });
+  const exitChromeBtn = qs("#orchestrationCanvasExitChrome");
+  if (exitChromeBtn) {
+    exitChromeBtn.setAttribute("aria-hidden", expanded ? "false" : "true");
+  }
+}
+
+function syncOrchestrationHeaderChrome() {
+  const seal = qs("#viewCoreSeal");
+  const onStudio = currentActiveView === "orchestration";
+  const studioActive = Boolean(qs('#orchestration [data-console-panel="studio"].active'));
+  document.body.classList.toggle("flow-studio-canvas-active", onStudio && studioActive);
+  if (seal) {
+    seal.hidden = !(onStudio && studioActive);
+  }
+}
+
+function ensureOrchestrationStudioPanelVisible() {
+  const view = qs("#orchestration");
+  if (!view) return;
+  const studioTab = view.querySelector('[data-console-tab="studio"]');
+  const studioPanel = view.querySelector('[data-console-panel="studio"]');
+  view.querySelectorAll("[data-console-tab]").forEach((tab) => {
+    const active = tab === studioTab;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  view.querySelectorAll("[data-console-panel]").forEach((panel) => {
+    const active = panel === studioPanel;
+    panel.classList.toggle("active", active);
+    panel.hidden = !active;
+  });
+  if (!studioPanel) return;
+  studioPanel.hidden = false;
+  studioPanel.classList.add("active");
+  // Prefer freeform board unless the operator explicitly chose lane.
+  try {
+    const savedLayout = localStorage.getItem("orchestrationCanvasLayout");
+    if (savedLayout !== "lane" && savedLayout !== "board") {
+      orchestrationCanvasLayout = "board";
+      localStorage.setItem("orchestrationCanvasLayout", "board");
+    }
+  } catch (_err) {
+    orchestrationCanvasLayout = "board";
+  }
+  if (typeof syncOrchestrationLayoutToggleUi === "function") {
+    syncOrchestrationLayoutToggleUi();
+  }
+}
+
 async function loadOrchestrationConsole() {
-  await Promise.all([loadOrchestrationNodeTypes(), loadOrchestrationFlows()]);
-  if (orchestrationSelectedFlowId) {
-    await loadOrchestrationHistoryOutputShapes(orchestrationSelectedFlowId);
-    const flow = orchestrationFlows.find((item) => item.flow_id === orchestrationSelectedFlowId);
-    if (flow) {
-      hydrateOrchestrationFormFromFlow(flow);
+  ensureOrchestrationStudioPanelVisible();
+  try {
+    await Promise.all([loadOrchestrationNodeTypes(), loadOrchestrationFlows()]);
+    if (orchestrationSelectedFlowId) {
+      await loadOrchestrationHistoryOutputShapes(orchestrationSelectedFlowId);
+      const flow = orchestrationFlows.find((item) => item.flow_id === orchestrationSelectedFlowId);
+      if (flow) {
+        hydrateOrchestrationFormFromFlow(flow);
+        activateOrchestrationFlow();
+      }
+    } else if (orchestrationBuilderItems.length) {
       activateOrchestrationFlow();
     }
-  } else if (orchestrationBuilderItems.length) {
-    activateOrchestrationFlow();
+    renderOrchestrationStudio();
+    renderOrchestrationConsoleSummary();
+  } catch (err) {
+    console.error("Flow Orchestration console load failed", err);
+    setOrchestrationFeedback(
+      `Could not load Flow Studio: ${String(err?.message || err || "unknown")}`,
+      "orchestrationBuilderFeedback",
+      "error",
+    );
+    renderOrchestrationStudio();
   }
-  renderOrchestrationStudio();
-  renderOrchestrationConsoleSummary();
 }
 
 function bindOrchestrationEvents() {
@@ -34094,6 +50091,10 @@ function bindOrchestrationEvents() {
   qs("#orchestrationAuditFlowFilter")?.addEventListener("change", () => void loadOrchestrationAuditEvents());
   qs("#orchestrationAuditOutcomeFilter")?.addEventListener("change", () => void loadOrchestrationAuditEvents());
   qs("#loadOrchestrationApprovals")?.addEventListener("click", () => void loadOrchestrationApprovals());
+  qs("#loadOrchestrationApprovalEvents")?.addEventListener("click", () => void loadOrchestrationApprovalEvents());
+  qs("#orchestrationIgaExplainForm")?.addEventListener("submit", (evt) => void explainOrchestrationIga(evt));
+  qs("#bootstrapOrchestrationLiveReadiness")?.addEventListener("click", () => void bootstrapOrchestrationLiveReadiness());
+  qs("#refreshOrchestrationLiveReadiness")?.addEventListener("click", () => void refreshOrchestrationLiveReadiness());
   qs("#loadOrchestrationDueCertQueue")?.addEventListener("click", () => void loadOrchestrationDueCertificationQueue());
   qs("#loadOrchestrationJitQueue")?.addEventListener("click", () => void loadOrchestrationJitAccessQueue());
   qs("#orchestrationDueCertFilters")?.addEventListener("change", () => renderOrchestrationDueCertQueueTable());
@@ -34124,6 +50125,8 @@ function bindOrchestrationEvents() {
   qs("#saveOrchestrationFlow")?.addEventListener("click", () => void saveFlow());
   qs("#validateOrchestrationFlow")?.addEventListener("click", () => void validateFlow());
   qs("#approveOrchestrationFlow")?.addEventListener("click", () => void approveFlow());
+  qs("#promoteOrchestrationFlow")?.addEventListener("click", () => void promoteOrchestrationFlow());
+  qs("#orchestrationFlowRevisions")?.addEventListener("click", () => void showOrchestrationFlowRevisions());
   qs("#runOrchestrationFlowDry")?.addEventListener("click", () => void runFlow(true));
   qs("#runOrchestrationFlow")?.addEventListener("click", () => void runFlow(false));
   qs("#orchestrationDataMappingToolbar")?.addEventListener("click", () => toggleOrchestrationDataMapping(null));
@@ -34152,6 +50155,28 @@ function bindOrchestrationEvents() {
     syncOrchestrationFormFromToolbar();
     renderOrchestrationConsoleSummary();
   });
+  qs("#orchestrationToolbarCronPreset")?.addEventListener("change", (event) => {
+    const cron = String(event.target.value || "").trim();
+    if (!cron) return;
+    const cronInput = qs("#orchestrationToolbarCron");
+    if (cronInput) cronInput.value = cron;
+    syncOrchestrationFormFromToolbar();
+    renderOrchestrationConsoleSummary();
+    if (orchestrationSelectedNodeId === ORCHESTRATION_FLOW_START_ID) {
+      renderOrchestrationInspector();
+    }
+  });
+  qs("#orchestrationToolbarWebhookPath")?.addEventListener("change", () => {
+    syncOrchestrationFormFromToolbar();
+    renderOrchestrationConsoleSummary();
+  });
+  qs("#orchestrationToolbarWebhookPath")?.addEventListener("input", () => {
+    syncOrchestrationFormFromToolbar();
+  });
+  qs("#orchestrationToolbarWebhookCopy")?.addEventListener("click", () => void copyOrchestrationWebhookUrl());
+  qs("#orchestrationToolbarWebhookTest")?.addEventListener("click", () => void testOrchestrationWebhookTrigger());
+  qs("#orchestrationToolbarSchedulerTick")?.addEventListener("click", () => void tickOrchestrationScheduler(false));
+  qs("#deprecateOrchestrationFlow")?.addEventListener("click", () => void deprecateOrchestrationFlow());
 
   qs("#orchestrationCanvasEmpty")?.addEventListener("click", (event) => {
     const templateBtn = event.target.closest("[data-flow-template]");
@@ -34163,7 +50188,28 @@ function bindOrchestrationEvents() {
 
   qs("#orchestrationEmptyNewFlow")?.addEventListener("click", () => {
     activateBlankOrchestrationFlow();
-    setOrchestrationFeedback("Blank flow ready — Start and End are set. Add widgets from the left.", "orchestrationBuilderFeedback", "info");
+    if (orchestrationCanvasLayout !== "board") {
+      setOrchestrationCanvasLayout("board");
+    }
+    setOrchestrationFeedback("Blank flow ready on the freeform board — drag widgets from the Core library, then wire Start → End.", "orchestrationBuilderFeedback", "info");
+  });
+
+  try {
+    const savedLayout = localStorage.getItem("orchestrationCanvasLayout");
+    if (savedLayout === "board" || savedLayout === "lane") {
+      orchestrationCanvasLayout = savedLayout;
+    }
+  } catch (_err) {
+    /* ignore */
+  }
+  syncOrchestrationLayoutToggleUi();
+  qs("#orchestrationLayoutLane")?.addEventListener("click", () => setOrchestrationCanvasLayout("lane"));
+  qs("#orchestrationLayoutBoard")?.addEventListener("click", () => setOrchestrationCanvasLayout("board"));
+  qs("#orchestrationUndo")?.addEventListener("click", () => undoOrchestrationEdit());
+  qs("#orchestrationRedo")?.addEventListener("click", () => redoOrchestrationEdit());
+  const flowMore = qs("#orchestration .flow-toolbar-more");
+  flowMore?.querySelector(".flow-toolbar-more-menu")?.addEventListener("click", () => {
+    flowMore.removeAttribute("open");
   });
 
   qs("#orchestrationZoomIn")?.addEventListener("click", () => {
@@ -34179,7 +50225,131 @@ function bindOrchestrationEvents() {
     applyOrchestrationCanvasZoom();
   });
 
+  const syncOrchestrationCanvasChromeUi = () => {
+    const expanded = document.body.classList.contains("flow-canvas-expanded");
+    const focused = document.body.classList.contains("flow-canvas-focus");
+    const maximized = expanded && focused;
+    const expandBtn = qs("#orchestrationCanvasExpand");
+    const focusBtn = qs("#orchestrationCanvasFocus");
+    const exitChromeBtn = qs("#orchestrationCanvasExitChrome");
+    const maximizeBtns = qsa("#orchestrationCanvasMaximize, #orchestrationCanvasMaximizeTop, #orchestrationEmptyMaximize");
+    if (expandBtn) {
+      expandBtn.setAttribute("aria-pressed", expanded ? "true" : "false");
+      expandBtn.textContent = expanded ? "Exit expand" : "Expand chrome";
+      expandBtn.title = expanded ? "Show app chrome again" : "Hide app chrome only";
+    }
+    if (focusBtn) {
+      focusBtn.setAttribute("aria-pressed", focused ? "true" : "false");
+      focusBtn.textContent = focused ? "Show panels" : "Focus panels";
+      focusBtn.title = focused
+        ? "Show side panels and restore sidebar"
+        : "Hide toolkit and inspector panels";
+    }
+    if (exitChromeBtn) {
+      exitChromeBtn.setAttribute("aria-hidden", expanded ? "false" : "true");
+    }
+    maximizeBtns.forEach((btn) => {
+      btn.setAttribute("aria-pressed", maximized ? "true" : "false");
+      if (btn.id === "orchestrationEmptyMaximize") {
+        btn.textContent = maximized ? "Exit maximize" : "Maximize canvas";
+      } else {
+        btn.textContent = maximized ? "Exit" : "Maximize";
+      }
+      btn.title = maximized
+        ? "Exit maximized canvas (Esc)"
+        : "Maximize canvas — hide chrome and side panels";
+    });
+  };
+  let orchestrationFocusPrevRailLocal = null;
+  const setOrchestrationCanvasExpanded = (expanded) => {
+    document.body.classList.toggle("flow-canvas-expanded", Boolean(expanded));
+    try {
+      localStorage.setItem("orchestrationCanvasExpanded", expanded ? "1" : "0");
+    } catch (_err) {
+      /* ignore */
+    }
+    syncOrchestrationCanvasChromeUi();
+  };
+  const setOrchestrationCanvasFocus = (focused) => {
+    const next = Boolean(focused);
+    document.body.classList.toggle("flow-canvas-focus", next);
+    try {
+      localStorage.setItem("orchestrationCanvasFocus", next ? "1" : "0");
+    } catch (_err) {
+      /* ignore */
+    }
+    const shell = qs(".app-shell");
+    if (next) {
+      orchestrationFocusPrevRail = shell?.classList.contains("sidebar-rail") ?? false;
+      orchestrationFocusPrevRailLocal = orchestrationFocusPrevRail;
+      if (window.innerWidth > 1080) setSidebarRail(true);
+    } else if (orchestrationFocusPrevRail !== null || orchestrationFocusPrevRailLocal !== null) {
+      const restore = orchestrationFocusPrevRail ?? orchestrationFocusPrevRailLocal;
+      setSidebarRail(Boolean(restore));
+      orchestrationFocusPrevRail = null;
+      orchestrationFocusPrevRailLocal = null;
+    }
+    syncOrchestrationCanvasChromeUi();
+  };
+  const setOrchestrationCanvasMaximized = (maximized) => {
+    const next = Boolean(maximized);
+    setOrchestrationCanvasExpanded(next);
+    setOrchestrationCanvasFocus(next);
+  };
+  const isOrchestrationCanvasMaximized = () =>
+    document.body.classList.contains("flow-canvas-expanded") &&
+    document.body.classList.contains("flow-canvas-focus");
+  // Only restore Focus/Expand when Flow Studio is already the active view.
+  // Prefetch/bind must not apply body chrome while Overview (or any other view) is showing.
+  if (currentActiveView === "orchestration" || qs("#orchestration")?.classList.contains("active")) {
+    try {
+      setOrchestrationCanvasExpanded(localStorage.getItem("orchestrationCanvasExpanded") === "1");
+      setOrchestrationCanvasFocus(localStorage.getItem("orchestrationCanvasFocus") === "1");
+    } catch (_err) {
+      syncOrchestrationCanvasChromeUi();
+    }
+  } else {
+    document.body.classList.remove("flow-canvas-expanded", "flow-canvas-focus");
+    syncOrchestrationCanvasChromeUi();
+  }
+  qs("#orchestrationFlowForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+  });
+  const toggleMaximize = () => setOrchestrationCanvasMaximized(!isOrchestrationCanvasMaximized());
+  qs("#orchestrationCanvasMaximize")?.addEventListener("click", toggleMaximize);
+  qs("#orchestrationCanvasMaximizeTop")?.addEventListener("click", toggleMaximize);
+  qs("#orchestrationEmptyMaximize")?.addEventListener("click", toggleMaximize);
+  const leaveFlowStudioToOverview = () => {
+    exitOrchestrationCanvasChrome();
+    void switchView("overview");
+  };
+  qs("#orchestrationBackToOverview")?.addEventListener("click", leaveFlowStudioToOverview);
+  qs("#orchestrationBackToOverviewSidebar")?.addEventListener("click", leaveFlowStudioToOverview);
+  qs("#orchestrationCanvasExitChrome")?.addEventListener("click", () => {
+    setOrchestrationCanvasMaximized(false);
+  });
+  qs("#orchestrationCanvasExpand")?.addEventListener("click", () => {
+    setOrchestrationCanvasExpanded(!document.body.classList.contains("flow-canvas-expanded"));
+  });
+  qs("#orchestrationCanvasFocus")?.addEventListener("click", () => {
+    setOrchestrationCanvasFocus(!document.body.classList.contains("flow-canvas-focus"));
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!document.body.classList.contains("flow-canvas-expanded") && !document.body.classList.contains("flow-canvas-focus")) {
+      return;
+    }
+    if (event.target && ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
+    setOrchestrationCanvasMaximized(false);
+  });
+
   qs("#orchestrationPaletteSearch")?.addEventListener("input", renderOrchestrationPalette);
+  bindOrchestrationPaletteLibraryControls();
+
+  qs("#orchestrationBoardSearch")?.addEventListener("input", (event) => {
+    orchestrationBoardSearchQuery = String(event.target?.value || "");
+    renderOrchestrationStudio();
+  });
 
   qs("#orchestrationFlowSidebarSearch")?.addEventListener("input", () => {
     resetOrchestrationSidebarFlowPagination();
@@ -34189,7 +50359,7 @@ function bindOrchestrationEvents() {
   qs("#orchestrationFlowSidebarJump")?.addEventListener("change", (event) => {
     const flowId = String(event.target.value || "").trim();
     if (!flowId) return;
-    selectOrchestrationFlow(flowId);
+    void selectOrchestrationFlow(flowId);
   });
 
   qs("#orchestrationFlowsTableSearch")?.addEventListener("input", renderOrchestrationFlowsTable);
@@ -34217,10 +50387,94 @@ function bindOrchestrationEvents() {
   qs("#orchestrationFlowSidebarList")?.addEventListener("click", (event) => {
     const target = event.target.closest("[data-flow-select]");
     if (!target) return;
-    selectOrchestrationFlow(target.getAttribute("data-flow-select"));
+    void selectOrchestrationFlow(target.getAttribute("data-flow-select"));
   });
 
   qs("#orchestrationCanvasLane")?.addEventListener("click", (event) => {
+    const unlinkBtn = event.target.closest("[data-edge-unlink]");
+    if (unlinkBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const source = unlinkBtn.getAttribute("data-edge-source") || "";
+      const target = unlinkBtn.getAttribute("data-edge-target") || "";
+      if (source && target) {
+        disconnectOrchestrationBoardEdge(source, target);
+        renderOrchestrationCanvas();
+        setOrchestrationFeedback("Arrow removed.", "orchestrationBuilderFeedback", "info");
+      }
+      return;
+    }
+    const edgeGroup = event.target.closest(".flow-board-edge-group[data-edge-source][data-edge-target]");
+    if (edgeGroup) {
+      event.stopPropagation();
+      const source = edgeGroup.getAttribute("data-edge-source") || "";
+      const target = edgeGroup.getAttribute("data-edge-target") || "";
+      if (event.altKey || event.metaKey) {
+        disconnectOrchestrationBoardEdge(source, target);
+        renderOrchestrationCanvas();
+        setOrchestrationFeedback("Arrow removed.", "orchestrationBuilderFeedback", "info");
+        return;
+      }
+      const already =
+        orchestrationSelectedBoardEdge?.source === source &&
+        orchestrationSelectedBoardEdge?.target === target;
+      if (already) {
+        disconnectOrchestrationBoardEdge(source, target);
+        renderOrchestrationCanvas();
+        setOrchestrationFeedback("Arrow removed.", "orchestrationBuilderFeedback", "info");
+      } else {
+        selectOrchestrationBoardEdge(source, target);
+        renderOrchestrationCanvas();
+        setOrchestrationFeedback("Arrow selected — press Delete or click × to remove.", "orchestrationBuilderFeedback", "info");
+      }
+      return;
+    }
+    // Output ports are handled by drag/click-to-arm in wireOrchestrationBoardPorts.
+    if (event.target.closest("[data-wire-out]")) {
+      event.stopPropagation();
+      return;
+    }
+    const wireIn = event.target.closest("[data-wire-in]");
+    if (wireIn) {
+      event.stopPropagation();
+      const targetId = wireIn.getAttribute("data-wire-in") || "";
+      if (!orchestrationWireFromNodeId) {
+        setOrchestrationFeedback(
+          "Click a bottom ● first, then click this input ● (or drag between them).",
+          "orchestrationBuilderFeedback",
+          "info",
+        );
+        return;
+      }
+      if (connectOrchestrationBoardEdge(orchestrationWireFromNodeId, targetId)) {
+        renderOrchestrationStudio();
+        setOrchestrationFeedback(`Linked → ${getOrchestrationNodeDisplayName(getOrchestrationBoardEntityById(targetId) || { id: targetId })}.`, "orchestrationBuilderFeedback", "success");
+      }
+      return;
+    }
+    // While wiring, clicking anywhere on the next box completes the connection.
+    if (orchestrationWireFromNodeId && orchestrationCanvasLayout === "board") {
+      const targetCard = event.target.closest("[data-board-node][data-node-id]");
+      if (targetCard) {
+        const targetId = targetCard.getAttribute("data-node-id") || "";
+        if (targetId && targetId !== orchestrationWireFromNodeId) {
+          event.stopPropagation();
+          if (connectOrchestrationBoardEdge(orchestrationWireFromNodeId, targetId)) {
+            renderOrchestrationStudio();
+            setOrchestrationFeedback(
+              `Linked → ${getOrchestrationNodeDisplayName(getOrchestrationBoardEntityById(targetId) || { id: targetId })}.`,
+              "orchestrationBuilderFeedback",
+              "success",
+            );
+          }
+          return;
+        }
+      }
+    }
+    if (orchestrationSelectedBoardEdge && !event.target.closest("[data-board-node]")) {
+      clearOrchestrationBoardEdgeSelection();
+      renderOrchestrationCanvas();
+    }
     const branchJump = event.target.closest("[data-parallel-branch-jump]");
     if (branchJump) {
       const groupId = branchJump.getAttribute("data-parallel-group");
@@ -34285,6 +50539,22 @@ function bindOrchestrationEvents() {
       dissolveOrchestrationParallelGroup(Number(dissolveBtn.getAttribute("data-parallel-dissolve")));
       return;
     }
+    const clearPinBtn = event.target.closest("[data-clear-pin]");
+    if (clearPinBtn) {
+      event.stopPropagation();
+      clearOrchestrationPinnedData(clearPinBtn.getAttribute("data-clear-pin"));
+      return;
+    }
+    const conditionBranchBtn = event.target.closest("[data-condition-branch-create]");
+    if (conditionBranchBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      createOrchestrationConditionBranch(
+        conditionBranchBtn.getAttribute("data-condition-branch-create"),
+        conditionBranchBtn.getAttribute("data-branch-kind"),
+      );
+      return;
+    }
     const dataMapBtn = event.target.closest("[data-data-map]");
     if (dataMapBtn) {
       event.stopPropagation();
@@ -34311,6 +50581,14 @@ function bindOrchestrationEvents() {
         Number(deleteBtn.getAttribute("data-node-delete-branch")),
         Number(deleteBtn.getAttribute("data-node-delete-index")),
       );
+      return;
+    }
+    const deleteByIdBtn = event.target.closest("[data-node-delete-id]");
+    if (deleteByIdBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const nodeId = deleteByIdBtn.getAttribute("data-node-delete-id") || "";
+      if (nodeId) removeOrchestrationNodeById(nodeId);
       return;
     }
     const legacyDeleteBtn = event.target.closest("[data-node-delete]");
@@ -34340,6 +50618,7 @@ function bindOrchestrationEvents() {
     }
     orchestrationFocusedParallelBranchIndex = null;
     orchestrationSelectedNodeId = nodeId;
+    clearOrchestrationBoardEdgeSelection();
     clearOrchestrationInsertState();
     renderOrchestrationCanvas();
     renderOrchestrationInspector();
@@ -34383,7 +50662,27 @@ function bindOrchestrationEvents() {
       if (!qs("#orchestration")?.classList.contains("active")) return;
       const tag = String(event.target?.tagName || "").toLowerCase();
       const inInput = tag === "input" || tag === "textarea" || tag === "select" || event.target?.isContentEditable;
+      const selectedId = String(orchestrationSelectedNodeId || "");
+      const meta = event.metaKey || event.ctrlKey;
+      if (meta && event.key.toLowerCase() === "z" && !inInput) {
+        event.preventDefault();
+        if (event.shiftKey) redoOrchestrationEdit();
+        else undoOrchestrationEdit();
+        return;
+      }
       if (event.key === "Escape" && !inInput) {
+        if (orchestrationWireFromNodeId) {
+          orchestrationWireFromNodeId = "";
+          orchestrationWireFromKind = "";
+          renderOrchestrationCanvas();
+          setOrchestrationFeedback("Wire cancelled.", "orchestrationBuilderFeedback", "info");
+          return;
+        }
+        if (orchestrationSelectedBoardEdge) {
+          clearOrchestrationBoardEdgeSelection();
+          renderOrchestrationCanvas();
+          return;
+        }
         orchestrationSelectedNodeId = ORCHESTRATION_FLOW_START_ID;
         clearOrchestrationInsertState();
         orchestrationPaletteArmedType = "";
@@ -34391,29 +50690,39 @@ function bindOrchestrationEvents() {
         return;
       }
       if ((event.key === "Delete" || event.key === "Backspace") && !inInput) {
-        const node = getOrchestrationNodeById(orchestrationSelectedNodeId);
+        if (orchestrationSelectedBoardEdge) {
+          event.preventDefault();
+          disconnectOrchestrationBoardEdge(
+            orchestrationSelectedBoardEdge.source,
+            orchestrationSelectedBoardEdge.target,
+          );
+          renderOrchestrationCanvas();
+          setOrchestrationFeedback("Arrow removed.", "orchestrationBuilderFeedback", "info");
+          return;
+        }
+        const node = getOrchestrationNodeById(selectedId);
         if (node) {
           event.preventDefault();
-          const located = findOrchestrationNodeLocation(orchestrationSelectedNodeId);
+          const located = findOrchestrationNodeLocation(selectedId);
           if (located) {
             removeOrchestrationNode(located.itemIndex, located.branchIndex, located.nodeIndex);
           }
         }
       }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+      if (meta && event.key.toLowerCase() === "s") {
         event.preventDefault();
         void saveFlow();
       }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d" && !inInput) {
-        const node = getOrchestrationNodeById(orchestrationSelectedNodeId);
+      if (meta && event.key.toLowerCase() === "d" && !inInput) {
+        const node = getOrchestrationNodeById(selectedId);
         if (node) {
           event.preventDefault();
-          duplicateOrchestrationNode(orchestrationSelectedNodeId);
+          duplicateOrchestrationNode(selectedId);
         }
       }
       if (!inInput && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-        if (orchestrationSelectedNodeId.startsWith("parallel:")) {
-          const located = findOrchestrationParallelItemByGroupId(orchestrationSelectedNodeId.slice("parallel:".length));
+        if (selectedId.startsWith("parallel:")) {
+          const located = findOrchestrationParallelItemByGroupId(selectedId.slice("parallel:".length));
           if (located) {
             const direction = event.key === "ArrowUp" ? -1 : 1;
             if (canMoveOrchestrationBuilderItem(located.itemIndex, direction)) {
@@ -34423,28 +50732,28 @@ function bindOrchestrationEvents() {
           }
           return;
         }
-        const node = getOrchestrationNodeById(orchestrationSelectedNodeId);
+        const node = getOrchestrationNodeById(selectedId);
         if (node) {
           const direction = event.key === "ArrowUp" ? -1 : 1;
-          if (canMoveOrchestrationNode(orchestrationSelectedNodeId, direction)) {
+          if (canMoveOrchestrationNode(selectedId, direction)) {
             event.preventDefault();
-            moveOrchestrationNode(orchestrationSelectedNodeId, direction);
+            moveOrchestrationNode(selectedId, direction);
           }
         }
       }
       if (!inInput && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-        if (orchestrationSelectedNodeId.startsWith("parallel:")) {
-          const groupId = orchestrationSelectedNodeId.slice("parallel:".length);
+        if (selectedId.startsWith("parallel:")) {
+          const groupId = selectedId.slice("parallel:".length);
           event.preventDefault();
           scrollParallelBranches(groupId, event.key === "ArrowLeft" ? -1 : 1);
           return;
         }
-        const node = getOrchestrationNodeById(orchestrationSelectedNodeId);
+        const node = getOrchestrationNodeById(selectedId);
         if (node) {
           const direction = event.key === "ArrowLeft" ? -1 : 1;
-          if (canMoveOrchestrationNodeAcrossBranches(orchestrationSelectedNodeId, direction)) {
+          if (canMoveOrchestrationNodeAcrossBranches(selectedId, direction)) {
             event.preventDefault();
-            moveOrchestrationNodeAcrossBranches(orchestrationSelectedNodeId, direction);
+            moveOrchestrationNodeAcrossBranches(selectedId, direction);
           }
         }
       }
@@ -34470,6 +50779,8 @@ async function init() {
     return;
   }
   applyTheme(state.theme);
+  applyDensity(state.density);
+  updateViewBreadcrumb("overview");
   if (typeof ApiCache !== "undefined") {
     ApiCache.configure({ getApiBase: () => state.apiBase });
   }
@@ -34479,6 +50790,14 @@ async function init() {
   updateContextInputs();
   clearGlobalError();
   annotateFormFieldRequirements();
+  if (typeof UiKit !== "undefined") {
+    UiKit.collapseCardHelp?.(document);
+    UiKit.enhanceFormValidation?.(document);
+    UiKit.enhancePageSurfaces?.(document);
+    UiKit.bindRefreshBusy?.(document);
+    UiKit.bindConnectivityBanner?.();
+    UiKit.bindConfirmDialog?.();
+  }
   restoreRuntimeRuleValidationState();
   renderRuntimeValidationContext();
   bindEvents();

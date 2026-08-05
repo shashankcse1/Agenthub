@@ -284,6 +284,7 @@ class VirtualKey(Base):
     authn_method: Mapped[str] = mapped_column(String(64), default="token")
     status: Mapped[str] = mapped_column(String(64), default="active")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    jit_request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
 class RoutePolicy(Base):
@@ -648,6 +649,8 @@ class CostEvent(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     estimated_cost_cents: Mapped[int] = mapped_column(Integer, default=0)
     currency: Mapped[str] = mapped_column(String(8), default="USD")
+    cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
+    properties_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
 class RouteMirrorExperimentEvent(Base):
@@ -763,6 +766,7 @@ class GatewayJitAccessRequest(Base):
     __table_args__ = (
         Index("ix_gateway_jit_request_status_env", "status", "environment"),
         Index("ix_gateway_jit_request_entitlement", "entitlement_id"),
+        Index("ix_gateway_jit_request_issued_key", "issued_virtual_key_id"),
     )
 
     request_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -777,6 +781,10 @@ class GatewayJitAccessRequest(Base):
     approved_role: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    owner_scope_type: Mapped[str] = mapped_column(String(64), default="user")
+    owner_scope_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    mint_virtual_key: Mapped[bool] = mapped_column(Boolean, default=True)
+    issued_virtual_key_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -1285,6 +1293,9 @@ class OpenAIFileRecord(Base):
     content_type: Mapped[str] = mapped_column(String(128), default="application/octet-stream")
     metadata_json: Mapped[str] = mapped_column(Text, default="{}")
     status: Mapped[str] = mapped_column(String(32), default="uploaded")
+    # Opt-in encrypted body when gateway.files.content_store_enabled=true (Wave 2).
+    content_encrypted: Mapped[str] = mapped_column(Text, default="")
+    content_sha256: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -1309,6 +1320,27 @@ class OpenAIBatchRecord(Base):
     status: Mapped[str] = mapped_column(String(32), default="queued")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class GatewayLogExportJob(Base):
+    __tablename__ = "gateway_log_export_jobs"
+    __table_args__ = (
+        Index("ix_gateway_log_export_jobs_actor_created", "actor_id", "created_at"),
+        Index("ix_gateway_log_export_jobs_status_created", "status", "created_at"),
+    )
+
+    export_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    workspace_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    filters_json: Mapped[str] = mapped_column(Text, default="{}")
+    requested_data_json: Mapped[str] = mapped_column(Text, default="[]")
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    content_jsonl: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class GatewayAssistantRecord(Base):
@@ -1645,6 +1677,29 @@ class OperatorFeedback(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class PlaneDriftEvent(Base):
+    """Durable control/data plane reconcile and drift evidence."""
+
+    __tablename__ = "plane_drift_events"
+    __table_args__ = (
+        Index("ix_plane_drift_events_recorded", "recorded_at"),
+        Index("ix_plane_drift_events_status_recorded", "drift_status", "recorded_at"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    app_plane: Mapped[str] = mapped_column(String(32), nullable=False, default="all")
+    drift_status: Mapped[str] = mapped_column(String(64), nullable=False, default="n/a")
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="api")
+    fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    peer_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    peer_reachable: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    peer_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    peer_latency_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    published_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+
+
 class OrchestrationFlowDefinition(Base):
     __tablename__ = "orchestration_flow_definitions"
     __table_args__ = (
@@ -1669,6 +1724,28 @@ class OrchestrationFlowDefinition(Base):
     updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OrchestrationFlowRevision(Base):
+    __tablename__ = "orchestration_flow_revisions"
+    __table_args__ = (
+        Index("ix_orchestration_flow_revisions_flow_version", "flow_id", "version", unique=True),
+    )
+
+    revision_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    flow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    flow_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    environment: Mapped[str] = mapped_column(String(32), default="dev")
+    trigger_type: Mapped[str] = mapped_column(String(32), default="manual")
+    trigger_config_json: Mapped[str] = mapped_column(Text, default="{}")
+    graph_json: Mapped[str] = mapped_column(Text, default='{"nodes":[],"edges":[]}')
+    access_policy_json: Mapped[str] = mapped_column(Text, default="{}")
+    change_reason: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class OrchestrationFlowRun(Base):

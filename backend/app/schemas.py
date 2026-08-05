@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.logging_utils import get_logger
 from app.policy_constants import (
@@ -49,6 +49,7 @@ class AgentResponse(ORMBase):
 
 class AgentRegisterOptionsResponse(BaseModel):
     allowed_agent_types: list[str]
+    provider_backed_agent_types: list[str] = []
     default_environment: str = "dev"
 
 
@@ -330,18 +331,26 @@ class BasicAuthConfigCreateRequest(BaseModel):
     environment: str
     allowed_user_groups: str = "[]"
     ip_allowlist: str = "[]"
-    max_enable_duration_minutes: int = DEFAULT_BASIC_AUTH_MAX_ENABLE_DURATION_MINUTES
+    max_enable_duration_minutes: int = Field(
+        default=DEFAULT_BASIC_AUTH_MAX_ENABLE_DURATION_MINUTES,
+        ge=1,
+        le=90 * 24 * 60,
+    )
 
 
 class BasicAuthConfigUpdateRequest(BaseModel):
     allowed_user_groups: Optional[str] = None
     ip_allowlist: Optional[str] = None
-    max_enable_duration_minutes: Optional[int] = None
+    max_enable_duration_minutes: Optional[int] = Field(default=None, ge=1, le=90 * 24 * 60)
 
 
 class BasicAuthEnableRequest(BaseModel):
     break_glass_reason: str
-    duration_minutes: int = DEFAULT_BASIC_AUTH_ENABLE_DURATION_MINUTES
+    duration_minutes: int = Field(
+        default=DEFAULT_BASIC_AUTH_ENABLE_DURATION_MINUTES,
+        ge=1,
+        le=90 * 24 * 60,
+    )
 
 
 class SessionCreateRequest(BaseModel):
@@ -696,6 +705,13 @@ class KeyCreateRequest(BaseModel):
     allowed_endpoint_families: str = "[]"
     allowed_models: str = "[]"
     guardrail_policy: str = "{}"
+    budget_policy_id: Optional[str] = Field(default="default", max_length=64)
+    rate_limit_policy_id: Optional[str] = Field(default="default", max_length=64)
+    expires_at: Optional[datetime] = Field(
+        default=None,
+        description="Portkey-style virtual key expiry (UTC). Null means no expiry.",
+    )
+    authn_method: Optional[str] = Field(default="token", max_length=64)
 
 
 class KeyUpdateRequest(BaseModel):
@@ -703,6 +719,13 @@ class KeyUpdateRequest(BaseModel):
     allowed_models: Optional[str] = None
     guardrail_policy: Optional[str] = None
     status: Optional[str] = None
+    budget_policy_id: Optional[str] = Field(default=None, max_length=64)
+    rate_limit_policy_id: Optional[str] = Field(default=None, max_length=64)
+    expires_at: Optional[datetime] = Field(
+        default=None,
+        description="Portkey-style virtual key expiry (UTC). Omit to leave unchanged.",
+    )
+    authn_method: Optional[str] = Field(default=None, max_length=64)
 
 
 class KeyResponse(ORMBase):
@@ -712,7 +735,12 @@ class KeyResponse(ORMBase):
     allowed_endpoint_families: str
     allowed_models: str
     guardrail_policy: str
+    budget_policy_id: str = "default"
+    rate_limit_policy_id: str = "default"
     status: str
+    expires_at: Optional[datetime] = None
+    authn_method: str = "token"
+    jit_request_id: Optional[str] = None
 
 
 class KeyLifecycleActionResponse(BaseModel):
@@ -776,6 +804,15 @@ class KeyRotationScheduleExecuteResponse(BaseModel):
     next_run_at: str
 
 
+class KeyRotationScheduleTickResponse(BaseModel):
+    scanned_keys: int
+    due_schedules: int
+    executed: list[KeyRotationScheduleExecuteResponse]
+    skipped_prod: int
+    skipped_disabled: int
+    executed_at: str
+
+
 class KeyGuardrailEvaluateRequest(BaseModel):
     environment: str = "dev"
     stage: str = Field(default="input", pattern="^(input|output)$")
@@ -792,6 +829,19 @@ class KeyGuardrailEvaluateResponse(BaseModel):
     decision: str
     reasons: list[str]
     applied_guardrails: list[str]
+
+
+class GuardrailConfigResponse(BaseModel):
+    """Portkey-style guardrail config view (virtual-key policy; never exposes secrets)."""
+
+    guardrail_id: str
+    key_id: str
+    status: str
+    owner_scope_type: str
+    owner_scope_id: str
+    policy: dict[str, object] = Field(default_factory=dict)
+    policy_mode: Optional[str] = None
+    has_policy: bool = False
 
 
 class PlaygroundRunFeedbackCreateRequest(BaseModel):
@@ -991,6 +1041,19 @@ class RoutePolicyResponse(ORMBase):
     status: str
 
 
+class GatewayOpenAIModelItem(BaseModel):
+    id: str
+    object: str = "model"
+    owned_by: str
+    created: int = 0
+
+
+class GatewayOpenAIModelListResponse(BaseModel):
+    object: str = "list"
+    data: list[GatewayOpenAIModelItem]
+    count: int
+
+
 class RouteOptimizeRequest(BaseModel):
     optimize_for: str = Field(default="balanced", pattern="^(balanced|cost|latency)$")
     environment: str = "prod"
@@ -1125,6 +1188,11 @@ class RouteInputDataPolicyRequest(BaseModel):
     data_classes: str = "[]"
     block_patterns: str = "[]"
     mask_token: str = Field(default="[REDACTED]", min_length=1, max_length=64)
+    prompt_injection_mode: str = Field(
+        default="inherit",
+        pattern="^(off|warn|block|inherit)$",
+        description="Heuristic prompt-injection handling; inherit uses gateway.prompt_injection.default_mode.",
+    )
     enforce: bool = True
 
 
@@ -1137,6 +1205,7 @@ class RouteInputDataPolicyResponse(BaseModel):
     data_classes: str
     block_patterns: str
     mask_token: str
+    prompt_injection_mode: str = "inherit"
     enforce: bool = True
 
 
@@ -1146,6 +1215,7 @@ class RouteTrafficMirroringRequest(BaseModel):
     request_tag: Optional[str] = Field(default=None, max_length=64)
     mirror_targets: str = "[]"
     enabled: bool = True
+    max_live_attempts: int = Field(default=1, ge=0, le=3)
 
 
 class RouteTrafficMirroringResponse(BaseModel):
@@ -1155,6 +1225,7 @@ class RouteTrafficMirroringResponse(BaseModel):
     request_tag: Optional[str] = None
     mirror_targets: str
     enabled: bool = True
+    max_live_attempts: int = 1
 
 
 class RouteCanaryRolloutRequest(BaseModel):
@@ -1258,6 +1329,8 @@ class GatewayNhiHygieneResponse(BaseModel):
     missing_owner: int
     inactive_identities: int
     high_risk_identities: int
+    unmanaged_prod_identities: int = 0
+    prod_unmanaged_zero_ok: bool = True
     findings_distribution: list[dict[str, object]]
     source_distribution: list[dict[str, object]]
 
@@ -1304,11 +1377,28 @@ class GatewayJitAccessRequestCreateRequest(BaseModel):
     environment: str = "dev"
     justification: str = Field(min_length=8, max_length=2000)
     requested_duration_minutes: int = Field(default=60, ge=5, le=1440)
+    owner_scope_type: str = Field(
+        default="user",
+        description="Principal scope for the minted virtual key (user|team|group|owner|actor).",
+    )
+    owner_scope_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Owner scope id. Defaults to the requester actor id when omitted.",
+    )
+    mint_virtual_key: bool = Field(
+        default=True,
+        description="When true, approve mints a short-lived virtual key bound to this grant.",
+    )
 
 
 class GatewayJitAccessApproveRequest(BaseModel):
     decision: str = Field(default="approve", pattern="^(approve|deny)$")
     decision_reason: Optional[str] = Field(default=None, max_length=512)
+    mint_virtual_key: Optional[bool] = Field(
+        default=None,
+        description="Override request-time mint preference. Null keeps the request setting.",
+    )
 
 
 class GatewayJitAccessRequestResponse(BaseModel):
@@ -1324,7 +1414,63 @@ class GatewayJitAccessRequestResponse(BaseModel):
     approved_role: Optional[str] = None
     approved_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+    owner_scope_type: str = "user"
+    owner_scope_id: Optional[str] = None
+    mint_virtual_key: bool = True
+    issued_virtual_key_id: Optional[str] = None
+    issued_virtual_key_token: Optional[str] = Field(
+        default=None,
+        description="One-time bearer token returned only on approve when a VK is minted. Never re-read.",
+    )
     created_at: datetime
+
+
+class GatewayJitAccessRequestListResponse(BaseModel):
+    total: int
+    data: list[GatewayJitAccessRequestResponse]
+
+
+class GatewayJitAccessRevokeRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=512)
+
+
+class GatewayJitExpireTickResponse(BaseModel):
+    expired_grants: int
+    blocked_keys: int
+    scanned: int
+
+
+class GatewayJitDecisionNotifyConfig(BaseModel):
+    enabled: bool = False
+    notify_on_create: bool = True
+    email_channel_id: str = ""
+    reviewer_emails: list[str] = Field(default_factory=list)
+    public_base_url: str = ""
+    external_callback_ids: list[str] = Field(default_factory=list)
+    external_rest_url: str = ""
+    external_rest_credential_binding_id: str = ""
+    action_token_ttl_minutes: int = Field(default=1440, ge=15, le=10080)
+    allow_prod_email_approve: bool = False
+
+
+class GatewayJitDecisionNotifyResult(BaseModel):
+    notified: bool
+    emails_sent: int = 0
+    email_errors: list[str] = Field(default_factory=list)
+    webhooks: list[dict[str, object]] = Field(default_factory=list)
+    event_type: str = "gateway.jit.request.create"
+    reason: Optional[str] = None
+
+
+class GatewayJitActionDecideResponse(BaseModel):
+    request_id: str
+    status: str
+    decision: str
+    decided_by: str
+    message: str
+    issued_virtual_key_id: Optional[str] = None
+    # One-time token only when approve mints a key via email action.
+    issued_virtual_key_token: Optional[str] = None
 
 
 class GatewayLeastPrivilegeRecommendationResponse(BaseModel):
@@ -1348,6 +1494,8 @@ class GatewayLeastPrivilegeRecommendationResponse(BaseModel):
 
 class GatewayLeastPrivilegeRecommendationApplyRequest(BaseModel):
     decision_reason: Optional[str] = Field(default=None, max_length=512)
+    change_ticket_id: Optional[str] = Field(default=None, max_length=128)
+    review_evidence_uri: Optional[str] = Field(default=None, max_length=512)
 
 
 class RouteProviderPriorityTimelineEventResponse(BaseModel):
@@ -1533,6 +1681,60 @@ class GatewayAnalyticsSummaryResponse(BaseModel):
     avg_output_tokens: float
     top_models: list[dict[str, object]]
     top_endpoint_families: list[dict[str, object]]
+    on_plane_events: int = 0
+    off_plane_detected: int = 0
+    on_plane_coverage_percent: Optional[float] = None
+    on_plane_coverage: Optional[dict[str, object]] = None
+
+
+class GatewayLeadershipQbrSnapshotResponse(BaseModel):
+    generated_at: str
+    purpose: str = "numbers_first_qbr"
+    spend: dict[str, object]
+    clocks: dict[str, object]
+    gates: dict[str, object]
+    drills: dict[str, object] = Field(default_factory=dict)
+    plane_isolation: dict[str, object] = Field(
+        default_factory=dict,
+        description="APP_PLANE isolation, policy fingerprint, drift/gate posture for QBR.",
+    )
+    control_plane_leadership: dict[str, object] = Field(
+        default_factory=dict,
+        description="Control Plane Leadership Index (CPLI) engineering scorecard summary.",
+    )
+    on_plane_coverage: Optional[dict[str, object]] = None
+    transport: dict[str, object] = Field(default_factory=dict)
+    exception_posture: dict[str, object] = Field(default_factory=dict)
+    mfa_optional: dict[str, object] = Field(default_factory=dict)
+    token_exposure: dict[str, object] = Field(default_factory=dict)
+    readiness_notes: list[str] = Field(default_factory=list)
+    honesty: dict[str, object] = Field(default_factory=dict)
+
+
+class GatewayLeadershipDrillRunCreateRequest(BaseModel):
+    drill_id: str = Field(min_length=1, max_length=32)
+    performed_on: str = Field(min_length=10, max_length=32, description="YYYY-MM-DD after a real drill")
+    duration_seconds: Optional[int] = Field(default=None, ge=0, le=86400)
+    outcome: str = Field(default="pass", max_length=16)
+    notes: str = Field(default="", max_length=2000)
+    evidence_ref: str = Field(default="", max_length=512)
+
+
+class GatewayLeadershipDrillRunResponse(BaseModel):
+    run_id: str
+    drill_id: str
+    performed_on: str
+    recorded_at: str
+    recorded_by: str
+    duration_seconds: Optional[int] = None
+    outcome: str
+    notes: str = ""
+    evidence_ref: str = ""
+
+
+class GatewayLeadershipDrillRunListResponse(BaseModel):
+    items: list[GatewayLeadershipDrillRunResponse]
+    freshness: dict[str, object] = Field(default_factory=dict)
 
 
 class GatewayAuthzExplainRequest(BaseModel):
@@ -1602,10 +1804,56 @@ class GatewayOpenAIChatCompletionsRequest(BaseModel):
     tenant_id: Optional[str] = None
     environment: str = "dev"
     route_policy_id: Optional[str] = None
+    config_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Portkey-style config id (alias of route_policy_id)",
+    )
     request_tag: Optional[str] = None
     session_id: Optional[str] = None
     owner_scope: Optional[str] = None
     agent_id: Optional[str] = None
+    virtual_key_id: Optional[str] = Field(default=None, max_length=128)
+    guardrail_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Portkey-style guardrail id (alias of virtual_key_id)",
+    )
+    user_properties: Optional[dict[str, object]] = None
+    user: Optional[str] = Field(default=None, max_length=128, description="Helicone-style end-user id")
+    properties: Optional[dict[str, object]] = Field(
+        default=None,
+        description="Helicone-style request properties for cost/observability drilldown",
+    )
+    prompt_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Portkey-style prompt registry id (alias of prompt_registry_id)",
+    )
+    prompt_registry_id: Optional[str] = Field(default=None, max_length=128)
+    variables: Optional[dict[str, str]] = Field(
+        default=None,
+        description="Template variables for prompt registry {{var}} rendering",
+    )
+    session_path: Optional[str] = Field(
+        default=None,
+        max_length=256,
+        description="Helicone-style session path for request grouping",
+    )
+    session_name: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Helicone-style session display name",
+    )
+    metadata: Optional[dict[str, object]] = Field(
+        default=None,
+        description="Helicone-style custom metadata merged into cost/observability properties",
+    )
+    cache_mode: Optional[str] = Field(
+        default="inherit",
+        pattern="^(inherit|bypass|force)$",
+        description="Portkey-style cache control: inherit (policy), bypass (skip read/write), force (skip hit, still store)",
+    )
 
 
 class GatewayOpenAIChatChoiceMessage(BaseModel):
@@ -1638,7 +1886,18 @@ class GatewayOpenAIChatCompletionsResponse(BaseModel):
     risk_reasons: list[str]
     selected_provider_id: Optional[str] = None
     route_policy_id: Optional[str] = None
+    config_id: Optional[str] = None
+    virtual_key_id: Optional[str] = None
+    guardrail_id: Optional[str] = None
     cache_short_circuit: Optional[bool] = None
+    cache_mode: Optional[str] = None
+    fallback_hops_used: Optional[int] = None
+    prompt_registry_id: Optional[str] = None
+    canary_routing_decision: Optional[str] = None
+    mirror_events_count: Optional[int] = None
+    cost_hierarchy_limits: Optional[dict[str, object]] = None
+    content_guard_decision: Optional[str] = None
+    content_guard_reasons: Optional[list[str]] = None
 
 
 class GatewayOpenAIEmbeddingsRequest(BaseModel):
@@ -1947,7 +2206,10 @@ class GatewayOpenAIResponsesRequest(BaseModel):
     model: str = Field(min_length=1)
     input: object
     instructions: Optional[str] = None
-    metadata: Optional[dict[str, object]] = None
+    metadata: Optional[dict[str, object]] = Field(
+        default=None,
+        description="OpenAI Responses API metadata forwarded upstream (not Helicone cost props)",
+    )
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     max_output_tokens: Optional[int] = Field(default=None, ge=1, le=32768)
@@ -1959,10 +2221,52 @@ class GatewayOpenAIResponsesRequest(BaseModel):
     tenant_id: Optional[str] = None
     environment: str = "dev"
     route_policy_id: Optional[str] = None
+    config_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Portkey-style config id (alias of route_policy_id)",
+    )
     request_tag: Optional[str] = None
     session_id: Optional[str] = None
     owner_scope: Optional[str] = None
     agent_id: Optional[str] = None
+    virtual_key_id: Optional[str] = Field(default=None, max_length=128)
+    guardrail_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Portkey-style guardrail id (alias of virtual_key_id)",
+    )
+    user_properties: Optional[dict[str, object]] = None
+    user: Optional[str] = Field(default=None, max_length=128, description="Helicone-style end-user id")
+    properties: Optional[dict[str, object]] = Field(
+        default=None,
+        description="Helicone-style request properties for cost/observability drilldown",
+    )
+    session_path: Optional[str] = Field(
+        default=None,
+        max_length=256,
+        description="Helicone-style session path for request grouping",
+    )
+    session_name: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Helicone-style session display name",
+    )
+    prompt_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Portkey-style prompt registry id (alias of prompt_registry_id)",
+    )
+    prompt_registry_id: Optional[str] = Field(default=None, max_length=128)
+    variables: Optional[dict[str, str]] = Field(
+        default=None,
+        description="Template variables for prompt registry {{var}} rendering",
+    )
+    cache_mode: Optional[str] = Field(
+        default="inherit",
+        pattern="^(inherit|bypass|force)$",
+        description="Portkey-style cache control: inherit (policy), bypass (skip read/write), force (skip hit, still store)",
+    )
 
 
 class GatewayOpenAIResponsesOutputContent(BaseModel):
@@ -2001,7 +2305,16 @@ class GatewayOpenAIResponsesResponse(BaseModel):
     risk_reasons: list[str]
     selected_provider_id: Optional[str] = None
     route_policy_id: Optional[str] = None
+    config_id: Optional[str] = None
+    virtual_key_id: Optional[str] = None
+    guardrail_id: Optional[str] = None
     cache_short_circuit: Optional[bool] = None
+    cache_mode: Optional[str] = None
+    fallback_hops_used: Optional[int] = None
+    canary_routing_decision: Optional[str] = None
+    mirror_events_count: Optional[int] = None
+    prompt_registry_id: Optional[str] = None
+    cost_hierarchy_limits: Optional[dict[str, object]] = None
 
 
 class GatewayOpenAIResponsesListResponse(BaseModel):
@@ -2020,10 +2333,23 @@ class GatewayOpenAIResponsesDeleteResponse(BaseModel):
 class GatewayOpenAIFileCreateRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     purpose: str = Field(default="assistants", min_length=1, max_length=128)
-    bytes: int = Field(ge=1, le=2_147_483_647)
+    bytes: int = Field(ge=0, le=2_147_483_647)
     content_type: Optional[str] = Field(default="application/octet-stream", max_length=128)
     metadata: Optional[dict[str, object]] = None
     environment: str = "dev"
+    # Opt-in encrypted content store (`gateway.files.content_store_enabled`); rejected in handler when off.
+    content: Optional[str] = Field(default=None, max_length=400_000)
+    content_b64: Optional[str] = Field(default=None, max_length=550_000)
+    file: Optional[object] = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def _reject_raw_file_object(self) -> "GatewayOpenAIFileCreateRequest":
+        if self.file is not None:
+            raise ValueError(
+                "Multipart `file` uploads are not accepted; use content or content_b64 when "
+                "gateway.files.content_store_enabled=true, otherwise register metadata only."
+            )
+        return self
 
 
 class GatewayOpenAIFileResponse(BaseModel):
@@ -2037,6 +2363,7 @@ class GatewayOpenAIFileResponse(BaseModel):
     created_at: int
     request_id: str
     trace_id: str
+    content_stored: bool = False
 
 
 class GatewayOpenAIFilesListResponse(BaseModel):
@@ -2048,6 +2375,21 @@ class GatewayOpenAIFileDeleteResponse(BaseModel):
     id: str
     object: str
     deleted: bool
+    request_id: str
+    trace_id: str
+
+
+class GatewayOpenAIFileContentResponse(BaseModel):
+    id: str
+    object: str = "file.content"
+    filename: str
+    purpose: str
+    bytes: int
+    content_type: str
+    # Registry-only files: binary payloads are never stored or returned.
+    content_available: bool = False
+    content: str = ""
+    media_type: str = "application/json"
     request_id: str
     trace_id: str
 
@@ -2082,6 +2424,59 @@ class GatewayOpenAIBatchDeleteResponse(BaseModel):
     id: str
     object: str
     deleted: bool
+    request_id: str
+    trace_id: str
+
+
+class GatewayOpenAIBatchCancelResponse(BaseModel):
+    id: str
+    object: str
+    status: str
+    request_id: str
+    trace_id: str
+
+
+class GatewayOpenAIBatchCompleteRequest(BaseModel):
+    completed_count: Optional[int] = Field(default=None, ge=0)
+    failed_count: Optional[int] = Field(default=None, ge=0)
+    status: str = Field(default="completed", min_length=1, max_length=32)
+
+
+class GatewayOpenAIBatchCompleteResponse(BaseModel):
+    id: str
+    object: str = "batch"
+    status: str
+    completed_count: int
+    failed_count: int
+    request_id: str
+    trace_id: str
+
+
+class GatewayOpenAIBatchExpireResponse(BaseModel):
+    id: str
+    object: str = "batch"
+    status: str
+    request_id: str
+    trace_id: str
+
+
+class GatewayOpenAIBatchResultItem(BaseModel):
+    id: str
+    custom_id: str
+    status: str
+    model: Optional[str] = None
+    endpoint: Optional[str] = None
+    error: Optional[str] = None
+
+
+class GatewayOpenAIBatchResultsResponse(BaseModel):
+    id: str
+    object: str = "list"
+    status: str
+    format: str = "jsonl"
+    count: int
+    content: str
+    data: list[GatewayOpenAIBatchResultItem] = Field(default_factory=list)
     request_id: str
     trace_id: str
 
@@ -2307,6 +2702,20 @@ class GatewayGovernanceEvidenceExportRequest(BaseModel):
     decision_outcome: Optional[Literal["allow", "deny", "warn"]] = None
     limit_per_action: int = Field(default=100, ge=10, le=500)
     bundle_label: str = Field(default="gateway-governance-evidence", min_length=3, max_length=120)
+    data_classification: Literal["internal", "confidential", "restricted"] = "confidential"
+    retention_days: int = Field(default=90, ge=7, le=2555)
+    classification_owner: str = Field(
+        default="security-ops",
+        min_length=2,
+        max_length=120,
+        description="Accountable owner for the evidence bundle (residual #7).",
+    )
+    approved_sharing_channels: list[str] = Field(
+        default_factory=lambda: ["security-ops", "compliance-review"],
+        min_length=1,
+        max_length=12,
+    )
+    redact_actor_login: bool = False
 
 
 class GatewayGovernanceEvidenceActionSummary(BaseModel):
@@ -2321,6 +2730,12 @@ class GatewayGovernanceEvidenceExportResponse(BaseModel):
     exported_at: str
     export_uri: str
     bundle_label: str
+    data_classification: str
+    classification_owner: str
+    retention_days: int
+    retain_until: str
+    approved_sharing_channels: list[str]
+    redaction_applied: bool
     event_count: int
     action_summaries: list[GatewayGovernanceEvidenceActionSummary]
     events: list[AuditEventResponse]
@@ -2492,6 +2907,25 @@ class SupportedModelUpsertRequest(BaseModel):
     default_binding_id: Optional[str] = None
 
 
+class SupportedModelSeedTrendingRequest(BaseModel):
+    overwrite: bool = False
+    auto_approve: bool = True
+    packs: list[str] = Field(
+        default_factory=lambda: ["trending"],
+        description="Model packs to seed: trending, bedrock, azure, gcp, or all.",
+    )
+
+
+class SupportedModelSeedTrendingResponse(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    pack_size: int
+    overwrite: bool
+    auto_approve: bool
+    packs: list[str] = Field(default_factory=list)
+
+
 class SupportedModelApprovalRequest(BaseModel):
     decision: str = Field(pattern="^(approve|reject)$")
     approval_ticket_ref: str = Field(min_length=1, max_length=128)
@@ -2619,6 +3053,3047 @@ class CostEventResponse(ORMBase):
     output_tokens: int
     estimated_cost_cents: int
     currency: str
+    cache_hit: bool = False
+    properties_json: str = "{}"
+
+
+class CostSessionSummaryItem(BaseModel):
+    session_id: str
+    session_path: Optional[str] = None
+    session_name: Optional[str] = None
+    spend_cents: int
+    event_count: int
+    last_seen_at: datetime
+
+
+class CostSessionListResponse(BaseModel):
+    window_hours: int
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    items: list[CostSessionSummaryItem]
+
+
+class CostSessionTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+
+
+class CostSessionTimeseriesSeries(BaseModel):
+    session_key: str
+    session_id: str
+    session_path: Optional[str] = None
+    session_name: Optional[str] = None
+    spend_cents: int
+    event_count: int
+    points: list[CostSessionTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostSessionTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    path_prefix: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostSessionTimeseriesSeries]
+
+
+class GatewayLogExportCreateRequest(BaseModel):
+    filters: Optional[dict[str, object]] = None
+    requested_data: Optional[list[str]] = None
+    description: Optional[str] = Field(default=None, max_length=512)
+    workspace_id: Optional[str] = Field(default=None, max_length=128)
+
+
+class GatewayLogExportResponse(BaseModel):
+    id: str
+    object: str = "logs.export"
+    status: str
+    description: str = ""
+    workspace_id: Optional[str] = None
+    # Use Any (not object): a field named `object` shadows the builtin in this class body.
+    filters: dict[str, Any] = Field(default_factory=dict)
+    requested_data: list[str] = Field(default_factory=list)
+    row_count: int = 0
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class GatewayLogExportListResponse(BaseModel):
+    object: str = "list"
+    data: list[GatewayLogExportResponse]
+    count: int
+
+
+class GatewayLogExportDownloadResponse(BaseModel):
+    id: str
+    object: str = "logs.export.download"
+    status: str
+    row_count: int
+    media_type: str = "application/x-ndjson"
+    content: str
+    # Auth-required API path (Portkey-style download locator).
+    url: str = ""
+    # Time-limited HMAC signed content path (exp+sig); metadata-only JSONL.
+    signed_url: str = ""
+    expires_at: Optional[int] = None
+
+
+class GatewayLogExportCancelResponse(BaseModel):
+    id: str
+    object: str = "logs.export"
+    status: str
+    row_count: int = 0
+
+
+class GatewayLogExportDeleteResponse(BaseModel):
+    id: str
+    object: str = "logs.export.deleted"
+    deleted: bool = True
+
+
+class CostTagTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostTagTimeseriesSeries(BaseModel):
+    request_tag: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostTagTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostTagTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    tag_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostTagTimeseriesSeries]
+
+
+class CostEndpointTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostEndpointTimeseriesSeries(BaseModel):
+    endpoint_family: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostEndpointTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostEndpointTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    endpoint_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostEndpointTimeseriesSeries]
+
+
+class CostAgentTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostAgentTimeseriesSeries(BaseModel):
+    agent_id: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostAgentTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostAgentTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    agent_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostAgentTimeseriesSeries]
+
+
+class CostEnvironmentTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostEnvironmentTimeseriesSeries(BaseModel):
+    environment: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostEnvironmentTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostEnvironmentTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    environment_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostEnvironmentTimeseriesSeries]
+
+
+class CostOwnerTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostOwnerTimeseriesSeries(BaseModel):
+    owner_scope: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostOwnerTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostOwnerTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    owner_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostOwnerTimeseriesSeries]
+
+
+class CostCurrencyTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostCurrencyTimeseriesSeries(BaseModel):
+    currency: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostCurrencyTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostCurrencyTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    currency_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostCurrencyTimeseriesSeries]
+
+
+class CostProviderTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostProviderTimeseriesSeries(BaseModel):
+    provider: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostProviderTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostProviderTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    provider_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostProviderTimeseriesSeries]
+
+
+class CostTeamTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostTeamTimeseriesSeries(BaseModel):
+    team: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostTeamTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostTeamTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    team_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostTeamTimeseriesSeries]
+
+
+class CostGroupTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostGroupTimeseriesSeries(BaseModel):
+    group: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostGroupTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostGroupTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    group_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostGroupTimeseriesSeries]
+
+
+class CostProjectTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostProjectTimeseriesSeries(BaseModel):
+    project: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostProjectTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostProjectTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    project_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostProjectTimeseriesSeries]
+
+
+class CostFeedbackTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostFeedbackTimeseriesSeries(BaseModel):
+    feedback_state: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostFeedbackTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostFeedbackTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    feedback_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostFeedbackTimeseriesSeries]
+
+
+class CostSessionPathTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostSessionPathTimeseriesSeries(BaseModel):
+    session_path: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostSessionPathTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostSessionPathTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    path_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostSessionPathTimeseriesSeries]
+
+
+class CostSessionNameTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostSessionNameTimeseriesSeries(BaseModel):
+    session_name: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostSessionNameTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostSessionNameTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    name_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostSessionNameTimeseriesSeries]
+
+class CostPromptIdTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostPromptIdTimeseriesSeries(BaseModel):
+    prompt_id: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostPromptIdTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostPromptIdTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    prompt_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostPromptIdTimeseriesSeries]
+
+
+class CostApplicationTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostApplicationTimeseriesSeries(BaseModel):
+    application: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostApplicationTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostApplicationTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    application_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostApplicationTimeseriesSeries]
+
+
+class CostCustomerTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostCustomerTimeseriesSeries(BaseModel):
+    customer: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostCustomerTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostCustomerTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    customer_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostCustomerTimeseriesSeries]
+
+
+class CostDepartmentTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostDepartmentTimeseriesSeries(BaseModel):
+    department: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostDepartmentTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostDepartmentTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    department_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostDepartmentTimeseriesSeries]
+
+
+class CostFeatureTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostFeatureTimeseriesSeries(BaseModel):
+    feature: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostFeatureTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostFeatureTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    feature_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostFeatureTimeseriesSeries]
+
+
+class CostRegionTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostRegionTimeseriesSeries(BaseModel):
+    region: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostRegionTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostRegionTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    region_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostRegionTimeseriesSeries]
+
+
+class CostWorkspaceTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostWorkspaceTimeseriesSeries(BaseModel):
+    workspace: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostWorkspaceTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostWorkspaceTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    workspace_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostWorkspaceTimeseriesSeries]
+
+
+class CostProductTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostProductTimeseriesSeries(BaseModel):
+    product: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostProductTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostProductTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    product_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostProductTimeseriesSeries]
+
+
+class CostServiceTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostServiceTimeseriesSeries(BaseModel):
+    service: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostServiceTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostServiceTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    service_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostServiceTimeseriesSeries]
+
+
+class CostTenantTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostTenantTimeseriesSeries(BaseModel):
+    tenant: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostTenantTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostTenantTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    tenant_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostTenantTimeseriesSeries]
+
+
+class CostChannelTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostChannelTimeseriesSeries(BaseModel):
+    channel: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostChannelTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostChannelTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    channel_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostChannelTimeseriesSeries]
+
+
+class CostCampaignTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostCampaignTimeseriesSeries(BaseModel):
+    campaign: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostCampaignTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostCampaignTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    campaign_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostCampaignTimeseriesSeries]
+
+
+class CostBrandTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostBrandTimeseriesSeries(BaseModel):
+    brand: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostBrandTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostBrandTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    brand_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostBrandTimeseriesSeries]
+
+
+class CostMarketTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostMarketTimeseriesSeries(BaseModel):
+    market: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostMarketTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostMarketTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    market_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostMarketTimeseriesSeries]
+
+
+class CostSegmentTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostSegmentTimeseriesSeries(BaseModel):
+    segment: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostSegmentTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostSegmentTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    segment_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostSegmentTimeseriesSeries]
+
+
+class CostAccountTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostAccountTimeseriesSeries(BaseModel):
+    account: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostAccountTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostAccountTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    account_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostAccountTimeseriesSeries]
+
+
+class CostOrgTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostOrgTimeseriesSeries(BaseModel):
+    org: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostOrgTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostOrgTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    org_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostOrgTimeseriesSeries]
+
+
+class CostCostCenterTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostCostCenterTimeseriesSeries(BaseModel):
+    cost_center: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostCostCenterTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostCostCenterTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    cost_center_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostCostCenterTimeseriesSeries]
+
+
+class CostBusinessUnitTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostBusinessUnitTimeseriesSeries(BaseModel):
+    business_unit: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostBusinessUnitTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostBusinessUnitTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    business_unit_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostBusinessUnitTimeseriesSeries]
+
+
+class CostSiteTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostSiteTimeseriesSeries(BaseModel):
+    site: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostSiteTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostSiteTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    site_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostSiteTimeseriesSeries]
+
+
+class CostSkuTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostSkuTimeseriesSeries(BaseModel):
+    sku: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostSkuTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostSkuTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    sku_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostSkuTimeseriesSeries]
+
+
+class CostLineTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostLineTimeseriesSeries(BaseModel):
+    line: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostLineTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostLineTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    line_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostLineTimeseriesSeries]
+
+
+class CostTierTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostTierTimeseriesSeries(BaseModel):
+    tier: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostTierTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostTierTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    tier_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostTierTimeseriesSeries]
+
+
+class CostStageTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostStageTimeseriesSeries(BaseModel):
+    stage: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostStageTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostStageTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    stage_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostStageTimeseriesSeries]
+
+
+class CostPlatformTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostPlatformTimeseriesSeries(BaseModel):
+    platform: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostPlatformTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostPlatformTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    platform_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostPlatformTimeseriesSeries]
+
+
+class CostDeviceTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostDeviceTimeseriesSeries(BaseModel):
+    device: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostDeviceTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostDeviceTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    device_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostDeviceTimeseriesSeries]
+
+
+class CostClientTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostClientTimeseriesSeries(BaseModel):
+    client: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostClientTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostClientTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    client_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostClientTimeseriesSeries]
+
+
+class CostBrowserTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostBrowserTimeseriesSeries(BaseModel):
+    browser: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostBrowserTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostBrowserTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    browser_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostBrowserTimeseriesSeries]
+
+
+
+class CostReleaseTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostReleaseTimeseriesSeries(BaseModel):
+    release: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostReleaseTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostReleaseTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    release_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostReleaseTimeseriesSeries]
+
+
+
+class CostLocaleTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostLocaleTimeseriesSeries(BaseModel):
+    locale: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostLocaleTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostLocaleTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    locale_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostLocaleTimeseriesSeries]
+
+
+
+class CostCountryTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostCountryTimeseriesSeries(BaseModel):
+    country: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostCountryTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostCountryTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    country_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostCountryTimeseriesSeries]
+
+
+
+class CostOsTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostOsTimeseriesSeries(BaseModel):
+    os: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostOsTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostOsTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    os_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostOsTimeseriesSeries]
+
+
+
+class CostTimezoneTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostTimezoneTimeseriesSeries(BaseModel):
+    timezone: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostTimezoneTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostTimezoneTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    timezone_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostTimezoneTimeseriesSeries]
+
+
+
+class CostLanguageTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostLanguageTimeseriesSeries(BaseModel):
+    language: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostLanguageTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostLanguageTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    language_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostLanguageTimeseriesSeries]
+
+
+
+class CostCityTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostCityTimeseriesSeries(BaseModel):
+    city: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostCityTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostCityTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    city_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostCityTimeseriesSeries]
+
+
+
+class CostContinentTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostContinentTimeseriesSeries(BaseModel):
+    continent: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostContinentTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostContinentTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    continent_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostContinentTimeseriesSeries]
+
+
+
+class CostIspTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostIspTimeseriesSeries(BaseModel):
+    isp: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostIspTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostIspTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    isp_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostIspTimeseriesSeries]
+
+
+class CostAsnTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostAsnTimeseriesSeries(BaseModel):
+    asn: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostAsnTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostAsnTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    asn_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostAsnTimeseriesSeries]
+
+
+
+class CostSdkTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostSdkTimeseriesSeries(BaseModel):
+    sdk: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostSdkTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostSdkTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    sdk_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostSdkTimeseriesSeries]
+
+
+class CostFrameworkTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostFrameworkTimeseriesSeries(BaseModel):
+    framework: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostFrameworkTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostFrameworkTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    framework_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostFrameworkTimeseriesSeries]
+
+
+
+class CostRuntimeTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostRuntimeTimeseriesSeries(BaseModel):
+    runtime: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostRuntimeTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostRuntimeTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    runtime_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostRuntimeTimeseriesSeries]
+
+
+class CostLibraryTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostLibraryTimeseriesSeries(BaseModel):
+    library: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostLibraryTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostLibraryTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    library_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostLibraryTimeseriesSeries]
+
+
+
+class CostHostTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostHostTimeseriesSeries(BaseModel):
+    host: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostHostTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostHostTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    host_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostHostTimeseriesSeries]
+
+
+class CostDatacenterTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostDatacenterTimeseriesSeries(BaseModel):
+    datacenter: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostDatacenterTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostDatacenterTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    datacenter_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostDatacenterTimeseriesSeries]
+
+
+
+class CostAzTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostAzTimeseriesSeries(BaseModel):
+    az: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostAzTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostAzTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    az_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostAzTimeseriesSeries]
+
+
+class CostEdgeTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostEdgeTimeseriesSeries(BaseModel):
+    edge: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostEdgeTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostEdgeTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    edge_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostEdgeTimeseriesSeries]
+
+
+
+class CostColoTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostColoTimeseriesSeries(BaseModel):
+    colo: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostColoTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostColoTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    colo_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostColoTimeseriesSeries]
+
+
+
+
+class CostClusterTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostClusterTimeseriesSeries(BaseModel):
+    cluster: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostClusterTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostClusterTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    cluster_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostClusterTimeseriesSeries]
+
+
+class CostPodTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostPodTimeseriesSeries(BaseModel):
+    pod: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostPodTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostPodTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    pod_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostPodTimeseriesSeries]
+
+
+
+class CostNamespaceTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostNamespaceTimeseriesSeries(BaseModel):
+    namespace: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostNamespaceTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostNamespaceTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    namespace_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostNamespaceTimeseriesSeries]
+
+
+class CostNodeTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostNodeTimeseriesSeries(BaseModel):
+    node: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostNodeTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostNodeTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    node_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostNodeTimeseriesSeries]
+
+
+
+class CostToolTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostToolTimeseriesSeries(BaseModel):
+    tool: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostToolTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostToolTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    tool_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostToolTimeseriesSeries]
+
+
+class CostWorkflowTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostWorkflowTimeseriesSeries(BaseModel):
+    workflow: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostWorkflowTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostWorkflowTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    workflow_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostWorkflowTimeseriesSeries]
+
+
+class CostExperimentTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostExperimentTimeseriesSeries(BaseModel):
+    experiment: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostExperimentTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostExperimentTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    experiment_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostExperimentTimeseriesSeries]
+
+
+class CostVariantTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostVariantTimeseriesSeries(BaseModel):
+    variant: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostVariantTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostVariantTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    variant_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostVariantTimeseriesSeries]
+
+
+class CostDeploymentTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostDeploymentTimeseriesSeries(BaseModel):
+    deployment: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostDeploymentTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostDeploymentTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    deployment_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostDeploymentTimeseriesSeries]
+
+
+class CostVersionTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostVersionTimeseriesSeries(BaseModel):
+    version: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostVersionTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostVersionTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    version_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostVersionTimeseriesSeries]
+
+
+class CostCanaryTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostCanaryTimeseriesSeries(BaseModel):
+    canary: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostCanaryTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostCanaryTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    canary_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostCanaryTimeseriesSeries]
+
+
+class CostShadowTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostShadowTimeseriesSeries(BaseModel):
+    shadow: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostShadowTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostShadowTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    shadow_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostShadowTimeseriesSeries]
+
+
+class CostRolloutTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostRolloutTimeseriesSeries(BaseModel):
+    rollout: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostRolloutTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostRolloutTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    rollout_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostRolloutTimeseriesSeries]
+
+
+class CostRouteTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostRouteTimeseriesSeries(BaseModel):
+    route: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostRouteTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostRouteTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    route_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostRouteTimeseriesSeries]
+
+
+class CostBatchTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostBatchTimeseriesSeries(BaseModel):
+    batch: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostBatchTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostBatchTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    batch_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostBatchTimeseriesSeries]
+
+
+class CostJobTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostJobTimeseriesSeries(BaseModel):
+    job: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostJobTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostJobTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    job_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostJobTimeseriesSeries]
+
+
+
+class CostQueueTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostQueueTimeseriesSeries(BaseModel):
+    queue: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostQueueTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostQueueTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    queue_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostQueueTimeseriesSeries]
+
+
+class CostTopicTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostTopicTimeseriesSeries(BaseModel):
+    topic: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostTopicTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostTopicTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    topic_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostTopicTimeseriesSeries]
+
+
+class CostPipelineTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostPipelineTimeseriesSeries(BaseModel):
+    pipeline: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostPipelineTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostPipelineTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    pipeline_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostPipelineTimeseriesSeries]
+
+
+class CostRunTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostRunTimeseriesSeries(BaseModel):
+    run: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostRunTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostRunTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    run_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostRunTimeseriesSeries]
+
+
+class CostWorkerTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostWorkerTimeseriesSeries(BaseModel):
+    worker: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostWorkerTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostWorkerTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    worker_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostWorkerTimeseriesSeries]
+
+
+class CostSlotTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostSlotTimeseriesSeries(BaseModel):
+    slot: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostSlotTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostSlotTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    slot_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostSlotTimeseriesSeries]
+
+
+class CostTaskTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostTaskTimeseriesSeries(BaseModel):
+    task: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostTaskTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostTaskTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    task_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostTaskTimeseriesSeries]
+
+
+class CostStepTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostStepTimeseriesSeries(BaseModel):
+    step: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostStepTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostStepTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    step_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostStepTimeseriesSeries]
+
+
+class CostReplicaTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostReplicaTimeseriesSeries(BaseModel):
+    replica: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostReplicaTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostReplicaTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    replica_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostReplicaTimeseriesSeries]
+
+
+class CostShardTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostShardTimeseriesSeries(BaseModel):
+    shard: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostShardTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostShardTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    shard_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostShardTimeseriesSeries]
+
+
+class CostPartitionTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostPartitionTimeseriesSeries(BaseModel):
+    partition: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostPartitionTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostPartitionTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    partition_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostPartitionTimeseriesSeries]
+
+
+class CostConsumerTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostConsumerTimeseriesSeries(BaseModel):
+    consumer: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostConsumerTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostConsumerTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    consumer_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostConsumerTimeseriesSeries]
+
+
+class CostProducerTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostProducerTimeseriesSeries(BaseModel):
+    producer: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostProducerTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostProducerTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    producer_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostProducerTimeseriesSeries]
+
+
+class CostGpuTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostGpuTimeseriesSeries(BaseModel):
+    gpu: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostGpuTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostGpuTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    gpu_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostGpuTimeseriesSeries]
+
+
+class CostAcceleratorTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostAcceleratorTimeseriesSeries(BaseModel):
+    accelerator: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostAcceleratorTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostAcceleratorTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    accelerator_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostAcceleratorTimeseriesSeries]
+
+
+class CostCellTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostCellTimeseriesSeries(BaseModel):
+    cell: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostCellTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostCellTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    cell_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostCellTimeseriesSeries]
+
+
+class CostZoneTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostZoneTimeseriesSeries(BaseModel):
+    zone: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostZoneTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostZoneTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    zone_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostZoneTimeseriesSeries]
+
+
+class CostRackTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostRackTimeseriesSeries(BaseModel):
+    rack: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostRackTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostRackTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    rack_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostRackTimeseriesSeries]
+
+
+class CostPoolTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostPoolTimeseriesSeries(BaseModel):
+    pool: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostPoolTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostPoolTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    pool_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostPoolTimeseriesSeries]
+
+
+class CostFleetTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostFleetTimeseriesSeries(BaseModel):
+    fleet: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostFleetTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostFleetTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    fleet_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostFleetTimeseriesSeries]
+
+
+class CostLeaseTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostLeaseTimeseriesSeries(BaseModel):
+    lease: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostLeaseTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostLeaseTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    lease_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostLeaseTimeseriesSeries]
+
+
+class CostQuotaTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostQuotaTimeseriesSeries(BaseModel):
+    quota: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostQuotaTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostQuotaTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    quota_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostQuotaTimeseriesSeries]
+
+
+class CostCapacityTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostCapacityTimeseriesSeries(BaseModel):
+    capacity: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostCapacityTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostCapacityTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    capacity_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostCapacityTimeseriesSeries]
+
+
+class CostReservationTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+
+
+class CostReservationTimeseriesSeries(BaseModel):
+    reservation: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int = 0
+    points: list[CostReservationTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostReservationTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    reservation_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostReservationTimeseriesSeries]
+
+class CostUserSummaryItem(BaseModel):
+    user_id: str
+    spend_cents: int
+    event_count: int
+    session_count: int
+    last_seen_at: datetime
+
+
+class CostUserListResponse(BaseModel):
+    window_hours: int
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    items: list[CostUserSummaryItem]
+
+
+class CostUserTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    session_count: int = 0
+
+
+class CostUserTimeseriesSeries(BaseModel):
+    user_id: str
+    spend_cents: int
+    event_count: int
+    session_count: int = 0
+    points: list[CostUserTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostUserTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    user_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostUserTimeseriesSeries]
+
+
+class CostModelStatsItem(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    model_name: str
+    spend_cents: int
+    event_count: int
+    total_tokens: int
+    last_seen_at: datetime
+
+
+class CostModelStatsResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    window_hours: int
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    items: list[CostModelStatsItem]
+
+
+class CostModelTimeseriesPoint(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class CostModelTimeseriesSeries(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    model_name: str
+    spend_cents: int
+    event_count: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    points: list[CostModelTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostModelTimeseriesResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    model_filter: Optional[str] = None
+    total_spend_cents: int
+    total_tokens: int
+    total_event_count: int
+    count: int
+    series: list[CostModelTimeseriesSeries]
+
+
+class CostRequestItem(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    request_id: str
+    trace_id: Optional[str] = None
+    session_id: Optional[str] = None
+    model_name: str
+    request_tag: Optional[str] = None
+    estimated_cost_cents: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_hit: bool = False
+    user_id: Optional[str] = None
+    session_path: Optional[str] = None
+    property_value: Optional[str] = None
+    rating: Optional[int] = None
+    timestamp: datetime
+
+
+class CostRequestListResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    window_hours: int
+    count: int
+    total_spend_cents: int
+    property_key: Optional[str] = None
+    items: list[CostRequestItem]
+
+
+class CostSessionTreeNode(BaseModel):
+    path: str
+    spend_cents: int
+    event_count: int
+    session_count: int
+    children: list["CostSessionTreeNode"] = Field(default_factory=list)
+
+
+class CostSessionTreeResponse(BaseModel):
+    window_hours: int
+    max_depth: int
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    items: list[CostSessionTreeNode]
+
+
+class CostScoreStatsItem(BaseModel):
+    key: str
+    count: int
+    avg: float
+    min: float
+    max: float
+    spend_cents: int
+
+
+class CostScoreStatsResponse(BaseModel):
+    window_hours: int
+    total_scored_events: int
+    count: int
+    items: list[CostScoreStatsItem]
+
+
+class CostScoreTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    avg: float
+    count: int
+    spend_cents: int
+
+
+class CostScoreTimeseriesSeries(BaseModel):
+    key: str
+    count: int
+    avg: float
+    min: float
+    max: float
+    spend_cents: int
+    points: list[CostScoreTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostScoreTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    score_key_filter: Optional[str] = None
+    total_scored_events: int
+    count: int
+    series: list[CostScoreTimeseriesSeries]
+
+
+class CostRatingTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    avg: float
+    count: int
+    spend_cents: int
+
+
+class CostRatingTimeseriesSeries(BaseModel):
+    rating_label: str
+    count: int
+    avg: float
+    spend_cents: int
+    points: list[CostRatingTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostRatingTimeseriesResponse(BaseModel):
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    rating_filter: Optional[str] = None
+    total_rated_events: int
+    count: int
+    series: list[CostRatingTimeseriesSeries]
+
+
+class CostLatencyTimeseriesPoint(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    hour_start: datetime
+    avg_ms: float
+    p95_ms: float
+    count: int
+    spend_cents: int
+
+
+class CostLatencyTimeseriesSeries(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    model_name: str
+    avg_ms: float
+    p95_ms: float
+    count: int
+    spend_cents: int
+    points: list[CostLatencyTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostLatencyTimeseriesResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    model_filter: Optional[str] = None
+    total_events: int
+    avg_ms: float
+    p95_ms: float
+    count: int
+    series: list[CostLatencyTimeseriesSeries]
+
+
+class CostCacheTimeseriesPoint(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    hour_start: datetime
+    hit_count: int
+    miss_count: int
+    hit_rate: float
+    spend_cents: int
+
+
+class CostCacheTimeseriesSeries(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    model_name: str
+    hit_count: int
+    miss_count: int
+    hit_rate: float
+    spend_cents: int
+    points: list[CostCacheTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostCacheTimeseriesResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    model_filter: Optional[str] = None
+    total_events: int
+    hit_count: int
+    miss_count: int
+    hit_rate: float
+    count: int
+    series: list[CostCacheTimeseriesSeries]
+
+
+class CostPropertyStatsItem(BaseModel):
+    value: str
+    event_count: int
+    spend_cents: int
+
+
+class CostPropertyStatsResponse(BaseModel):
+    window_hours: int
+    property_key: str
+    total_events_with_key: int
+    count: int
+    items: list[CostPropertyStatsItem]
+
+
+class CostPropertyTimeseriesPoint(BaseModel):
+    hour_start: datetime
+    spend_cents: int
+    event_count: int
+
+
+class CostPropertyTimeseriesSeries(BaseModel):
+    value: str
+    spend_cents: int
+    event_count: int
+    points: list[CostPropertyTimeseriesPoint] = Field(default_factory=list)
+
+
+class CostPropertyTimeseriesResponse(BaseModel):
+    property_key: str
+    window_hours: int
+    start_time: datetime
+    end_time: datetime
+    value_filter: Optional[str] = None
+    total_spend_cents: int
+    total_event_count: int
+    count: int
+    series: list[CostPropertyTimeseriesSeries]
 
 
 class CostLiveResponse(BaseModel):
@@ -2698,6 +6173,48 @@ class CostTrackSpendRequest(BaseModel):
     output_tokens: int = Field(default=0, ge=0)
     estimated_cost_cents: int = Field(default=0, ge=0)
     currency: str = Field(default="USD", min_length=1, max_length=8)
+    cache_hit: bool = False
+    user_properties: Optional[dict[str, object]] = None
+
+
+class CostEventFeedbackRequest(BaseModel):
+    """Helicone-style request feedback attached to cost events by request_id."""
+
+    request_id: str = Field(min_length=1, max_length=128)
+    trace_id: Optional[str] = Field(default=None, max_length=128)
+    rating: Optional[int] = Field(default=None, ge=1, le=5)
+    scores: Optional[dict[str, float]] = None
+    comment: Optional[str] = Field(default=None, max_length=2048)
+
+
+class CostEventFeedbackResponse(BaseModel):
+    request_id: str
+    trace_id: Optional[str] = None
+    updated_events: int
+    rating: Optional[int] = None
+    scores: Optional[dict[str, float]] = None
+    comment: Optional[str] = None
+
+
+class CostEventFeedbackItem(BaseModel):
+    cost_event_id: str
+    request_id: str
+    trace_id: Optional[str] = None
+    rating: Optional[int] = None
+    scores: Optional[dict[str, float]] = None
+    comment: Optional[str] = None
+    has_feedback: bool = False
+
+
+class CostEventFeedbackLookupResponse(BaseModel):
+    request_id: str
+    trace_id: Optional[str] = None
+    count: int
+    has_feedback: bool = False
+    rating: Optional[int] = None
+    scores: Optional[dict[str, float]] = None
+    comment: Optional[str] = None
+    events: list[CostEventFeedbackItem] = []
 
 
 class CostPricingCatalogResponse(BaseModel):
@@ -2786,19 +6303,41 @@ class BudgetPolicyResponse(ORMBase):
     session_budget_cents: Optional[int] = None
     status: str
     effective_budget_cents: int = 0
+    current_spend_cents: int = 0
+    hours_spend_cents: int = 0
+    utilization_percent: float = 0.0
+    decision: Optional[str] = None
+    recommended_action: Optional[str] = None
+    soft_alert_active: bool = False
+    temporary_increase_active: bool = False
+
+
+class BudgetPolicyTemporaryIncreaseRequest(BaseModel):
+    increase_cents: int = Field(ge=1)
+    duration_minutes: int = Field(default=60, ge=1, le=60 * 24 * 30)
+    reason: Optional[str] = Field(default=None, max_length=512)
+
+
+class BudgetPolicySoftAlertAcknowledgeRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=512)
 
 
 class CostPolicyEvaluateRequest(BaseModel):
     scope_type: str
     scope_id: str
     window_type: str = "daily"
+    environment: Optional[str] = None
 
 
 class CostPolicyEvaluateResponse(BaseModel):
     scope_type: str
     scope_id: str
     window_type: str = "daily"
+    environment: Optional[str] = None
+    budget_policy_id: Optional[str] = None
+    resolved_budget_scope_type: Optional[str] = None
     spend_cents: int
+    hours_spend_cents: int = 0
     budget_cents: int
     effective_budget_cents: int
     utilization_percent: float
@@ -2823,6 +6362,15 @@ class CostAnomalyResponse(BaseModel):
     observed_cost_cents: int
     threshold_cents: int
     detected_at: datetime
+    budget_policy_id: Optional[str] = None
+    effective_budget_cents: Optional[int] = None
+    utilization_percent: Optional[float] = None
+    recommended_action: Optional[str] = None
+    window_type: Optional[str] = None
+    soft_limit_percent: Optional[float] = None
+    hard_limit_percent: Optional[float] = None
+    hours_spend_cents: Optional[int] = None
+    decision: Optional[str] = None
 
 
 class CostLimitScopeDecision(BaseModel):
@@ -2830,6 +6378,7 @@ class CostLimitScopeDecision(BaseModel):
     scope_id: str
     policy_id: Optional[str] = None
     spend_cents: int
+    hours_spend_cents: int = 0
     budget_cents: int
     effective_budget_cents: int
     utilization_percent: float
@@ -2848,15 +6397,143 @@ class CostLimitEvaluateRequest(BaseModel):
     agent_ids: list[str] = Field(default_factory=list)
     window_type: str = "daily"
     projected_additional_cost_cents: int = 0
+    environment: Optional[str] = None
 
 
 class CostLimitEvaluateResponse(BaseModel):
     actor_id: str
     window_type: str
+    environment: Optional[str] = None
     scopes_evaluated: list[CostLimitScopeDecision]
     aggregated_decision: str
     blocking_scopes: list[str]
     soft_alert_scopes: list[str] = Field(default_factory=list)
+
+
+class CostHierarchyMemberContribution(BaseModel):
+    user_id: str
+    spend_cents: int = 0
+    share_percent: float = 0.0
+
+
+class CostHierarchyScopeItem(BaseModel):
+    scope_type: str
+    scope_id: str
+    member_count: int = 0
+    spend_cents: int = 0
+    tagged_spend_cents: int = 0
+    member_spend_cents: int = 0
+    budget_policy_id: Optional[str] = None
+    budget_cents: Optional[int] = None
+    effective_budget_cents: Optional[int] = None
+    utilization_percent: Optional[float] = None
+    decision: Optional[str] = None
+    recommended_action: Optional[str] = None
+    window_type: Optional[str] = None
+    budget_window_spend_cents: Optional[int] = None
+    hours_spend_cents: Optional[int] = None
+    temporary_increase_cents: int = 0
+    temporary_increase_active: bool = False
+    resolved_budget_scope_type: Optional[str] = None
+    session_budget_cents: Optional[int] = None
+    session_iteration_cap: Optional[int] = None
+    rate_limit_rpm: Optional[int] = None
+    rate_limit_tpm: Optional[int] = None
+    soft_alert_enabled: Optional[bool] = None
+    top_members: list[CostHierarchyMemberContribution] = Field(default_factory=list)
+
+
+class CostHierarchyUserBudget(BaseModel):
+    budget_policy_id: Optional[str] = None
+    budget_cents: Optional[int] = None
+    effective_budget_cents: Optional[int] = None
+    utilization_percent: Optional[float] = None
+    decision: Optional[str] = None
+    recommended_action: Optional[str] = None
+    window_type: Optional[str] = None
+    budget_window_spend_cents: Optional[int] = None
+    hours_spend_cents: Optional[int] = None
+    temporary_increase_cents: int = 0
+    temporary_increase_active: bool = False
+    resolved_budget_scope_type: Optional[str] = None
+    session_budget_cents: Optional[int] = None
+    session_iteration_cap: Optional[int] = None
+    soft_alert_enabled: Optional[bool] = None
+
+
+class CostHierarchyResponse(BaseModel):
+    actor_id: str
+    window_hours: int
+    window_mode: str = "hours"
+    environment: Optional[str] = None
+    user_spend_cents: int
+    user_hours_spend_cents: Optional[int] = None
+    user_budget: Optional[CostHierarchyUserBudget] = None
+    teams: list[CostHierarchyScopeItem] = Field(default_factory=list)
+    groups: list[CostHierarchyScopeItem] = Field(default_factory=list)
+    soft_alert_scopes: list[str] = Field(default_factory=list)
+    blocking_scopes: list[str] = Field(default_factory=list)
+
+
+class CostHierarchyAlertItem(BaseModel):
+    scope_type: str
+    scope_id: str
+    decision: str
+    severity: Optional[str] = None
+    spend_cents: int = 0
+    hours_spend_cents: Optional[int] = None
+    utilization_percent: Optional[float] = None
+    effective_budget_cents: Optional[int] = None
+    budget_policy_id: Optional[str] = None
+    recommended_action: Optional[str] = None
+    window_type: Optional[str] = None
+
+
+class CostHierarchyAlertsResponse(BaseModel):
+    actor_id: str
+    window_hours: int
+    window_mode: str = "hours"
+    environment: Optional[str] = None
+    soft_alert_count: int = 0
+    blocking_count: int = 0
+    soft_alert_scopes: list[str] = Field(default_factory=list)
+    blocking_scopes: list[str] = Field(default_factory=list)
+    alerts: list[CostHierarchyAlertItem] = Field(default_factory=list)
+
+
+class CostHierarchyExplainResponse(BaseModel):
+    scope_type: str
+    scope_id: str
+    window_hours: int
+    window_mode: str = "hours"
+    environment: Optional[str] = None
+    member_count: int = 0
+    spend_cents: int = 0
+    hours_spend_cents: Optional[int] = None
+    tagged_spend_cents: int = 0
+    member_spend_cents: int = 0
+    top_members: list[CostHierarchyMemberContribution] = Field(default_factory=list)
+    budget_policy_id: Optional[str] = None
+    budget_cents: Optional[int] = None
+    effective_budget_cents: Optional[int] = None
+    utilization_percent: Optional[float] = None
+    decision: Optional[str] = None
+    recommended_action: Optional[str] = None
+    soft_limit_percent: Optional[float] = None
+    hard_limit_percent: Optional[float] = None
+    window_type: Optional[str] = None
+    temporary_increase_cents: int = 0
+    temporary_increase_active: bool = False
+    resolved_budget_scope_type: Optional[str] = None
+    projected_window_spend_cents: int = 0
+    historical_window_spend_cents: int = 0
+    projection_basis: Optional[str] = None
+    session_budget_cents: Optional[int] = None
+    session_iteration_cap: Optional[int] = None
+    rate_limit_rpm: Optional[int] = None
+    rate_limit_tpm: Optional[int] = None
+    reasons: list[str] = Field(default_factory=list)
+    owner_scopes_counted: list[str] = Field(default_factory=list)
 
 
 class RouteDraftSubmitRequest(BaseModel):
@@ -3055,6 +6732,10 @@ class ObservabilityTraceEventResponse(BaseModel):
     model_name: Optional[str] = None
     estimated_cost_cents: Optional[int] = None
     environment: Optional[str] = None
+    cache_hit: Optional[bool] = None
+    session_id: Optional[str] = None
+    request_id: Optional[str] = None
+    user_properties: Optional[dict[str, object]] = None
 
 
 class ObservabilityTraceEventsResponse(BaseModel):
@@ -3334,6 +7015,23 @@ class PromptRegistryPromoteResponse(BaseModel):
     missing_variables: list[str]
     approval_required: bool
     approval_ticket: Optional[str] = None
+
+
+class PromptRegistryRenderRequest(BaseModel):
+    variables: dict[str, str] = Field(default_factory=dict)
+    version: Optional[int] = Field(default=None, ge=1)
+    require_all_variables: bool = True
+
+
+class PromptRegistryRenderResponse(BaseModel):
+    prompt_registry_id: str
+    name: str
+    version: int
+    prompt_text: str
+    rendered: str
+    variables_detected: list[str]
+    missing_variables: list[str]
+    variables_applied: dict[str, str]
 
 
 class PromptRegistryItemResponse(ORMBase):
@@ -3715,7 +7413,92 @@ class PlatformOperationalStatusResponse(BaseModel):
     feedback_enabled: bool = Field(description="When false, POST /platform/feedback returns 403.")
     runtime_config_cache: dict = Field(description="Non-secret runtime config cache posture.")
     rate_limit: dict = Field(description="Rate limiter backend posture.")
+    control_plane: Optional[dict] = Field(
+        default=None,
+        description="Cheap CPLI/release-gate advisory for operator banners (engineering-only).",
+    )
 
+class ControlPlanePostureResponse(BaseModel):
+    app_plane: Literal["all", "control", "data"] = Field(
+        description="Process role from APP_PLANE env (all=monolith, control=admin, data=inference)."
+    )
+    isolation_mode: Literal["combined", "process_isolated"] = Field(
+        description="combined when APP_PLANE=all; process_isolated when control or data."
+    )
+    control_schedulers_enabled: bool = Field(
+        description="Whether discovery/orchestration poll loops are active on this process."
+    )
+    env_var: str = Field(description="Environment variable name controlling plane mode.")
+    architecture_targets: dict = Field(description="Mapping of architecture §12 targets to current posture.")
+    policy_generation: Optional[dict] = Field(
+        default=None,
+        description="Desired-state fingerprint of routes/keys/cache policies (shared Postgres).",
+    )
+    peer: Optional[dict] = Field(
+        default=None,
+        description="Opposite-plane peer probe result (DATA_PLANE_PEER_URL / CONTROL_PLANE_PEER_URL).",
+    )
+    drift_status: Optional[str] = Field(
+        default=None,
+        description="Reconcile status: none_combined|in_sync|drift_detected|peer_unreachable|peer_unconfigured|n/a.",
+    )
+    rejection_stats: Optional[dict] = Field(
+        default=None,
+        description="In-process counters for PLANE_ROUTE_REJECTED denials.",
+    )
+    gate: Optional[dict] = Field(
+        default=None,
+        description="Fail-closed gate state (PLANE_FAIL_CLOSED_MODE) for data-plane inference.",
+    )
+    last_reconcile: Optional[dict] = Field(
+        default=None,
+        description="Most recent reconcile snapshot including source and recorded_at_unix.",
+    )
+    drift_events_recent: Optional[list] = Field(
+        default=None,
+        description="Newest drift/reconcile events (durable DB + in-process fallback).",
+    )
+    published_policy_generation: Optional[dict] = Field(
+        default=None,
+        description="Hot-published desired-state fingerprint (Redis and/or plane.policy_generation_json).",
+    )
+    slos: Optional[dict] = Field(
+        default=None,
+        description="Plane SLO scorecard: peer probe latency, generation freshness, on-plane coverage.",
+    )
+    on_plane_coverage: Optional[dict] = Field(
+        default=None,
+        description="On-plane inference coverage scorecard (CostEvents vs off-plane signals).",
+    )
+    notes: str = Field(description="Operator guidance for deploy-time plane isolation.")
+    leadership_summary: Optional[dict] = Field(
+        default=None,
+        description="Slim CPLI / release-gate / promotion-readiness summary (engineering-only).",
+    )
+    desired_observed: Optional[dict] = Field(
+        default=None,
+        description="Desired (spec) vs observed (status) policy generation split + last-known-good.",
+    )
+    contract: Optional[dict] = Field(
+        default=None,
+        description="Versioned control-plane contract and capability inventory.",
+    )
+    control_readonly: Optional[bool] = Field(
+        default=None,
+        description="True when PLANE_CONTROL_READONLY freezes control-plane mutations.",
+    )
+    last_known_good: Optional[dict] = Field(
+        default=None,
+        description="Last-known-good fingerprint recorded on healthy reconcile (continue-on-CP-down narrative).",
+    )
+    leadership_attestation: Optional[dict] = Field(
+        default=None,
+        description="Present when reconcile was called with attest=true (CPLI attestation summary).",
+    )
+    release_gate: Optional[dict] = Field(
+        default=None,
+        description="Present when reconcile was called with evaluate_gate=true (persisted gate summary).",
+    )
 
 class OperatorFeedbackCreateRequest(BaseModel):
     category: str = Field(
@@ -3947,6 +7730,8 @@ class GatewayRagQueryResponse(BaseModel):
     matches: list = Field(default_factory=list)
     match_count: int
     upstream: dict = Field(default_factory=dict)
+    content_guard_decision: Optional[str] = None
+    content_guard_reasons: Optional[list[str]] = None
     trace_id: str
 
 
@@ -4010,6 +7795,35 @@ class OrchestrationFlowApproveRequest(BaseModel):
     decision: str = "approved"
     approval_ticket_ref: Optional[str] = None
     stage_id: Optional[str] = None
+
+
+class OrchestrationFlowPromoteRequest(BaseModel):
+    target_environment: str = Field(default="staging", pattern="^(dev|staging|prod)$")
+    change_ticket_id: Optional[str] = Field(default=None, max_length=128)
+    change_reason: str = Field(default="Environment promotion", max_length=512)
+
+
+class OrchestrationFlowRevisionResponse(BaseModel):
+    revision_id: str
+    flow_id: str
+    version: int
+    flow_name: str
+    description: str
+    status: str
+    environment: str
+    trigger_type: str
+    change_reason: str
+    created_by: str
+    created_at: datetime
+
+
+class OrchestrationFlowRevisionListResponse(BaseModel):
+    data: list[OrchestrationFlowRevisionResponse]
+
+
+class OrchestrationFlowRollbackRequest(BaseModel):
+    version: int = Field(ge=1)
+    change_reason: str = Field(default="Rollback to prior revision", max_length=512)
 
 
 class OrchestrationJitAccessRequestCreateRequest(BaseModel):
@@ -4243,6 +8057,7 @@ class OrchestrationFlowRunResponse(BaseModel):
     step_results_json: str
     error_summary: Optional[str] = None
     execution_state_json: Optional[str] = None
+    webhook_response: Optional[dict] = None
 
 
 class OrchestrationFlowRunListResponse(BaseModel):
@@ -4287,6 +8102,20 @@ class OrchestrationNodeTypeItem(BaseModel):
 class OrchestrationNodeTypesResponse(BaseModel):
     node_types: list[OrchestrationNodeTypeItem]
     policy: dict = Field(default_factory=dict)
+
+
+class OrchestrationLiveReadinessBootstrapRequest(BaseModel):
+    seed_connector_hosts: bool = True
+    enable_non_prod_live: bool = False
+
+
+class OrchestrationLiveReadinessResponse(BaseModel):
+    connector_hosts: dict = Field(default_factory=dict)
+    live_executor: dict = Field(default_factory=dict)
+    non_prod_live_ready: bool = False
+    prod_live_enabled: bool = False
+    recommendations: list[str] = Field(default_factory=list)
+    actions_applied: list[str] = Field(default_factory=list)
 
 
 # ── Gateway Assistants / Fine-tuning / Passthrough ────────────────────────────

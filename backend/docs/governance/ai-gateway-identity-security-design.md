@@ -502,6 +502,9 @@ Use observed gateway activity to suggest downscoping.
 7. `GET /gateway/access-reviews/campaigns/{campaign_id}`
 8. `POST /gateway/jit-requests`
 9. `POST /gateway/jit-requests/{request_id}/approve`
+9a. `GET /gateway/jit-requests` / `GET /gateway/jit-requests/{request_id}` (implemented)
+9b. `POST /gateway/jit-requests/{request_id}/revoke` / `POST /gateway/jit-requests/expire-tick` (implemented)
+9c. `GET/PUT /gateway/jit-decision-notify/config` + `POST /gateway/jit-requests/{id}/notify` + `GET|POST /gateway/jit-actions/{token}` (email/external REST decide; implemented)
 10. `GET /gateway/least-privilege/recommendations`
 11. `POST /gateway/least-privilege/recommendations/{recommendation_id}/apply`
 
@@ -526,10 +529,13 @@ All production-affecting mutations remain guarded by:
 - Per-entitlement review tasks and outcomes.
 
 5. `gateway_jit_access_requests`
-- Temporary grant requests, approver decisions, expiry.
+- Temporary grant requests, approver decisions, expiry, optional owner scope for minted credentials, and `issued_virtual_key_id` linkage.
 
 6. `gateway_least_privilege_recommendations`
 - Recommendation records, confidence, apply status.
+
+7. `virtual_keys.jit_request_id` (implemented)
+- Links short-lived virtual keys minted on JIT approve; inference auto-blocks when the grant or key expiry elapses.
 
 ## Agent Task Contract by Capability
 

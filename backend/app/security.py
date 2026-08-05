@@ -15,10 +15,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.logging_utils import get_logger, sanitize_fields
-from app.models import DirectoryUser, SessionRecord
+from app.models import DirectoryUser, SessionRecord, VirtualKey
 from app.request_context import set_request_actor
 from app.policy_constants import (
     DUAL_APPROVAL_REQUIRED_APPROVER_ROLE_DEFAULT,
+    ROLE_AGENT_OWNER,
     ROLE_MASTER_ADMIN,
     ROLE_PLATFORM_ADMIN,
     ROLE_SUPER_ADMIN,
@@ -40,12 +41,14 @@ _MFA_ENFORCEMENT_OPTIONAL_RAW = (os.getenv("MFA_ENFORCEMENT_OPTIONAL") or "false
 _RUNTIME_ENVIRONMENT = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "dev").strip().lower()
 _MFA_ENFORCEMENT_OPTIONAL = _MFA_ENFORCEMENT_OPTIONAL_RAW and _RUNTIME_ENVIRONMENT in {"dev", "test", "local"}
 _ALLOW_HEADER_ACTOR_AUTH_RAW = (os.getenv("ALLOW_HEADER_ACTOR_AUTH") or "").strip().lower()
+# Enterprise default: header-asserted identity only in local/dev/test.
+# Staging/prod require session tokens unless explicitly opted in (staging only).
 if _ALLOW_HEADER_ACTOR_AUTH_RAW:
     _ALLOW_HEADER_ACTOR_AUTH = _ALLOW_HEADER_ACTOR_AUTH_RAW in {"1", "true", "yes"}
 else:
-    _ALLOW_HEADER_ACTOR_AUTH = _RUNTIME_ENVIRONMENT not in {"prod", "production"}
+    _ALLOW_HEADER_ACTOR_AUTH = _RUNTIME_ENVIRONMENT in {"dev", "test", "local"}
 
-# Never permit header-asserted identities in production.
+# Never permit header-asserted identities in production — even with explicit env override.
 if _RUNTIME_ENVIRONMENT in {"prod", "production"}:
     _ALLOW_HEADER_ACTOR_AUTH = False
 
@@ -194,14 +197,28 @@ def validate_session_secret_configuration() -> None:
 
 
 def validate_runtime_auth_guardrails() -> None:
-    if _RUNTIME_ENVIRONMENT not in {"prod", "production"}:
+    if _RUNTIME_ENVIRONMENT in {"prod", "production"}:
+        if _ALLOW_HEADER_ACTOR_AUTH_RAW in {"1", "true", "yes"}:
+            raise RuntimeError("ALLOW_HEADER_ACTOR_AUTH must remain disabled in production.")
+        if _MFA_ENFORCEMENT_OPTIONAL_RAW:
+            raise RuntimeError("MFA_ENFORCEMENT_OPTIONAL cannot be enabled outside dev/test/local.")
         return
 
-    if _ALLOW_HEADER_ACTOR_AUTH_RAW in {"1", "true", "yes"}:
-        raise RuntimeError("ALLOW_HEADER_ACTOR_AUTH must remain disabled in production.")
-
-    if _MFA_ENFORCEMENT_OPTIONAL_RAW:
-        raise RuntimeError("MFA_ENFORCEMENT_OPTIONAL cannot be enabled outside dev/test/local.")
+    # Staging-like environments: reject accidental header-auth enablement unless
+    # operators also set ALLOW_HEADER_ACTOR_AUTH_STAGING_OVERRIDE=true (migration bridge).
+    if _RUNTIME_ENVIRONMENT not in {"dev", "test", "local"}:
+        staging_override = (os.getenv("ALLOW_HEADER_ACTOR_AUTH_STAGING_OVERRIDE") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if _ALLOW_HEADER_ACTOR_AUTH_RAW in {"1", "true", "yes"} and not staging_override:
+            raise RuntimeError(
+                "ALLOW_HEADER_ACTOR_AUTH is not permitted outside local/dev/test without "
+                "ALLOW_HEADER_ACTOR_AUTH_STAGING_OVERRIDE=true."
+            )
+        if _MFA_ENFORCEMENT_OPTIONAL_RAW:
+            raise RuntimeError("MFA_ENFORCEMENT_OPTIONAL cannot be enabled outside dev/test/local.")
 
 
 def insecure_configuration_warnings() -> list[str]:
@@ -259,6 +276,92 @@ def insecure_configuration_warnings() -> list[str]:
                 )
 
     return warnings
+
+
+def session_signing_rotation_status() -> dict[str, object]:
+    """Runtime posture for session signing key rotation age (RSK-004 /health re-check)."""
+    in_non_dev = _RUNTIME_ENVIRONMENT not in {"dev", "test", "local"}
+    key_ring_configured = bool(_SESSION_TOKEN_SIGNING_KEYS)
+    last_rotated = _SESSION_TOKEN_SIGNING_LAST_ROTATED_AT
+    max_days = int(_SESSION_TOKEN_ROTATION_MAX_DAYS)
+    age_days: int | None = None
+    exceeded = False
+    monitoring_enabled = bool(in_non_dev and key_ring_configured and last_rotated is not None and max_days > 0)
+    if last_rotated is not None:
+        age_days = max(0, (datetime.utcnow() - last_rotated).days)
+        if monitoring_enabled and age_days > max_days:
+            exceeded = True
+    warnings = [
+        warning
+        for warning in insecure_configuration_warnings()
+        if "SESSION_TOKEN_SIGNING" in warning or "SESSION_TOKEN_ROTATION" in warning
+    ]
+    return {
+        "environment": _RUNTIME_ENVIRONMENT,
+        "key_ring_configured": key_ring_configured,
+        "monitoring_enabled": monitoring_enabled,
+        "max_age_days": max_days,
+        "age_days": age_days,
+        "last_rotated_at": last_rotated.isoformat() + "Z" if last_rotated is not None else None,
+        "rotation_age_exceeded": exceeded,
+        "warnings": warnings,
+    }
+
+
+def mfa_optional_posture() -> dict[str, object]:
+    """RSK-002 / AR-001: expose MFA-optional flag posture on /health (no secrets)."""
+    allowed_envs = {"dev", "test", "local"}
+    return {
+        "environment": _RUNTIME_ENVIRONMENT,
+        "raw_flag_set": bool(_MFA_ENFORCEMENT_OPTIONAL_RAW),
+        "effective": bool(_MFA_ENFORCEMENT_OPTIONAL),
+        "allowed_environments": sorted(allowed_envs),
+        "fail_closed_outside_allowed": _RUNTIME_ENVIRONMENT not in allowed_envs,
+        "warnings": [
+            warning for warning in insecure_configuration_warnings() if "MFA_ENFORCEMENT_OPTIONAL" in warning
+        ],
+    }
+
+
+def token_exposure_posture() -> dict[str, object]:
+    """AR-002: expose workload-identity token exposure flag posture on /health (no secrets)."""
+    expose_token_flag = (os.getenv("EXPOSE_WORKLOAD_IDENTITY_ACCESS_TOKEN") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    allowed_envs = {"dev", "test", "local"}
+    effective = expose_token_flag and _RUNTIME_ENVIRONMENT in allowed_envs
+    return {
+        "environment": _RUNTIME_ENVIRONMENT,
+        "raw_flag_set": bool(expose_token_flag),
+        "effective": bool(effective),
+        "allowed_environments": sorted(allowed_envs),
+        "fail_closed_outside_allowed": _RUNTIME_ENVIRONMENT not in allowed_envs,
+        "warnings": [
+            warning
+            for warning in insecure_configuration_warnings()
+            if "EXPOSE_WORKLOAD_IDENTITY_ACCESS_TOKEN" in warning
+        ],
+    }
+
+
+def transport_posture() -> dict[str, object]:
+    """Residual #3: HTTPS/HSTS app-side posture for /health (ingress still operator-owned)."""
+    expect_https = _RUNTIME_ENVIRONMENT not in {"dev", "test", "local"}
+    expect_https_env = (os.getenv("EXPECT_HTTPS") or "").strip().lower() in {"1", "true", "yes"}
+    if expect_https_env:
+        expect_https = True
+    return {
+        "environment": _RUNTIME_ENVIRONMENT,
+        "expect_https": bool(expect_https),
+        "hsts_header_policy": "max-age=63072000; includeSubDomains; preload",
+        "hsts_configured": True,
+        "notes": (
+            "App middleware always sets Strict-Transport-Security. "
+            "Ingress/load-balancer TLS termination must still be validated in staging/prod."
+        ),
+    }
 
 
 @dataclass
@@ -488,66 +591,119 @@ def get_actor_context(
                 },
             )
 
-        session_id = resolve_session_id_from_bearer_token(token.strip())
-        session = db.query(SessionRecord).filter_by(session_id=session_id).first()
-        if not session:
-            logger.error("auth_session_not_found")
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error_code": "AUTHN_SESSION_NOT_FOUND",
-                    "message": "Session token is invalid.",
-                    "remediation_hint": "Issue a session using /auth/sessions and retry.",
-                },
-            )
-        if session.expires_at < datetime.utcnow():
-            logger.error(
-                "auth_session_expired %s",
-                sanitize_fields({"session_id": token.strip(), "actor_id": actor_id}),
-            )
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error_code": "AUTHN_SESSION_EXPIRED",
-                    "message": "Session token has expired.",
-                    "remediation_hint": "Issue a new session and retry.",
-                },
-            )
+        bearer_token = token.strip()
+        session: Optional[SessionRecord] = None
+        try:
+            session_id = resolve_session_id_from_bearer_token(bearer_token)
+            session = db.query(SessionRecord).filter_by(session_id=session_id).first()
+        except HTTPException:
+            session = None
 
-        if session.last_activity_at < datetime.utcnow() - timedelta(minutes=session.idle_timeout_minutes):
-            logger.error(
-                "auth_session_idle_timeout %s",
-                sanitize_fields({"session_id": token.strip(), "actor_id": actor_id}),
+        if session is None:
+            # Portkey-style virtual key bearer: allow inference with the minted key hash.
+            virtual_key = db.query(VirtualKey).filter_by(key_hash=bearer_token).first()
+            if virtual_key is None:
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error_code": "AUTHN_INVALID_TOKEN",
+                        "message": "Session token format is invalid.",
+                        "remediation_hint": "Issue a new session using /auth/sessions and retry.",
+                    },
+                )
+            key_status = str(virtual_key.status or "").strip().lower()
+            if key_status == "blocked":
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "VIRTUAL_KEY_BLOCKED",
+                        "message": f"Virtual key '{virtual_key.key_id}' is blocked.",
+                        "key_id": virtual_key.key_id,
+                    },
+                )
+            expires_at = getattr(virtual_key, "expires_at", None)
+            if expires_at is not None:
+                try:
+                    expired = expires_at <= datetime.utcnow()
+                except TypeError:
+                    expired = True
+                if expired:
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "error_code": "VIRTUAL_KEY_EXPIRED",
+                            "message": f"Virtual key '{virtual_key.key_id}' has expired.",
+                            "key_id": virtual_key.key_id,
+                        },
+                    )
+            # Prefer explicit operator headers in local/dev; otherwise authenticate as agent-owner of the key scope.
+            if _ALLOW_HEADER_ACTOR_AUTH and actor_id and actor_role:
+                pass
+            else:
+                owner_type = str(virtual_key.owner_scope_type or "user").strip().lower() or "user"
+                owner_id = str(virtual_key.owner_scope_id or virtual_key.key_id).strip()
+                actor_id = f"{owner_type}:{owner_id}"
+                actor_role = ROLE_AGENT_OWNER
+            logger.info(
+                "auth_virtual_key_validated %s",
+                sanitize_fields(
+                    {
+                        "actor_id": actor_id,
+                        "actor_role": actor_role,
+                        "key_id": virtual_key.key_id,
+                        "jit_request_id": getattr(virtual_key, "jit_request_id", None),
+                    }
+                ),
             )
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error_code": "AUTHN_SESSION_IDLE_TIMEOUT",
-                    "message": "Session is idle and requires re-authentication.",
-                    "remediation_hint": "Issue a new session token and retry.",
-                },
+        else:
+            if session.expires_at < datetime.utcnow():
+                logger.error(
+                    "auth_session_expired %s",
+                    sanitize_fields({"session_id": bearer_token, "actor_id": actor_id}),
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error_code": "AUTHN_SESSION_EXPIRED",
+                        "message": "Session token has expired.",
+                        "remediation_hint": "Issue a new session and retry.",
+                    },
+                )
+
+            if session.last_activity_at < datetime.utcnow() - timedelta(minutes=session.idle_timeout_minutes):
+                logger.error(
+                    "auth_session_idle_timeout %s",
+                    sanitize_fields({"session_id": bearer_token, "actor_id": actor_id}),
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error_code": "AUTHN_SESSION_IDLE_TIMEOUT",
+                        "message": "Session is idle and requires re-authentication.",
+                        "remediation_hint": "Issue a new session token and retry.",
+                    },
+                )
+
+            actor_id = session.actor_id
+            actor_role = _canonicalize_role(session.actor_role)
+            directory_user = db.query(DirectoryUser).filter_by(user_id=actor_id).first()
+            if directory_user and str(directory_user.role_name or "").strip():
+                directory_role = _canonicalize_role(directory_user.role_name)
+                if directory_role and directory_role != actor_role:
+                    session.actor_role = directory_role
+                    actor_role = directory_role
+            session.last_activity_at = datetime.utcnow()
+
+            mfa_verified = bool(
+                session.mfa_verified_at
+                and session.mfa_verified_at
+                >= datetime.utcnow() - timedelta(minutes=auth_policy.privileged_mfa_reauth_minutes)
             )
-
-        actor_id = session.actor_id
-        actor_role = _canonicalize_role(session.actor_role)
-        directory_user = db.query(DirectoryUser).filter_by(user_id=actor_id).first()
-        if directory_user and str(directory_user.role_name or "").strip():
-            directory_role = _canonicalize_role(directory_user.role_name)
-            if directory_role and directory_role != actor_role:
-                session.actor_role = directory_role
-                actor_role = directory_role
-        session.last_activity_at = datetime.utcnow()
-
-        mfa_verified = bool(
-            session.mfa_verified_at
-            and session.mfa_verified_at
-            >= datetime.utcnow() - timedelta(minutes=auth_policy.privileged_mfa_reauth_minutes)
-        )
-        db.commit()
-        logger.info(
-            "auth_session_validated %s",
-            sanitize_fields({"actor_id": actor_id, "actor_role": actor_role, "user_login": resolve_user_login_for_actor(db, actor_id)}),
-        )
+            db.commit()
+            logger.info(
+                "auth_session_validated %s",
+                sanitize_fields({"actor_id": actor_id, "actor_role": actor_role, "user_login": resolve_user_login_for_actor(db, actor_id)}),
+            )
     else:
         if not _ALLOW_HEADER_ACTOR_AUTH:
             logger.error("auth_header_identity_disabled")

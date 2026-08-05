@@ -26,8 +26,34 @@ This document defines the canonical documentation hierarchy for implementation s
 17. `backend/docs/governance/generic-provider-configuration-review-and-impact-analysis.md`: **Final v1.1 (GOV-GPC-FINAL-001)** — complete classification register, cross-console UI review, consolidated gap register (GAP-GPC + GAP-USP), **full impact analysis (Part 5 §5.1–§5.17)**, multi-lens review, P1 credential bindings design, and operator reference for all cloud AI provider configuration.
 18. `backend/docs/governance/flow-orchestration-notification-impact-analysis.md`: Phase 1 notification channel registry (`gateway.notification_channels_json`), Flow Orchestration `email_send`/`sms_send` nodes, CISO go/no-go for stub vs live send (GOV-FLOW-NOTIFY-001).
 19. `backend/docs/governance/flow-orchestration-iga-impact-analysis.md`: Advanced IGA for orchestration (SoD, staged approval, JIT, certification, entitlement bridge, approval events, explain/posture) (GOV-FLOW-IGA-001).
+20. **Enhancement agent artifacts** (sibling repo `gateway-enhancement-agent`, not committed here): cycle outputs under `artifacts/cycle-XXXX/` or Application Support — `agent_work_order.md`, `doc_sync_checklist.md`, `gap_matrix.json`. Treat work orders as **implementation prompts**, not canonical governance. Inventory and coverage maps in this repo remain authoritative.
 
 If two docs conflict, higher-ranked docs win and lower-ranked docs must be corrected in the same change.
+
+## Enhancement agent and doc sync
+
+The **gateway-enhancement-agent** orchestrator reads this repo as **TARGET_REPO**. It does not replace governance docs here.
+
+| Artifact (agent repo) | Sync expectation |
+|-----------------------|------------------|
+| `agent_work_order.md` | Human/agent implements in TARGET_REPO; close checklist items in same change |
+| `doc_sync_checklist.md` | Must match updates to items 2–3 above when coverage or UI changes |
+| `gap_matrix.json` / `cmp-*` reports | Informational; fix inventory rows (item 2) when closing a gap |
+| Autonomous merge commits | Same PR rules: inventory + coverage map + frontend README when operator surface changes |
+
+When agent or operator closes an `inv-*` or `cmp-*` gap:
+
+1. Update `api-inventory-and-ui-map.md` coverage column (`Gap` → `Partial` / `Full`).
+2. Update `ui-api-design-coverage-map.md` if UI workflow changed.
+3. Update `frontend/README.md` when nav or console behavior changed.
+4. Run `gateway-agent sync-mirror` from agent checkout so background cycles read fresh inventory.
+5. Record substantial slices in this file's delta register below.
+
+**Governance-only** agent changes (paths only under `backend/docs/governance/`) skip gateway pytest in agent validation — still update delta register when parity status changes.
+
+Gap prefixes implemented in agent: `inv-*`, `cmp-*`, `opt-*` (opt disabled by default). No `sec-*` prefix — security via `backend/AGENTS.md` and agent guardrails.
+
+Agent docs: [`../../../../gateway-enhancement-agent/docs/USAGE.md`](../../../../gateway-enhancement-agent/docs/USAGE.md) · TARGET_REPO skill: [`../../../.cursor/skills/gateway-competitor-sdlc/SKILL.md`](../../../.cursor/skills/gateway-competitor-sdlc/SKILL.md)
 
 ## Synchronization Rules
 
@@ -47,6 +73,18 @@ If two docs conflict, higher-ranked docs win and lower-ranked docs must be corre
 
 Implemented in current state:
 
+- Gateway JIT short-lived credentials (GOV-JIT-VK-001): `POST /gateway/jit-requests` accepts `owner_scope_type`/`owner_scope_id`/`mint_virtual_key`; approve mints an expiring `VirtualKey` linked via `jit_request_id`, returns one-time `issued_virtual_key_token`, audits `gateway.jit.virtual_key.mint` / `.revoke`, and auto-blocks on expiry during inference; **list/get/revoke/expire-tick** APIs + JIT Request Queue UI; Routing & Gateway JIT UI + Key Lifecycle JIT column; Python/JS SDK mint/owner/list/revoke/expire helpers; tests in `test_phase0_phase1.py` (mint, skip, deny, bearer inference, revoke, expire-tick).
+- Gateway JIT email + external REST decisions (GOV-JIT-NOTIFY-001): runtime `gateway.jit.decision_notify_json`; `GET/PUT /gateway/jit-decision-notify/config` (dual-approval save); create/notify sends reviewer emails with HMAC-signed approve/deny links (`GET|POST /gateway/jit-actions/{token}`, no session) and POSTs to selected external callbacks and/or custom `external_rest_url` (+ optional credential binding); prod email approve gated by `allow_prod_email_approve` (default false); Access Reviews & JIT **Email & External REST Decisions** UI + queue **Notify**; tests for config dual-approval, email approve/deny, prod gate, replay 409.
+- Providers trending AI pack (GOV-AI-TREND-001): gateway OpenAI-compatible invoke now includes Google Gemini, xAI, DeepSeek, Together, Fireworks, Perplexity (plus existing OpenAI/Anthropic/Groq/Mistral/Cohere/Azure/Cursor); model-id inference for `gemini-*` / `grok-*` / `deepseek-*` / `sonar*`; `POST /providers/models/seed-trending` + Providers Models **Seed trending models**; DeepSeek + `azure-openai` provider ids in UI. Residual: AWS Bedrock remains catalog/credential-oriented (not OpenAI-compat invoke without a custom base URL).
+- Providers cloud hyperscaler packs (GOV-AI-CLOUD-001): expanded seed packs for **AWS Bedrock**, **Azure OpenAI/Foundry**, and **GCP Gemini + Vertex** (`packs=bedrock|azure|gcp|all`); Bedrock chat via boto3 `converse`; Azure classic deployment URLs + api-version; Vertex OpenAI-compat base from `VERTEX_PROJECT`/`VERTEX_LOCATION`; Providers UI seed buttons per pack. Residual: private fine-tunes / unpublished regional SKUs still require manual catalog rows; Bedrock image/embedding-only IDs are cataloged but chat-oriented.
+- Prompt-injection mediation (GOV-PI-001 / GOV-PI-002): heuristic detector (`backend/app/services/prompt_injection_guard.py`) with classic + indirect/tool-exfil patterns; route `prompt_injection_mode` on input-data-policy; platform default `gateway.prompt_injection.default_mode=warn`; live enforcement on `/v1/chat/completions` and `/v1/responses` before entitlement; **RAG ingest/query**, **MCP tool arguments**, and **gateway memory create** screened via shared `evaluate_prompt_injection_text`; retrieved RAG/memory warn hits wrapped as `<<UNTRUSTED_RETRIEVED_CONTENT>>`; Playground/Gateway UI surfaces `content_guard_*`; audits `gateway.prompt_injection.enforce`; tests in `backend/tests/test_prompt_injection_guard.py`. Residual: heuristics are not ML classifiers; novel paraphrases and multi-hop indirect injection remain accepted-bounded.
+- Frontend typography system (GOV-UI-TYPE-001): canonical stacks and modular rem scale in `frontend/fonts.css`; role mapping in `frontend/styles/type-system.css`; login/404/500 aligned to the same tokens; body default 16px; display/body/mono faces self-hosted with `font-display: swap`; spacing rhythm tokens; view-loader skeleton + retry on console fetch failure; nav/tabs consistency in `frontend/styles/nav-tabs.css` (keyboard menus, unified tab chrome, pin/recent strips, redundant gap removal); overall console page polish in `frontend/styles/pages.css` including keyboard shortcuts, go-chords, recent-console search, shell progress, offline banner, silent view prefetch, governed confirm dialog, session-persisted console tabs, copyable operator results, and progressive disclosure (`operator-guide`) with shortened hero copy on Playground, Benchmark & Scan, Routing & Gateway, Flow Studio, and Compliance.
+- Control / data plane isolation foundation: `APP_PLANE=all|control|data` path middleware (`PLANE_ROUTE_REJECTED`), control schedulers gated to control/combined, `GET /health.plane`, `GET /platform/control-plane` with on-plane coverage, Overview Control Plane card, and docker-compose profile `plane-split` (`api-control` / `api-gateway`).
+- Control plane reconcile deepen: policy-generation fingerprint (routes/keys/cache), peer probe via `DATA_PLANE_PEER_URL` / `CONTROL_PLANE_PEER_URL`, drift_status on posture, throttled audit `platform.plane.route_rejected`, UI dual base (`gatewayApiBase` + Plane Split profile).
+- Control plane active reconcile: `POST /platform/control-plane/reconcile`, `GET /platform/control-plane/drift-events`, background `PLANE_DRIFT_WATCHER_*`, optional `PLANE_FAIL_CLOSED_MODE` inference gate (503 `PLANE_FAIL_CLOSED`), QBR `plane_isolation`, Overview Force Reconcile + drift table.
+- Control plane L3 deepen: durable `plane_drift_events` table, hot policy publish (`plane.policy_generation_json` + optional Redis), generation fencing / published_mismatch, plane SLO scorecard on posture (peer latency, generation freshness, on-plane %).
+- Control Plane Leadership Index (CPLI): leadership scorecard/attest/verify; release-gate evaluate + history + CI go/no-go; **promotion readiness** (gate streak via `PLANE_RELEASE_GATE_STREAK_REQUIRED`); signed evidence pack GET/POST mint; reconcile ceremony; ops banner via `GET /platform/operational-status.control_plane`; Overview promotion chips + Mint Evidence Pack; Cost QBR promotion chip; marketing claims remain Honesty-gated.
+- Control-plane best-practice contract (`plane-contract-v2`): desired vs observed, last-known-good, liveness (`/live`) vs readiness (`/ready`), env + audited runtime freeze (`POST .../freeze`), LKG rollback (`POST .../rollback-lkg`), peer ack (explicit; `acked` no longer aliases generation sync), snapshot export/mint/**apply**, Overview Freeze/Unfreeze/Rollback/Ack/Apply Snapshot.
 - Route Drafts: submit/approve/reject/approve-change-window/promote/rollback actions are now exposed in Routing & Gateway.
 - Gateway cache policies now expose exact/semantic mode and similarity-threshold controls in Routing & Gateway, with stats/health surfacing semantic-policy coverage.
 - Providers: workload identity token exchange, trust validation with evidence drilldown, workload/secret health checks, secret lease renewal and inventory, and rotate-via-secret-provider key action are now exposed in Providers.
@@ -60,6 +98,7 @@ Implemented in current state:
 - Routing & Gateway: Memory & Context **Platform Configuration** tunes memory, semantic cache defaults, vector store registry (`/gateway/memory/config`, `gateway.vector_stores_json`) with secret-ref integration via Providers; **inference cache short-circuit** via `gateway.cache.inference_short_circuit_enabled` (default off, encrypted response store, dual-approval to enable in prod); **RAG data plane** via `POST /rag/ingest`, `POST /rag/query`, OpenAI-compatible `GET /v1/vector_stores*` (MCP bridge v1); **live probe** `gateway.vector_stores.live_probe_enabled`; **PII classification** `gateway.memory.pii_classification_enabled` (default off); impact analysis in `memory-context-vector-impact-analysis.md`, `litellm-cache-parity-impact-analysis.md`, and `litellm-rag-parity-impact-analysis.md`.
 - Routing & Gateway: MCP server registry, tool list, and governed tool call workflows are now exposed in the console.
 - Cost: budget policy lifecycle create/list/edit/delete workflows are now exposed in Cost.
+- Cost: fine-grain hierarchy spend with closed-loop remediation — budget list/env hours/`soft_alert_active`/`temporary_increase_active`; one-click temp increase/clear + soft-alert acknowledge (suppresses soft anomalies for the budget window); policy/limits evaluate with environment + hours; anomalies include decision/hours and Evaluate/Temp+/Ack actions; Overview/Hierarchy/Budget tables share Edit+remediation handoffs that preserve environment.
 - Routing & Gateway: gateway-governance PR-1 through PR-4 slices are now implemented (entitlements, NHI inventory/hygiene, access reviews + JIT, and least-privilege recommendations) with synchronized API/UI/docs coverage.
 - Routing & Gateway: least-privilege recommendation apply flow now requires operator decision rationale in UI for stronger CISO/IAM evidence hygiene.
 - Routing & Gateway: gateway governance evidence aggregation/export workflow is now exposed via `POST /gateway/governance/evidence/export`, producing filtered JSON bundles and action-level summaries for security/CISO review.
@@ -155,6 +194,19 @@ Intentional no-audit read/compute endpoints (non-mutating, no privileged decisio
 - `GET /observability/*` — diagnostic readback over existing audit/log data.
 - `GET /governance/ui-coverage` and `GET /governance/ui-coverage/inventory` — read-only governance gap reports for CISO/compliance dashboards; structured info logs only (`governance_ui_coverage_*`), no audit spam.
 - `GET /platform/operational-status` — read-only posture for maintenance/slow thresholds; no audit (banner driver only).
+- `GET /platform/control-plane` — read-only plane isolation + on-plane coverage; structured info logs (`platform_control_plane_posture_served`).
+- `POST /platform/control-plane/reconcile` — audited force reconcile (`platform.plane.reconcile`).
+- `GET /platform/control-plane/drift-events` — read-only drift history; structured info logs (`platform_control_plane_drift_events_served`).
+- `GET /platform/control-plane/contract` — versioned capabilities (`plane-contract-v2`); no audit.
+- `GET /platform/control-plane/ready` — readiness probe (HTTP 503 when not ready); no audit.
+- `GET /platform/control-plane/live` — unauthenticated liveness probe; no audit.
+- `GET /platform/control-plane/snapshot` — GitOps/audit snapshot export; no audit on GET.
+- `POST /platform/control-plane/snapshot` — audited mint (`platform.plane.snapshot`); blocked by control-plane freeze.
+- `POST /platform/control-plane/snapshot/apply` — audited pin restore (`platform.plane.snapshot_apply`); hash required by default.
+- `POST /platform/control-plane/freeze` — audited runtime freeze toggle (`platform.plane.freeze`).
+- `POST /platform/control-plane/rollback-lkg` — audited LKG fence rollback (`platform.plane.rollback_lkg`).
+- `GET /platform/control-plane/peer-ack` — read-only peer ack status.
+- `POST /platform/control-plane/peer-ack` — audited peer ack (`platform.plane.peer_ack`).
 - `GET /platform/feedback/analytics` — read-only aggregate for operator reports; structured info logs (`platform_feedback_analytics_served`).
 
 ## Change Checklist

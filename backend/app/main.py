@@ -1,4 +1,5 @@
 import os
+import time
 from contextlib import asynccontextmanager
 
 import httpx
@@ -40,16 +41,31 @@ from app.routers import (
 from app.runtime_constants import RUNTIME_CONFIG_SECURITY_CORS_ALLOW_ORIGINS_CSV
 from app.services.config_cache import runtime_config_cache
 from app.services.rate_limit import SlidingWindowRateLimiter
+from app.plane_mode import (
+    build_plane_posture,
+    classify_path,
+    path_allowed_on_plane,
+    plane_rejection_payload,
+    resolve_app_plane,
+    should_run_control_schedulers,
+)
 from app.services.discovery_scheduler import start_discovery_scheduler, stop_discovery_scheduler
 from app.services.orchestration_scheduler import start_orchestration_scheduler, stop_orchestration_scheduler
+from app.services.plane_drift_scheduler import start_plane_drift_watcher, stop_plane_drift_watcher
 from app.services.provider_crypto import provider_encryption_warnings, validate_provider_encryption_configuration
 from app.security import (
     insecure_configuration_warnings,
+    mfa_optional_posture,
+    token_exposure_posture,
+    transport_posture,
+    session_signing_rotation_status,
     resolve_request_actor_identity,
     resolve_session_id_from_bearer_token,
     validate_runtime_auth_guardrails,
     validate_session_secret_configuration,
 )
+
+APP_PLANE = resolve_app_plane()
 
 configure_logging()
 logger = get_logger(__name__)
@@ -269,6 +285,8 @@ def _upgrade_cost_event_schema() -> None:
     statements = [
         "ALTER TABLE cost_events ADD COLUMN IF NOT EXISTS request_tag VARCHAR(64)",
         "CREATE INDEX IF NOT EXISTS ix_cost_events_request_tag ON cost_events (request_tag)",
+        "ALTER TABLE cost_events ADD COLUMN IF NOT EXISTS cache_hit BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE cost_events ADD COLUMN IF NOT EXISTS properties_json TEXT NOT NULL DEFAULT '{}'",
     ]
     with engine.begin() as connection:
         for statement in statements:
@@ -389,6 +407,30 @@ def _upgrade_operator_feedback_schema() -> None:
         ")",
         "CREATE INDEX IF NOT EXISTS ix_operator_feedback_status_created ON operator_feedback (status, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_operator_feedback_category_view ON operator_feedback (category, context_view)",
+    ]
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def _upgrade_plane_drift_schema() -> None:
+    statements = [
+        "CREATE TABLE IF NOT EXISTS plane_drift_events ("
+        "event_id VARCHAR(64) PRIMARY KEY,"
+        "recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "app_plane VARCHAR(32) NOT NULL DEFAULT 'all',"
+        "drift_status VARCHAR(64) NOT NULL DEFAULT 'n/a',"
+        "source VARCHAR(64) NOT NULL DEFAULT 'api',"
+        "fingerprint VARCHAR(64),"
+        "peer_fingerprint VARCHAR(64),"
+        "peer_reachable BOOLEAN,"
+        "peer_url VARCHAR(512),"
+        "peer_latency_ms DOUBLE PRECISION,"
+        "published_fingerprint VARCHAR(64),"
+        "metadata_json TEXT NOT NULL DEFAULT '{}'"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_plane_drift_events_recorded ON plane_drift_events (recorded_at)",
+        "CREATE INDEX IF NOT EXISTS ix_plane_drift_events_status_recorded ON plane_drift_events (drift_status, recorded_at)",
     ]
     with engine.begin() as connection:
         for statement in statements:
@@ -551,6 +593,47 @@ def _upgrade_audit_event_schema() -> None:
         "ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS action_context_json TEXT",
         "CREATE INDEX IF NOT EXISTS ix_audit_events_tenant_env_time ON audit_events (tenant_id, environment, timestamp)",
         "CREATE INDEX IF NOT EXISTS ix_audit_events_actor_login_time ON audit_events (actor_login, timestamp)",
+    ]
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def _upgrade_gateway_jit_virtual_key_schema() -> None:
+    statements = [
+        "ALTER TABLE IF EXISTS virtual_keys ADD COLUMN IF NOT EXISTS jit_request_id VARCHAR(64)",
+        "CREATE INDEX IF NOT EXISTS ix_virtual_keys_jit_request ON virtual_keys (jit_request_id)",
+        "ALTER TABLE IF EXISTS gateway_jit_access_requests ADD COLUMN IF NOT EXISTS owner_scope_type VARCHAR(64) NOT NULL DEFAULT 'user'",
+        "ALTER TABLE IF EXISTS gateway_jit_access_requests ADD COLUMN IF NOT EXISTS owner_scope_id VARCHAR(128)",
+        "ALTER TABLE IF EXISTS gateway_jit_access_requests ADD COLUMN IF NOT EXISTS mint_virtual_key BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE IF EXISTS gateway_jit_access_requests ADD COLUMN IF NOT EXISTS issued_virtual_key_id VARCHAR(64)",
+        "CREATE INDEX IF NOT EXISTS ix_gateway_jit_request_issued_key ON gateway_jit_access_requests (issued_virtual_key_id)",
+    ]
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def _upgrade_gateway_log_export_jobs_schema() -> None:
+    statements = [
+        "CREATE TABLE IF NOT EXISTS gateway_log_export_jobs ("
+        "export_id VARCHAR(64) PRIMARY KEY,"
+        "actor_id VARCHAR(128) NOT NULL,"
+        "description VARCHAR(512) NOT NULL DEFAULT '',"
+        "workspace_id VARCHAR(128),"
+        "status VARCHAR(32) NOT NULL DEFAULT 'pending',"
+        "filters_json TEXT NOT NULL DEFAULT '{}',"
+        "requested_data_json TEXT NOT NULL DEFAULT '[]',"
+        "row_count INTEGER NOT NULL DEFAULT 0,"
+        "content_jsonl TEXT NOT NULL DEFAULT '',"
+        "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "started_at TIMESTAMP,"
+        "completed_at TIMESTAMP"
+        ")",
+        "CREATE INDEX IF NOT EXISTS ix_gateway_log_export_jobs_actor_created "
+        "ON gateway_log_export_jobs (actor_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_gateway_log_export_jobs_status_created "
+        "ON gateway_log_export_jobs (status, created_at)",
     ]
     with engine.begin() as connection:
         for statement in statements:
@@ -782,9 +865,20 @@ def _upgrade_browser_security_schema() -> None:
         "ALTER TABLE browser_extension_sessions ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128)",
         "ALTER TABLE browser_extension_sessions ADD COLUMN IF NOT EXISTS environment VARCHAR(64) NOT NULL DEFAULT 'dev'",
         "ALTER TABLE browser_extension_sessions ADD COLUMN IF NOT EXISTS browser_name VARCHAR(64) NOT NULL DEFAULT 'unknown'",
-        # Backwards-compat: old browser_type / platform columns get defaults so they no longer block inserts
-        "ALTER TABLE browser_extension_sessions ALTER COLUMN browser_type SET DEFAULT 'unknown'",
-        "ALTER TABLE browser_extension_sessions ALTER COLUMN platform SET DEFAULT 'unknown'",
+        # Backwards-compat: old browser_type / platform columns get defaults so they no longer block inserts.
+        # Skip when columns are absent (fresh CREATE TABLE above has neither).
+        "DO $$ BEGIN "
+        "IF EXISTS (SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'browser_extension_sessions' "
+        "AND column_name = 'browser_type') THEN "
+        "ALTER TABLE browser_extension_sessions ALTER COLUMN browser_type SET DEFAULT 'unknown'; "
+        "END IF; END $$",
+        "DO $$ BEGIN "
+        "IF EXISTS (SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'browser_extension_sessions' "
+        "AND column_name = 'platform') THEN "
+        "ALTER TABLE browser_extension_sessions ALTER COLUMN platform SET DEFAULT 'unknown'; "
+        "END IF; END $$",
         "ALTER TABLE browser_extension_sessions ADD COLUMN IF NOT EXISTS browser_version VARCHAR(64) NOT NULL DEFAULT ''",
         "ALTER TABLE browser_extension_sessions ADD COLUMN IF NOT EXISTS extension_version VARCHAR(64) NOT NULL DEFAULT ''",
         "ALTER TABLE browser_extension_sessions ADD COLUMN IF NOT EXISTS os_name VARCHAR(64) NOT NULL DEFAULT 'unknown'",
@@ -823,8 +917,13 @@ def _upgrade_browser_security_schema() -> None:
         "ALTER TABLE browser_security_events ADD COLUMN IF NOT EXISTS content_fingerprint VARCHAR(128) NOT NULL DEFAULT ''",
         "ALTER TABLE browser_security_events ADD COLUMN IF NOT EXISTS data_class VARCHAR(64) NOT NULL DEFAULT 'standard'",
         "ALTER TABLE browser_security_events ADD COLUMN IF NOT EXISTS browser_name VARCHAR(64) NOT NULL DEFAULT 'unknown'",
-        # Backwards-compat: old browser_type column (NOT NULL no default) gets a default so it no longer blocks inserts
-        "ALTER TABLE browser_security_events ALTER COLUMN browser_type SET DEFAULT 'unknown'",
+        # Backwards-compat: old browser_type column gets a default only when present.
+        "DO $$ BEGIN "
+        "IF EXISTS (SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'browser_security_events' "
+        "AND column_name = 'browser_type') THEN "
+        "ALTER TABLE browser_security_events ALTER COLUMN browser_type SET DEFAULT 'unknown'; "
+        "END IF; END $$",
         "ALTER TABLE browser_security_events ADD COLUMN IF NOT EXISTS browser_version VARCHAR(64) NOT NULL DEFAULT ''",
         "ALTER TABLE browser_security_events ADD COLUMN IF NOT EXISTS os_name VARCHAR(64) NOT NULL DEFAULT 'unknown'",
         "ALTER TABLE browser_security_events ADD COLUMN IF NOT EXISTS device_type VARCHAR(32) NOT NULL DEFAULT 'unknown'",
@@ -938,8 +1037,11 @@ async def lifespan(_: FastAPI):
         _upgrade_discovery_record_schema()
         _upgrade_browser_security_schema()
         _upgrade_operator_feedback_schema()
+        _upgrade_plane_drift_schema()
         _upgrade_agent_memory_schema()
         _upgrade_gateway_assistants_schema()
+        _upgrade_gateway_log_export_jobs_schema()
+        _upgrade_gateway_jit_virtual_key_schema()
         _upgrade_orchestration_schema()
     else:
         _upgrade_cache_policy_schema()
@@ -953,20 +1055,36 @@ async def lifespan(_: FastAPI):
         _upgrade_discovery_record_schema()
         _upgrade_browser_security_schema()
         _upgrade_operator_feedback_schema()
+        _upgrade_plane_drift_schema()
         _upgrade_agent_memory_schema()
         _upgrade_gateway_assistants_schema()
+        _upgrade_gateway_log_export_jobs_schema()
+        _upgrade_gateway_jit_virtual_key_schema()
         _upgrade_orchestration_schema()
         logger.info(
             "startup_schema_auto_create_skipped %s",
             sanitize_fields({"environment": _runtime_environment()}),
         )
-    start_discovery_scheduler()
-    start_orchestration_scheduler()
+    if should_run_control_schedulers(APP_PLANE):
+        start_discovery_scheduler()
+        start_orchestration_scheduler()
+        logger.info(
+            "control_schedulers_started %s",
+            sanitize_fields({"app_plane": APP_PLANE}),
+        )
+    else:
+        logger.info(
+            "control_schedulers_skipped_data_plane %s",
+            sanitize_fields({"app_plane": APP_PLANE}),
+        )
+    start_plane_drift_watcher()
     try:
         yield
     finally:
-        stop_orchestration_scheduler()
-        stop_discovery_scheduler()
+        stop_plane_drift_watcher()
+        if should_run_control_schedulers(APP_PLANE):
+            stop_orchestration_scheduler()
+            stop_discovery_scheduler()
 
 
 app = FastAPI(
@@ -974,7 +1092,8 @@ app = FastAPI(
     description=(
         "Security-first multi-agent platform API with audited control-plane workflows, "
         "role-based authorization, dual-approval guardrails for sensitive production actions, "
-        "and OpenAI-compatible gateway operations."
+        "and OpenAI-compatible gateway operations. "
+        f"APP_PLANE={APP_PLANE} (all|control|data) selects combined or process-isolated deployment."
     ),
     version="0.1.0",
     docs_url="/docs",
@@ -1062,6 +1181,7 @@ if cors_allow_origins:
 
 rate_limiter = SlidingWindowRateLimiter()
 app.state.rate_limiter = rate_limiter
+app.state.app_plane = APP_PLANE
 
 
 def _rate_limit_actor_identity(request: Request) -> str:
@@ -1181,6 +1301,90 @@ async def ui_polling_rate_limit_middleware(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def plane_isolation_middleware(request: Request, call_next):
+    """Reject cross-plane routes when APP_PLANE is control or data (outermost after CORS)."""
+    if APP_PLANE == "all" or request.method.upper() == "OPTIONS":
+        return await call_next(request)
+    path = request.url.path
+    if path_allowed_on_plane(path, APP_PLANE):
+        # Optional data-plane fail-closed when peer drift/unreachable gate is armed.
+        if APP_PLANE == "data" and classify_path(path) == "data":
+            from app.services.plane_reconcile import inference_allowed_by_gate
+
+            allowed, reason = inference_allowed_by_gate()
+            if not allowed:
+                logger.warning(
+                    "plane_fail_closed_blocked %s",
+                    sanitize_fields({"path": path, "reason": reason}),
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": {
+                            "error_code": "PLANE_FAIL_CLOSED",
+                            "message": "Inference blocked by plane fail-closed gate.",
+                            "reason": reason,
+                            "app_plane": APP_PLANE,
+                            "hint": "Restore peer health / generation sync, or set PLANE_FAIL_CLOSED_MODE=off.",
+                        }
+                    },
+                )
+        return await call_next(request)
+    path_plane = classify_path(path)
+    logger.warning(
+        "plane_route_rejected %s",
+        sanitize_fields({"path": path, "app_plane": APP_PLANE, "path_plane": path_plane}),
+    )
+    try:
+        from app.services.plane_reconcile import (
+            record_plane_rejection,
+            should_audit_plane_rejection,
+        )
+        from app.services.audit import create_audit_event
+
+        stats = record_plane_rejection(path=path, app_plane=APP_PLANE, path_plane=path_plane)
+        if should_audit_plane_rejection(str(stats.get("path_key") or path)):
+            db = SessionLocal()
+            try:
+                create_audit_event(
+                    db,
+                    actor_id="system:plane-isolation",
+                    action_type="platform.plane.route_rejected",
+                    resource_type="plane_route",
+                    resource_id=path[:128],
+                    trace_id=f"plane-reject-{int(time.time())}",
+                    decision_outcome="deny",
+                    policy_version="plane-v1",
+                    actor_role="system",
+                    user_login="system",
+                    action_context={
+                        "app_plane": APP_PLANE,
+                        "path_plane": path_plane,
+                        "method": request.method.upper(),
+                        "path_count": stats.get("path_count"),
+                    },
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.warning(
+                    "plane_rejection_audit_failed %s",
+                    sanitize_fields({"path": path, "app_plane": APP_PLANE}),
+                )
+            finally:
+                db.close()
+    except Exception:
+        logger.warning(
+            "plane_rejection_telemetry_failed %s",
+            sanitize_fields({"path": path}),
+        )
+    return JSONResponse(
+        status_code=404,
+        content=plane_rejection_payload(path=path, plane=APP_PLANE, path_plane=path_plane),
+    )
+
+
 app.include_router(benchmark_scan.router, tags=["Benchmark and Scan"])
 app.include_router(browser_security.router, tags=["Browser Security"])
 app.include_router(agents.router, tags=["Agents"])
@@ -1205,22 +1409,89 @@ app.include_router(orchestration.router, tags=["Flow Orchestration"])
 app.include_router(agentic.router, tags=["Agentic"])
 
 
+_last_session_rotation_alert_unix = 0.0
+_SESSION_ROTATION_ALERT_MIN_INTERVAL_SECONDS = 3600
+
+
 @app.get(
     "/health",
     tags=["Health"],
     summary="Service health",
     description=(
-        "Returns API health status, rate-limiter runtime status, and runtime config cache posture "
-        "(`status`, `ttl_seconds`, `last_refresh`, `active_backend`, `configured_backend`, `degraded`). "
+        "Returns API health status, rate-limiter runtime status, session signing rotation posture, "
+        "MFA-optional / token-exposure posture (RSK-002 / AR-001/002), "
+        "runtime config cache posture "
+        "(`status`, `ttl_seconds`, `last_refresh`, `active_backend`, `configured_backend`, `degraded`), "
+        "and control/data plane isolation posture (`plane.app_plane`, `plane.isolation_mode`). "
         "No secrets are exposed."
     ),
     responses={200: {"description": "Service is reachable; includes dependency posture fields."}},
 )
 def health():
+    from app.database import SessionLocal
+    from app.services.basic_auth_expiry import exception_posture, expire_stale_basic_auth_fallbacks
+    from app.services.plane_reconcile import (
+        compute_policy_generation,
+        gate_state_snapshot,
+        last_reconcile_snapshot,
+        list_drift_events,
+        rejection_stats_snapshot,
+    )
+
     cache_status = runtime_config_cache.runtime_status()
+    rate_status = rate_limiter.runtime_status()
+    # RSK-005: throttled webhook when Redis rate-limit backend is degraded.
+    rate_limiter.maybe_emit_degraded_alert(_emit_security_alert)
+    rotation_status = session_signing_rotation_status()
+    mfa_status = mfa_optional_posture()
+    token_status = token_exposure_posture()
+    transport_status = transport_posture()
+    exception_status: dict = {"auto_disable_supported": True, "active_break_glass": 0}
+    policy_generation = None
+    # Best-effort: auto-disable expired break-glass on health probes (cron can also hit expire-tick).
+    try:
+        db = SessionLocal()
+        try:
+            disabled = expire_stale_basic_auth_fallbacks(db)
+            if disabled:
+                db.commit()
+            exception_status = exception_posture(db)
+            exception_status["auto_disabled_on_probe"] = int(disabled)
+            try:
+                policy_generation = compute_policy_generation(db)
+            except Exception:
+                policy_generation = None
+        finally:
+            db.close()
+    except Exception:
+        exception_status["auto_disabled_on_probe"] = 0
+    # RSK-004: re-check rotation age on every health probe (not only startup).
+    if rotation_status.get("rotation_age_exceeded"):
+        global _last_session_rotation_alert_unix
+        now = time.time()
+        if (now - _last_session_rotation_alert_unix) >= _SESSION_ROTATION_ALERT_MIN_INTERVAL_SECONDS:
+            for warning in rotation_status.get("warnings") or []:
+                logger.warning("insecure_configuration_detected %s", sanitize_fields({"warning": warning}))
+                _emit_security_alert(str(warning))
+            _last_session_rotation_alert_unix = now
+    last = last_reconcile_snapshot()
     return {
         "status": "ok",
-        "rate_limit": rate_limiter.runtime_status(),
+        "plane": build_plane_posture(
+            plane=APP_PLANE,
+            policy_generation=policy_generation,
+            rejection_stats=rejection_stats_snapshot(),
+            gate=gate_state_snapshot(),
+            last_reconcile=last,
+            drift_status=(last or {}).get("drift_status") or (gate_state_snapshot() or {}).get("drift_status"),
+            drift_events_recent=list_drift_events(5),
+        ),
+        "rate_limit": rate_status,
+        "session_signing_rotation": rotation_status,
+        "mfa_optional": mfa_status,
+        "token_exposure": token_status,
+        "transport": transport_status,
+        "exception_posture": exception_status,
         "runtime_config_cache": {
             "status": cache_status["status"],
             "ttl_seconds": cache_status["ttl_seconds"],
