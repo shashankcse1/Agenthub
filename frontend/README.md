@@ -98,7 +98,11 @@ See [.cursor/skills/gateway-competitor-sdlc/SKILL.md](../.cursor/skills/gateway-
 
 3. Open:
 
-   http://127.0.0.1:4173
+   http://127.0.0.1:4173/login.html
+
+4. Detached local stack (API + UI, survives the launching shell):
+
+   ./scripts/startlocal_detached.sh
 
 ## Notes
 
@@ -164,13 +168,15 @@ See [.cursor/skills/gateway-competitor-sdlc/SKILL.md](../.cursor/skills/gateway-
 - CISO/audit evidence bundle export is available as JSON and includes findings, reviewer context, and serialized config state.
 - Agent configurations can be exported/imported as JSON for portable, reviewable change bundles.
 - Backend endpoint access follows existing role checks; use appropriate actor role in the UI context.
-- UI sign-in uses backend credential validation (`POST /auth/login`), sets an httpOnly `gb_session` cookie (`credentials: "include"`), and does **not** persist bearer tokens in `localStorage`. Cookie-authenticated mutations send double-submit CSRF (`gb_csrf` + `X-CSRF-Token`). Production dual-approval prompts for a co-signer password via `POST /auth/approver-session` (second session / `X-Approver-Authorization`).
+- UI sign-in uses backend credential validation (`POST /auth/login`), sets an httpOnly `gb_session` cookie (`credentials: "include"`), and does **not** persist bearer tokens in `localStorage`. A short-lived tab-scoped bearer may bridge login→shell in `sessionStorage` only. Cookie-authenticated mutations send double-submit CSRF (`gb_csrf` + `X-CSRF-Token`). Production dual-approval prompts for a co-signer password via `POST /auth/approver-session` (second session / `X-Approver-Authorization`).
+- **Local same-origin API proxy:** `frontend/scripts/serve_static.py` (and `run_ui.sh` / `startlocal_detached.sh`) reverse-proxies API prefixes to `API_UPSTREAM` (default `http://127.0.0.1:8000`). Login defaults **API Base** to the UI origin (`http://127.0.0.1:4173`) so `gb_session` / `gb_csrf` stay on the console host. Stale `localStorage` values pointing at `:8000` are migrated to same-origin on load. Prefer hard-refresh after stack restarts.
+- Idle/expired/missing sessions (`AUTHN_SESSION_IDLE_TIMEOUT`, `AUTHN_SESSION_EXPIRED`, `AUTHN_REQUIRED`) clear local session markers and redirect to `login.html?reason=…` instead of leaving a signed-in shell with failing Overview cards.
 - Backend enforces password-login lockout policy with runtime-configurable controls (`auth.login.max_failed_attempts`, `auth.login.lockout_minutes`).
 - Playground Studio supports text prompts, voice/video attachments, microphone capture, live stream preview, prompt registry CRUD/version history/rollback, governed prompt promotion with render-preview validation (including production dual-approval headers), trace-linked run feedback, a quality triage queue for low-score outputs, long-window quality analytics rollups by provider/route/model, SLA-tracked quality escalation lifecycle (create/list/acknowledge/resolve/notify), judge/retry actions, route-draft creation, run history browsing, and **historical drill-down** via `GET /playground/runs/{run_id}/detail` (tabbed run/feedback/assessment/audit/actions panels with assess, route-draft, and observability pivot actions).
 - Benchmark & Scan supports benchmark and scan execution, plus filtered history browsing and trend summaries backed by `/benchmarks/runs` and `/scans/runs`.
 - Routing & Gateway supports route policy create/list, priority updates (including request-tag scoped priority), fallback simulation/execution (including request-tag based routing behavior), route optimization, route draft list/history browsing, draft lifecycle actions (submit/approve/reject/change-window/promote/rollback), and key lifecycle management.
 - Routing & Gateway **Policies** tab includes **Runtime Risk Policy** (`GET/PUT /gateway/runtime-risk/config`, `POST /gateway/runtime-risk/evaluate`): score inference by environment/tools/model/endpoint family/agent/input size and optionally warn or block before upstream across chat, responses, embeddings, audio, images, rerank, messages, a2a, and realtime (default disabled / observe; config save requires dual-approval + MFA).
-- Routing & Gateway **Workspace** tab includes **Assistants API** (`/v1/assistants*`, `/v1/threads*`: create assistant, table with env column, thread/message/list/**retrieve thread**/**retrieve run**/run workflow with optional **stream=true** SSE, retrieve + delete with prod dual-approval), **Fine-tuning Jobs** (`/v1/fine_tuning/jobs*`: create/list/retrieve/cancel; **live upstream** when `gateway.fine_tuning.live_enabled` is true, otherwise simulated completion; mode badge + upstream job id in retrieve), and **Passthrough Proxy** (`POST /v1/passthrough`: optional Headers JSON, path allowlist, prod dual-approval). Shared payload panel: `#gatewayPassthroughPayload`. SIEM rule catalog: `GET/POST /observability/siem-rules*`. Governance impact: `backend/docs/governance/litellm-assistants-parity-impact-analysis.md`.
+- Routing & Gateway **Workspace** tab includes **Assistants API** (`/v1/assistants*`, `/v1/threads*`: create assistant, table with env column, thread/message/list/**retrieve thread**/**retrieve run**/run workflow with optional **stream=true** SSE, retrieve + delete with prod dual-approval), **Fine-tuning Jobs** (`/v1/fine_tuning/jobs*`: create/list/retrieve/cancel; **live upstream** when `gateway.fine_tuning.live_enabled` is true, otherwise simulated completion; mode badge + upstream job id in retrieve), and **Passthrough Proxy** (`POST /v1/passthrough`: optional Headers JSON, path allowlist, prod dual-approval). Shared payload panel: `#gatewayPassthroughPayload`. SIEM rule catalog: `GET/POST /observability/siem-rules*`. Governance impact: `backend/docs/governance/ai-gateway-litellm-parity-gap-analysis.md` (assistants/fine-tuning/passthrough rows).
 - Routing & Gateway includes managed baseline system controls for OpenAI-compatible responses (`GET/PUT /gateway/system-instructions`, `GET/PUT /gateway/system-rules`) with scoped rule classification support (`global|user|team|group|owner|actor|agent`).
 - Routing & Gateway includes a Cursor Gateway Integration hub with secret-binding status, operation-family matrix, and quick navigation across Core/Media/Transport/Lifecycle gateway ops panels.
 - Routing & Gateway Cursor integration now points operators to **Providers → Secret Providers → Store Secret Value** for unified secret storage (`db` or external backends) and gateway binding (`GET/PUT/DELETE /gateway/cursor-secret-binding`). Legacy `/gateway/cursor-token` remains API-compatible but deprecated. Generic provider review: `backend/docs/governance/generic-provider-configuration-review-and-impact-analysis.md`. CISO gap analysis: `backend/docs/governance/unified-secret-provider-ciso-gap-analysis.md`.
@@ -260,14 +266,15 @@ See [.cursor/skills/gateway-competitor-sdlc/SKILL.md](../.cursor/skills/gateway-
 
 1. Backend API port defaults to `8000` (change via backend `API_PORT`).
 2. Frontend UI static port defaults to `4173` (change via `UI_PORT`).
-3. In UI, update API Base URL to match backend port (for example `http://127.0.0.1:8001`).
+3. **Local console (recommended):** set API Base to the UI origin (`http://127.0.0.1:4173`) and let `serve_static.py` proxy to the API. Use a direct backend base (for example `http://127.0.0.1:8001`) only for plane-split / custom profiles where the UI proxy is not in path.
+4. Optional `API_UPSTREAM` overrides the UI proxy target (default `http://127.0.0.1:8000`).
 
 ## Default Error Pages
 
-- Not found: `404.html`
-- Service incident: `500.html`
+- Not found: `404.html` (Back to Dashboard → `./`)
+- Service incident guidance: `500.html` (Sign in → `./login.html`, Back to Dashboard → `./`)
 
-These pages provide public-facing fallback guidance for invalid routes and service degradation scenarios.
+These pages provide public-facing fallback guidance for invalid routes and service degradation. On loopback hosts, `500.html` probes `/health` and, when healthy, shows local recovery steps (re-sign-in / same-origin API Base) instead of production incident copy. Opening **Open Incident Guidance** does not mean the API is down.
 
 ## Security Checks
 
@@ -306,7 +313,7 @@ These pages provide public-facing fallback guidance for invalid routes and servi
 The frontend now includes deployment artifacts for production serving without nginx:
 
 - `frontend/Dockerfile`
-- `frontend/scripts/serve_static.py`
+- `frontend/scripts/serve_static.py` (static assets + optional same-origin API reverse proxy; strips `Domain=` from upstream `Set-Cookie`; retries once on upstream connection errors)
 
 The root-level production stack (`docker-compose.production.yml`) builds this image and serves UI on port `4173` by default.
 

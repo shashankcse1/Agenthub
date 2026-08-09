@@ -1,12 +1,12 @@
 # Architecture Document
 
-Date: 2026-06-09 (sync §0 updated 2026-08-08)  
+Date: 2026-06-09 (sync §0 updated 2026-08-08, local auth UX)  
 System: Enterprise Multi-Agent Platform (AgentHub)
 
 ## 0. Product Completion Sync (2026-08-08)
 
 **Verdict:** Designed product lane is **complete** — see `backend/docs/governance/product-completion-status.md`.  
-**Doc sync:** Operator UX deepen (NHI click-to-fill + HMAC probes, Route Draft / Canary / VK auto-route) reflected below and in SoT delta.
+**Doc sync:** Operator UX deepen (NHI click-to-fill + HMAC probes, Route Draft / Canary / VK auto-route) + local same-origin session login (UI API proxy) reflected below and in SoT delta.
 
 1. Program Leader Readiness (LRS **40/40**, band Governed velocity):
 - Attestation `PROG-LRS-2026-08-06` with sustain refresh `last_sustain_on=2026-08-08`.
@@ -29,6 +29,7 @@ System: Enterprise Multi-Agent Platform (AgentHub)
 - Auth explain matrix + single-action simulation (Security console) marked Full in coverage map.
 - Route Draft Browser: status-aware actions + **Recommend Auto-Route**.
 - Canary Lifecycle: **Explain × Auto-Route**; Governance: **VK Auto-Route Policies** list/upsert.
+- Local console auth: same-origin UI→API proxy so `gb_session`/`gb_csrf` bind to `:4173`; idle/expired sessions bounce cleanly to login; incident guidance page distinguishes loopback healthy recovery from production outage copy.
 
 ## 0.1 Prior Delivery Sync (2026-08-02) — Control / data plane
 

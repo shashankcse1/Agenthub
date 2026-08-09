@@ -93,7 +93,14 @@ Custom UI port/host:
 
 1. Backend default API port: 8000.
 2. Frontend default static port: 4173.
-3. If backend port changes (for example 8001), open the UI settings panel and set API Base URL to:
+3. **Recommended local login:** open `http://127.0.0.1:4173/login.html` and keep API Base as the UI origin:
+
+```text
+http://127.0.0.1:4173
+```
+
+   The UI static server proxies API calls to `API_UPSTREAM` (default `http://127.0.0.1:8000`) so session cookies stay same-origin. Detached start: `./scripts/startlocal_detached.sh`.
+4. For plane-split or a custom backend port without the UI proxy, set API Base to the backend (for example):
 
 ```text
 http://127.0.0.1:8001

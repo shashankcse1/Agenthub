@@ -9,10 +9,9 @@ This document defines the canonical documentation hierarchy for implementation s
 1. `backend/docs/governance/documentation-source-of-truth.md` (this file): governance hierarchy and sync rules.
 2. `backend/docs/governance/api-inventory-and-ui-map.md`: endpoint-level truth for route coverage status.
 3. `backend/docs/governance/ui-api-design-coverage-map.md`: domain-level product intent and gap status.
-4. `backend/docs/governance/litellm-parity-roadmap.md`: closed LiteLLM/proxy parity register (sustainment; backlog slices Closed).
-5. `backend/docs/governance/litellm-cache-parity-impact-analysis.md`: Phase 3 inference cache short-circuit (implemented) + deferred cache tracks.
-6. `backend/docs/governance/litellm-rag-parity-impact-analysis.md`: Phase 4 RAG runtime (MCP-first), live probe, and PII hook.
-6a. `backend/docs/governance/litellm-assistants-parity-impact-analysis.md` (GOV-LITELLM-ASSISTANTS-001): Assistants / fine-tuning / passthrough (Closed), auth explain, playground drill-down, compliance export.
+4. `backend/docs/governance/ai-gateway-litellm-parity-gap-analysis.md`: LiteLLM/proxy parity gap analysis (roadmap/impact slice docs folded here; dedicated litellm-* impact files removed).
+5. `backend/docs/governance/ai-gateway-market-best-practices-2026.md` (GOV-AI-MARKET-001): market best-practices checklist and posture surfaces (also listed as 14a).
+6. Reserved — former LiteLLM cache/RAG/assistants impact paths removed; assistants/fine-tuning/passthrough operator notes live in inventory + coverage map + frontend README.
 7. `backend/AGENTS.md`: security and role contract that implementation must preserve.
 8. `backend/docs/governance/agent-delivery-checklist.md`: feature/fix-level implementation evidence template across all architecture lenses.
 9. `backend/docs/security/residual-and-accepted-risk-register.md`: accepted risk and compensating controls.
@@ -101,6 +100,7 @@ Implemented in current state:
 - Security wave-3 (2026-08-08, CC-045): VK `vkh1` at-rest hashing + legacy migrate; rate-limit defaults merge; one-time JIT confirm nonce; route-draft/VK MFA `production` alias; `test_security_hardening_wave3.py`.
 - Security wave-4 (2026-08-08, CC-046): httpOnly `gb_session` + Bearer fallback; `POST /auth/approver-session` second-session prod co-sign; console stops localStorage bearer persistence; `test_security_hardening_wave4.py`.
 - Security wave-5 (2026-08-08, CC-047): CSRF double-submit (`gb_csrf`/`X-CSRF-Token`); IP-pinned outbound HTTP for webhook/probe paths; `test_security_hardening_wave5.py`.
+- Local console cookie-session UX (2026-08-08, CC-046 deepen): UI `serve_static.py` same-origin API proxy (`API_UPSTREAM`); login/shell default API Base to UI origin; migrate stale `:8000` bases; idle/expired/auth-required clear markers + `login.html?reason=…`; `500.html` loopback health probe + Sign in / `./` links; `startlocal_detached.sh`; frontend README + operations-quickstart + coverage Auth notes.
 - Gateway runtime risk (2026-08-08, GOV-GW-RISK-001 / CC-048 deepen): `gateway.runtime_risk_json` policy; `GET/PUT /gateway/runtime-risk/config` (dual-approval + MFA) + `POST /gateway/runtime-risk/evaluate`; pre-upstream enforce on chat/responses/embeddings/audio/images/rerank/messages/a2a/realtime; enriched scoring (endpoint family, agent scope, large input); prod fail-closed on corrupt config; rate limits on `/gateway/runtime-risk/*`; Policies UI; `test_gateway_runtime_risk.py`. Default disabled.
 - Best-practices leadership bootstrap (GOV-AI-MARKET-001 deepen): `POST /gateway/best-practices/leadership-bootstrap` idempotently seeds ordered fallback + health-check route + cache policy; Overview **Raise Leadership Score**; `apply-ranked-fallback` writes canonical `provider_priority` (fixes posture miss). Live credential readiness still requires real env/bindings.
 - CPLI + posture raise deepen: bootstrap also seeds VK/budget; default `enhance_cpli` runs reconcile+attest; inference readiness credits active secret/workload bindings (not only env keys); CPLI fail-closed awards 2/3 on combined when plane-split compose is available.

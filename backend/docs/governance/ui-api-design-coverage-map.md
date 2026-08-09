@@ -59,7 +59,8 @@ Performance posture: tab groups suppress init API storms; auto-refresh pauses wh
 
 Auth/security workflow notes:
 
-- UI now supports credential login via `POST /auth/login`.
+- UI now supports credential login via `POST /auth/login` with httpOnly `gb_session` + CSRF (`gb_csrf` / `X-CSRF-Token`).
+- Local console uses same-origin UI→API proxy (`serve_static.py` / `API_UPSTREAM`) so cookies bind to the UI host; idle/expired sessions redirect to `login.html?reason=…`.
 - UI supports directory user lifecycle with password provisioning and backend lockout policy enforcement.
 - UI supports directory group and team lifecycle workflows plus membership add/list/remove operations.
 - UI supports directory unlock actions for locked or reset-needed users via `POST /auth/directory/users/{user_id}/unlock`.
@@ -84,7 +85,7 @@ Assistants / fine-tuning / passthrough operator notes (Routing & Gateway → Wor
 - **Authz Explain** (Policies tab): preset actions `gateway.assistants.delete`, `gateway.fine_tuning.cancel`, `gateway.passthrough.execute` for pre-flight prod checks.
 - Security console **Auth Explain** form: `POST /auth/authz/explain` with MFA verified toggle for auth-domain simulations.
 - Playground **Run History → drill-down panel:** `GET /playground/runs/{run_id}/detail` tabs (run, feedback, assessment, audit, actions with assess/route-draft/observability pivot).
-- Impact analysis and advanced-case register: `backend/docs/governance/litellm-assistants-parity-impact-analysis.md` (GOV-LITELLM-ASSISTANTS-001).
+- Impact analysis and advanced-case register: `backend/docs/governance/ai-gateway-litellm-parity-gap-analysis.md` (GOV-LITELLM-ASSISTANTS-001 slice).
 
 ## Prioritized Gaps to Close Next
 1. Benchmark/scan historical analytics drill-down: deeper trend segmentation workflows (optional depth; core history/trends already Full).
