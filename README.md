@@ -75,31 +75,38 @@ Canonical status & design:
 - JavaScript: [`sdk/js`](./sdk/js)
 - Publish notes: [`sdk/PUBLISH.md`](./sdk/PUBLISH.md)
 
-## Contributing
+## Community health
+
+| Resource | File |
+| -------- | ---- |
+| README | [README.md](./README.md) (this file) |
+| Code of conduct | [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) |
+| Contributing guidelines | [CONTRIBUTING.md](./CONTRIBUTING.md) |
+| License | [LICENSE](./LICENSE) (Apache-2.0) |
+| Security policy | [SECURITY.md](./SECURITY.md) |
+| Issue templates | [`.github/ISSUE_TEMPLATE/`](./.github/ISSUE_TEMPLATE/) |
+| Pull request template | [`.github/PULL_REQUEST_TEMPLATE.md`](./.github/PULL_REQUEST_TEMPLATE.md) |
 
 We want this project to mature with community help — docs, tests, UI polish, and carefully scoped gateway features.
 
-- Start here: **[CONTRIBUTING.md](./CONTRIBUTING.md)**
-- Security reports: **[SECURITY.md](./SECURITY.md)**
-- Code of conduct: **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)**
-- Good first areas: docs clarity, `frontend/` smoke checks, inventory/coverage sync, SDK examples, unit tests under `backend/tests/`
-
-Please open an issue before large architecture changes. Privileged and security-sensitive paths must follow [backend/AGENTS.md](./backend/AGENTS.md).
+- Good first areas: docs clarity, `frontend/` polish, inventory/coverage sync, SDK examples, `backend/tests/`
+- Open an issue before large architecture changes
+- Privileged paths must follow [backend/AGENTS.md](./backend/AGENTS.md)
 
 ## Visibility & community
 
 If AgentHub helps you:
 
 1. ⭐ Star the repo  
-2. Open a “Show and tell” Discussion or Issue with your use case  
-3. File bugs with repro steps (local ports, API Base, role)  
+2. Open a Discussion or Issue with your use case  
+3. File bugs with the **Bug report** template (ports, API Base, role)  
 4. Share a short demo clip of Flow Studio or Routing & Gateway  
 
-Maintainers: keep Issues enabled, label `good first issue` / `help wanted`, and reply to first-time PRs within a few days when possible.
+Maintainers: keep Issues enabled, label `good first issue` / `help wanted`, enable private vulnerability reporting, and reply to first-time PRs promptly when possible.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](./LICENSE).
+Apache License 2.0 — see [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
 
 ## Disclaimer
 

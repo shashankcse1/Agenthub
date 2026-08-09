@@ -1,16 +1,30 @@
 ## Summary
 
-<!-- Why this change exists; 1–3 bullets -->
+<!-- Why this change exists (1–3 bullets). Focus on outcome, not file lists. -->
+
+-
+
+## Type of change
+
+- [ ] Bug fix
+- [ ] New feature / enhancement
+- [ ] Documentation / community
+- [ ] Tests / CI only
+- [ ] Refactor (no behavior change)
 
 ## Test plan
 
-- [ ] Local smoke (describe commands / UI path)
-- [ ] Targeted tests (`pytest` path or `node --check …`) when code changed
+- [ ] Local smoke path described below
+- [ ] Targeted `pytest` and/or `node --check frontend/app.js` when code changed
 - [ ] Docs updated if operator-facing behavior changed
+
+**How I verified:**
+
+<!-- e.g. ./scripts/startlocal_detached.sh → login → Overview refresh -->
 
 ## Risk / security notes
 
-<!-- Auth, dual-approval, cookies, SSRF, inference allow/deny — or "n/a" -->
+<!-- Auth, dual-approval, cookies/CSRF, SSRF, inference allow/deny — or "n/a" -->
 
 ## Linked issue
 

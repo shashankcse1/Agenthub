@@ -1,8 +1,11 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Security vulnerability
+  - name: Security policy / private vulnerability report
     url: https://github.com/shashankcse1/Agenthub/security/advisories/new
-    about: Report sensitive security issues privately (do not file a public issue).
+    about: Read SECURITY.md and report sensitive issues privately — do not file a public issue.
+  - name: Contributing guidelines
+    url: https://github.com/shashankcse1/Agenthub/blob/main/CONTRIBUTING.md
+    about: How to set up locally and open a pull request.
   - name: Operations quickstart
     url: https://github.com/shashankcse1/Agenthub/blob/main/operations-quickstart.md
     about: Local startup, ports, and production handoff runbook.

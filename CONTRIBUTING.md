@@ -1,82 +1,134 @@
-# Contributing to AgentHub
+# Contributing guidelines
 
-Thanks for helping mature this project. Contributions are welcome for docs, tests, UI clarity, SDKs, and scoped gateway features that stay aligned with the designed product lane.
+Thanks for helping AgentHub mature. This guide explains how to propose changes, run the project locally, and get a pull request reviewed.
 
-## Before you start
+## Table of contents
 
-1. Read the root [README.md](./README.md) and run the local quickstart.
-2. Skim [backend/AGENTS.md](./backend/AGENTS.md) if you touch auth, routing, privileged actions, or inference.
-3. For UI work, check [api-inventory-and-ui-map.md](./backend/docs/governance/api-inventory-and-ui-map.md) and [ui-api-design-coverage-map.md](./backend/docs/governance/ui-api-design-coverage-map.md). Do not invent consoles without inventory rows.
-4. Open an **issue** for anything larger than a small fix so scope stays reviewable.
+- [Code of conduct](#code-of-conduct)
+- [Ways to contribute](#ways-to-contribute)
+- [Good first issues](#good-first-issues)
+- [Development setup](#development-setup)
+- [Making changes](#making-changes)
+- [Pull request process](#pull-request-process)
+- [Documentation expectations](#documentation-expectations)
+- [Design boundaries](#design-boundaries)
+- [Security](#security)
+- [License](#license)
 
-## Good first contributions
+## Code of conduct
 
-| Area | Examples |
-|------|----------|
-| Docs | Clarify quickstart, fix broken links, add screenshots/GIFs to README |
-| Frontend | Accessibility, empty states, copy, `node --check frontend/app.js` after JS edits |
-| Tests | Narrow pytest coverage for an existing endpoint or bug |
-| SDK | Examples, typings, README samples in `sdk/python` / `sdk/js` |
-| DX | Script help text, error messages, issue/PR template tweaks |
+Participation is governed by our [Code of Conduct](./CODE_OF_CONDUCT.md). Be respectful and constructive.
 
-Label ideas for maintainers: `good first issue`, `help wanted`, `docs`, `frontend`, `backend`, `security`.
+## Ways to contribute
 
-## Development loop
+| Kind | Examples |
+| ---- | -------- |
+| Docs | Root README clarity, broken links, screenshots/GIFs, operator runbooks |
+| Frontend | Empty states, a11y, copy, console polish (`frontend/`) |
+| Backend / tests | Narrow `pytest` coverage, bug fixes with repro |
+| SDK | Samples and typings in `sdk/python`, `sdk/js` |
+| Community | Triage issues, improve templates, write good-first tasks |
+
+Open an **issue** before large architecture or new-console work so scope stays reviewable.
+
+## Good first issues
+
+Look for labels:
+
+- `good first issue`
+- `help wanted`
+- `docs`
+
+You can also propose a small task with the **Good first issue suggestion** issue template.
+
+## Development setup
+
+**Prereqs:** Docker (PostgreSQL), Python 3.11+.
 
 ```bash
+git clone https://github.com/shashankcse1/Agenthub.git
+cd Agenthub
 ./scripts/startlocal_detached.sh
-# UI: http://127.0.0.1:4173/login.html  (API Base = same origin)
 ```
 
-Backend tests (from `backend/` with local env loaded as needed):
+1. Open http://127.0.0.1:4173/login.html  
+2. Keep **API Base** as `http://127.0.0.1:4173` (same-origin UI→API proxy)  
+3. Sign in with the Day-0 `admin` user — see [Day-0 hardening](./backend/docs/security/day0-password-and-secrets-hardening.md)
+
+More detail: [README.md](./README.md) · [operations-quickstart.md](./operations-quickstart.md)
+
+### Useful checks
 
 ```bash
-cd backend
-python3 -m pytest -q path/to/test_file.py
-```
+# Backend (narrowest useful path)
+cd backend && python3 -m pytest -q path/to/test_file.py
 
-Frontend syntax check after JS edits:
-
-```bash
+# Frontend JS syntax after editing app.js
 node --check frontend/app.js
 ```
 
-Prefer the **narrowest** useful validation for your change.
+## Making changes
 
-## Pull request checklist
+1. Fork (or branch from `main`)
+2. Create a topic branch: `git checkout -b fix/short-description`
+3. Keep diffs focused — one concern per PR when possible
+4. Match existing style; avoid drive-by refactors
+5. For UI/API work, align with:
+   - [api-inventory-and-ui-map.md](./backend/docs/governance/api-inventory-and-ui-map.md)
+   - [ui-api-design-coverage-map.md](./backend/docs/governance/ui-api-design-coverage-map.md)
+   - [backend/AGENTS.md](./backend/AGENTS.md) for security/role constraints
 
-- [ ] Describes **why** the change exists (not only what files moved)
-- [ ] Linked issue (when applicable)
-- [ ] Docs updated when operator-facing behavior changes (`frontend/README.md`, inventory/coverage, SoT delta for substantial slices)
-- [ ] No secrets committed (`.env`, Keychain dumps, API keys, extension private keys)
-- [ ] Security / least-privilege preserved for auth and privileged routes
-- [ ] Tests or a clear manual smoke path for the touched slice
+Do **not** invent operator consoles without an inventory row.
+
+## Pull request process
+
+1. Fill out the PR template (summary, test plan, risk notes)
+2. Link the related issue (`Fixes #123`)
+3. Ensure CI is green when workflows apply
+4. Request review; respond to feedback with new commits (prefer not force-pushing shared review branches unless asked)
 
 ### PR title style
 
-Follow recent history: short imperative summary focused on outcome.
-
-Examples:
+Short imperative summary of the outcome:
 
 - `Fix same-origin login bounce on local console`
-- `Add pytest coverage for runtime risk evaluate deny path`
-- `Clarify Flow Studio variable-map docs for contributors`
+- `Add pytest coverage for runtime risk deny path`
+- `Clarify Flow Studio variable-map docs`
 
-## Design boundaries (please respect)
+### Review checklist (authors)
 
-**In scope:** governed inference, routes/keys/JIT, Flow Studio, operator evidence, gateway-scoped NHI coexistence APIs, OpenAI-compatible surfaces already in inventory.
+- [ ] Explains **why** the change exists  
+- [ ] Docs updated when operator-facing behavior changes  
+- [ ] No secrets committed  
+- [ ] Privileged paths keep least-privilege / dual-approval behavior  
+- [ ] Tests or a clear manual smoke path for the touched slice  
 
-**Out of scope by design:** enterprise SaaS OAuth crawlers, full IARA into arbitrary apps, competitor product branding in the UI, claims of “zero vulnerabilities” / “fully secure.”
+## Documentation expectations
 
-## Security-sensitive changes
+When you change a workflow:
 
-Report vulnerabilities privately via [SECURITY.md](./SECURITY.md).  
-For code changes that affect auth, dual-approval, cookies/CSRF, SSRF, or inference allow/deny: include abuse-case tests and update the residual risk register when risk posture changes.
+- Update `frontend/README.md` if the operator surface changed  
+- Update inventory + coverage map when API/UI coverage changes  
+- Record substantial slices in `backend/docs/governance/documentation-source-of-truth.md` (delta register)  
 
-## Community norms
+Agent-oriented delivery notes live in [AGENTS.md](./AGENTS.md); humans should still start at the root README.
 
-Be kind and precise. Assume good intent. See [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
+## Design boundaries
+
+**In scope:** governed inference, routes/keys/JIT, Flow Studio, operator evidence, gateway-scoped NHI coexistence, OpenAI-compatible surfaces already inventoried.
+
+**Out of scope by design:**
+
+- Enterprise SaaS OAuth / identity crawlers  
+- Full IARA into arbitrary non-gateway apps  
+- Competitor product branding in the operator UI  
+- Claims of “zero vulnerabilities” or “fully secure”  
+
+## Security
+
+Report vulnerabilities privately — see [SECURITY.md](./SECURITY.md).  
+Do not file public issues for exploitable findings.
 
 ## License
 
-By contributing, you agree that your contributions are licensed under the Apache License 2.0 ([LICENSE](./LICENSE)).
+By contributing, you agree that your contributions are licensed under the Apache License 2.0 — see [LICENSE](./LICENSE).
