@@ -1,357 +1,510 @@
-<section id="agentic" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Readiness Report</h3>
-              <button id="loadAgenticReadinessReport" class="ghost" type="button">Load Report</button>
-            </div>
-            <p id="agenticReadinessResult" class="mono"></p>
-          </article>
+<section id="agentic" class="view runtime-config-view">
+  <article class="card runtime-config-hero">
+    <div class="card-head">
+      <div>
+        <p class="sig-kicker">Readiness plane</p>
+        <h3>Certification plane</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Readiness attested</span></p>
+      </div>
+      <button id="refreshAgenticConsole" class="ghost" type="button">Refresh All</button>
+    </div>
+    <p class="card-lead">Readiness certification, contracts, load tests, and policy auto-tune.</p>
+    <p class="help-copy" data-help-label="About certification plane">Operate readiness certification, contract validation, load testing, and policy auto-tune schedules. Validate contracts, run certifications, exercise load tiers, and govern scheduled optimization with audit-friendly overrides.</p>
+    <p id="agenticConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading agentic inventory…</p>
+    <div class="view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Agentic
+          <input class="view-page-search-input" data-view-search-input type="search" placeholder="Filter readiness, certification, and policy tables" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Contracts</span>
+        <strong>Validated</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Certs</span>
+        <strong>Signed</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Load</span>
+        <strong>Proven</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Tune</span>
+        <strong>Scheduled</strong>
+      </div>
+    </section>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Agentic console sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="readiness">Readiness</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="load-tests">Load Tests</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="policy">Policy</button>
+    </div>
+  </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Contract Validation</h3>
-            </div>
-            <form id="agenticContractValidateForm" class="form-grid">
-              <label>Agent ID<input name="agent_id" required placeholder="agent-001" /></label>
-              <label>Route Policy Snapshot ID<input name="route_policy_snapshot_id" required value="snapshot-default" /></label>
-              <label class="wide-field">Module IDs (comma/newline)<textarea name="module_ids" rows="2" placeholder="module-a,module-b"></textarea></label>
-              <label class="wide-field">Required Capabilities (comma/newline)<textarea name="required_capabilities" rows="2" placeholder="gateway.route.read,secrets.read"></textarea></label>
-              <button type="submit" class="primary">Validate Contract</button>
-            </form>
-            <p id="agenticContractValidateResult" class="mono"></p>
-          </article>
+  <div data-console-panel="overview" class="runtime-console-panel active">
+    <article class="card">
+      <div class="card-head">
+        <h4>How Agentic Readiness Fits Together</h4>
+      </div>
+      <div class="runtime-workflow-steps" aria-label="Recommended agentic readiness workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Validate contracts</strong>
+          <span>Confirm agent module pins, route policy snapshots, and required capabilities before certification.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Run certification</strong>
+          <span>Execute readiness certification against target capacity, multi-region, and cost freshness SLOs.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Exercise load tiers</strong>
+          <span>Run tiered load tests and create execution checkpoints for recovery validation.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>4. Tune and schedule policy</strong>
+          <span>Run auto-tune dry runs and schedule recurring policy optimization with approval gates.</span>
+        </div>
+      </div>
+      <div class="chip-row" aria-label="Jump to agentic workspaces">
+        <button type="button" class="chip" data-console-tab-jump="readiness">Readiness &amp; Certification</button>
+        <button type="button" class="chip" data-console-tab-jump="load-tests">Load Tests &amp; Checkpoints</button>
+        <button type="button" class="chip" data-console-tab-jump="policy">Policy Auto-Tune</button>
+      </div>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Run Readiness Certification</h3>
-            </div>
-            <form id="agenticRunCertificationForm" class="form-grid">
-              <label>Target Capacity<input name="target_capacity" type="number" min="10000" max="1000000" step="1000" value="100000" /></label>
-              <label>
-                Require Multi Region
-                <select name="require_multi_region">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label>Cost Freshness SLO (s)<input name="cost_freshness_slo_seconds" type="number" min="1" max="3600" step="1" value="60" /></label>
-              <button type="submit" class="primary">Run Certification</button>
-            </form>
-            <p id="agenticRunCertificationResult" class="mono"></p>
-            <div class="inline-actions">
-              <button id="loadAgenticCertifications" class="ghost" type="button">Load Certifications</button>
-              <button id="loadLatestAgenticCertification" class="ghost" type="button">Load Latest</button>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Readiness certifications</caption>
-                <thead>
-                  <tr><th>Certification ID</th><th>Target Capacity</th><th>Score</th><th>Certified</th><th>Executed By</th><th>Created</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="agenticCertificationsTable"></tbody>
-              </table>
-            </div>
-          </article>
+  <div data-console-panel="readiness" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Readiness Report</h3>
+        <button id="loadAgenticReadinessReport" class="ghost" type="button">Load Report</button>
+      </div>
+      <p id="agenticReadinessResult" class="mono"></p>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Certification Override and Export</h3>
-            </div>
-            <form id="agenticCertificationActionForm" class="form-grid">
-              <label>Certification ID<input name="certification_id" required placeholder="cert-..." /></label>
-              <label>
-                Action
-                <select name="action">
-                  <option value="export" selected>export</option>
-                  <option value="override">override</option>
-                </select>
-              </label>
-              <label>Reason Code<input name="reason_code" value="controlled risk acceptance" /></label>
-              <button type="submit" class="ghost">Run Certification Action</button>
-            </form>
-            <p id="agenticCertificationActionResult" class="mono"></p>
-            <pre id="agenticCertificationActionDetails" class="mono"></pre>
-          </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Contract Validation</h3>
+        <button id="refreshAgenticContractOptions" type="button" class="ghost">Reload Options</button>
+      </div>
+      <p class="help-copy" data-help-label="About contracts">Use the form for operator picks; encode shows API-ready JSON. Model-scoped contracts can pin a catalog model.</p>
+      <form id="agenticContractValidateForm" class="form-grid agentic-contract-layout">
+        <div class="agentic-contract-decode wide-field">
+          <p class="runtime-subsection-title">Decode — operator form</p>
+          <label>
+            Agent
+            <select name="agent_id" id="agenticContractAgentSelect" required>
+              <option value="" selected disabled>Loading agents…</option>
+            </select>
+          </label>
+          <label>
+            Route policy snapshot
+            <select name="route_policy_snapshot_id" id="agenticContractSnapshotSelect" required>
+              <option value="" selected disabled>Loading route snapshots…</option>
+            </select>
+          </label>
+          <label>
+            Contract basis
+            <select name="contract_basis" id="agenticContractBasis">
+              <option value="inventory" selected>Inventory — modules + route snapshot</option>
+              <option value="model">Model-scoped — also require runtime model</option>
+            </select>
+          </label>
+          <div id="agenticContractModelFields" class="agentic-contract-model-grid wide-field" hidden>
+            <label>
+              AI provider
+              <select name="contract_provider" data-ai-provider-type-select>
+                <option value="" selected disabled>Choose AI provider…</option>
+              </select>
+            </label>
+            <label>
+              Model ID
+              <select name="contract_model" id="agenticContractModelSelect">
+                <option value="" selected disabled>Choose provider first…</option>
+              </select>
+            </label>
+          </div>
+          <label class="wide-field">
+            Module IDs
+            <select name="module_ids" id="agenticContractModuleIds" multiple size="5" required></select>
+          </label>
+          <p class="field-help">Hold Cmd/Ctrl to select multiple registered modules.</p>
+          <label class="wide-field">
+            Required capabilities
+            <select name="required_capabilities" id="agenticContractCapabilities" multiple size="6" required></select>
+          </label>
+          <p class="field-help">Hold Cmd/Ctrl to select multiple capabilities.</p>
+          <button type="submit" class="primary">Validate Contract</button>
+        </div>
+        <div class="agentic-contract-encode wide-field">
+          <p class="runtime-subsection-title">Encode — API payload</p>
+          <label class="wide-field">
+            Contract JSON
+            <textarea id="agenticContractEncode" class="mono" rows="16" spellcheck="false" placeholder='{"agent_name":"…","agent_id":"…","route_policy_snapshot_name":"…","route_policy_snapshot_id":"…"}'></textarea>
+          </label>
+          <div class="inline-actions">
+            <button type="button" id="agenticContractEncodeSync" class="ghost">Form → Encode</button>
+            <button type="button" id="agenticContractDecodeApply" class="ghost">Decode → Form</button>
+          </div>
+        </div>
+      </form>
+      <p id="agenticContractValidateResult" class="mono"></p>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Load Tests and Checkpoints</h3>
-            </div>
-            <form id="agenticLoadTestRunForm" class="form-grid">
-              <label>
-                Tier
-                <select name="tier">
-                  <option value="tier1">tier1</option>
-                  <option value="tier2">tier2</option>
-                  <option value="tier3" selected>tier3</option>
-                </select>
-              </label>
-              <label>Target Capacity<input name="target_capacity" type="number" min="10000" max="1000000" step="1000" value="100000" /></label>
-              <label>Expected Concurrency<input name="expected_concurrency" type="number" min="1" max="200000" step="1" value="1200" /></label>
-              <label>Expected RPS<input name="expected_rps" type="number" min="1" max="500000" step="1" value="4200" /></label>
-              <label>Observed Peak Concurrency<input name="observed_peak_concurrency" type="number" min="0" max="200000" step="1" value="1250" /></label>
-              <label>Observed Peak RPS<input name="observed_peak_rps" type="number" min="0" max="500000" step="1" value="4100" /></label>
-              <label>
-                Degradation Test Pass
-                <select name="degradation_test_pass">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label>
-                Recovery Test Pass
-                <select name="recovery_test_pass">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label>
-                Compliance Continuity Pass
-                <select name="compliance_continuity_pass">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <div class="inline-row">
-                <button type="submit" class="primary">Run Load Test</button>
-                <button id="loadLatestAgenticLoadTest" type="button" class="ghost">Load Latest Test</button>
-              </div>
-            </form>
-            <form id="agenticCheckpointCreateForm" class="form-grid">
-              <label>Session ID<input name="session_id" required value="agentic-session-1" /></label>
-              <label>Agent ID<input name="agent_id" required value="agent-001" /></label>
-              <label>Stage Name<input name="stage_name" required value="pre-deploy" /></label>
-              <label class="wide-field">State Payload<input name="state_payload" required value='{"route":"support","state":"checkpoint"}' /></label>
-              <button type="submit" class="ghost">Create Checkpoint</button>
-            </form>
-            <form id="agenticCheckpointActionForm" class="form-grid">
-              <label>Session ID<input name="session_id" placeholder="agentic-session-1" /></label>
-              <label>Checkpoint ID<input name="checkpoint_id" placeholder="ckpt-..." /></label>
-              <label>Resume Reason<input name="reason_code" value="operator-approved recovery" /></label>
-              <div class="inline-row">
-                <button id="loadAgenticCheckpoints" type="button" class="ghost">Load Checkpoints</button>
-                <button id="resumeAgenticCheckpoint" type="button" class="ghost">Resume Checkpoint</button>
-              </div>
-            </form>
-            <p id="agenticLoadTestResult" class="mono"></p>
-            <p id="agenticCheckpointResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Load test runs</caption>
-                <thead>
-                  <tr><th>Run ID</th><th>Tier</th><th>Target</th><th>Peak Concurrency</th><th>Peak RPS</th><th>Passed</th><th>Executed By</th><th>Created</th></tr>
-                </thead>
-                <tbody id="agenticLoadTestsTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Execution checkpoints</caption>
-                <thead>
-                  <tr><th>Checkpoint ID</th><th>Session</th><th>Agent</th><th>Stage</th><th>Status</th><th>Resume Count</th><th>Created By</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="agenticCheckpointsTable"></tbody>
-              </table>
-            </div>
-          </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Run Readiness Certification</h3>
+      </div>
+      <p class="field-help">Requires Auditor role and MFA Verified in Session Context.</p>
+      <form id="agenticRunCertificationForm" class="form-grid">
+        <label>Target Capacity<input name="target_capacity" type="number" min="10000" max="1000000" step="1000" value="100000" /></label>
+        <label>
+          Require Multi Region
+          <select name="require_multi_region">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label>Cost Freshness SLO (s)<input name="cost_freshness_slo_seconds" type="number" min="1" max="3600" step="1" value="60" /></label>
+        <button type="submit" class="primary">Run Certification</button>
+      </form>
+      <p id="agenticRunCertificationResult" class="mono"></p>
+      <div class="inline-actions">
+        <button id="loadAgenticCertifications" class="ghost" type="button">Load Certifications</button>
+        <button id="loadLatestAgenticCertification" class="ghost" type="button">Load Latest</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Readiness certifications</caption>
+          <thead>
+            <tr><th>Certification ID</th><th>Target Capacity</th><th>Score</th><th>Certified</th><th>Executed By</th><th>Created</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="agenticCertificationsTable"></tbody>
+        </table>
+      </div>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Policy Auto Tune</h3>
-            </div>
-            <form id="agenticPolicyAutoTuneForm" class="form-grid">
-              <label>Environment<input name="environment" value="prod" /></label>
-              <label>
-                Optimize For
-                <select name="optimize_for">
-                  <option value="balanced" selected>balanced</option>
-                  <option value="cost">cost</option>
-                  <option value="latency">latency</option>
-                </select>
-              </label>
-              <label>Max Routes<input name="max_routes" type="number" min="1" max="1000" step="1" value="10" /></label>
-              <label>
-                Dry Run
-                <select name="dry_run">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <button type="submit" class="primary">Run Auto Tune</button>
-            </form>
-            <p id="agenticPolicyAutoTuneResult" class="mono"></p>
-          </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Certification Override and Export</h3>
+      </div>
+      <p class="field-help">Export uses Auditor role. Override requires Release Manager + MFA + dual approval (Approver Role/ID).</p>
+      <form id="agenticCertificationActionForm" class="form-grid">
+        <label>Certification ID<input name="certification_id" required placeholder="cert-..." /></label>
+        <label>
+          Action
+          <select name="action">
+            <option value="export" selected>export</option>
+            <option value="override">override</option>
+          </select>
+        </label>
+        <label>Reason Code<input name="reason_code" value="controlled risk acceptance" /></label>
+        <label>Approver Role<input name="approver_role" placeholder="Security Approver" value="Security Approver" /></label>
+        <label>Approver ID<input name="approver_id" placeholder="sec-approver-1" /></label>
+        <button type="submit" class="ghost">Run Certification Action</button>
+      </form>
+      <p id="agenticCertificationActionResult" class="mono"></p>
+      <pre id="agenticCertificationActionDetails" class="mono"></pre>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Policy Schedules</h3>
-              <div class="inline-actions">
-                <button id="loadPolicySchedules" class="ghost" type="button">Load Schedules</button>
-                <button id="loadPolicyScheduleSummary" class="ghost" type="button">Load Summary</button>
-              </div>
-            </div>
-            <form id="policyScheduleCreateForm" class="form-grid">
-              <label>Name<input name="name" required placeholder="nightly-prod-optimizer" /></label>
-              <label>Environment<input name="environment" value="prod" /></label>
-              <label>
-                Optimize For
-                <select name="optimize_for">
-                  <option value="balanced" selected>balanced</option>
-                  <option value="cost">cost</option>
-                  <option value="latency">latency</option>
-                </select>
-              </label>
-              <label>Max Routes<input name="max_routes" type="number" min="1" max="1000" step="1" value="10" /></label>
-              <label>Window Start UTC<input name="window_start_hour_utc" type="number" min="0" max="23" step="1" value="0" /></label>
-              <label>Window End UTC<input name="window_end_hour_utc" type="number" min="0" max="23" step="1" value="0" /></label>
-              <label>Max Changes w/o Approval<input name="max_changes_without_approval" type="number" min="0" max="1000" step="1" value="3" /></label>
-              <label>
-                Enabled
-                <select name="enabled">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <button type="submit" class="primary">Create Schedule</button>
-            </form>
-            <form id="policyScheduledOptimizeForm" class="form-grid">
-              <label>Environment<input name="environment" value="prod" /></label>
-              <label>
-                Optimize For
-                <select name="optimize_for">
-                  <option value="balanced" selected>balanced</option>
-                  <option value="cost">cost</option>
-                  <option value="latency">latency</option>
-                </select>
-              </label>
-              <label>Max Routes<input name="max_routes" type="number" min="1" max="1000" step="1" value="10" /></label>
-              <label>Window Start UTC<input name="window_start_hour_utc" type="number" min="0" max="23" step="1" value="0" /></label>
-              <label>Window End UTC<input name="window_end_hour_utc" type="number" min="0" max="23" step="1" value="0" /></label>
-              <label>Max Changes w/o Approval<input name="max_changes_without_approval" type="number" min="0" max="1000" step="1" value="3" /></label>
-              <label>
-                Dry Run
-                <select name="dry_run">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label>Approval Token<input name="approval_token" placeholder="optional approval token" /></label>
-              <button type="submit" class="ghost">Run Scheduled Optimize</button>
-            </form>
-            <form id="policyScheduleSummaryFilters" class="form-grid">
-              <label>Environment<input name="environment" placeholder="Optional" /></label>
-              <label>
-                Optimize For
-                <select name="optimize_for">
-                  <option value="" selected>all</option>
-                  <option value="balanced">balanced</option>
-                  <option value="cost">cost</option>
-                  <option value="latency">latency</option>
-                </select>
-              </label>
-              <label>
-                Enabled
-                <select name="enabled">
-                  <option value="" selected>any</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label>
-                Dual Approval Ready
-                <select name="dual_approval_ready">
-                  <option value="" selected>any</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <button type="submit" class="ghost">Apply Summary Filters</button>
-            </form>
-            <form id="policyScheduleUpdateForm" class="form-grid">
-              <label>Job ID<input name="job_id" required placeholder="sched-..." /></label>
-              <label>Name<input name="name" placeholder="Optional" /></label>
-              <label>Environment<input name="environment" placeholder="Optional" /></label>
-              <label>
-                Optimize For
-                <select name="optimize_for">
-                  <option value="" selected>unchanged</option>
-                  <option value="balanced">balanced</option>
-                  <option value="cost">cost</option>
-                  <option value="latency">latency</option>
-                </select>
-              </label>
-              <label>Max Routes<input name="max_routes" type="number" min="1" max="1000" step="1" placeholder="Optional" /></label>
-              <label>Window Start UTC<input name="window_start_hour_utc" type="number" min="0" max="23" step="1" placeholder="Optional" /></label>
-              <label>Window End UTC<input name="window_end_hour_utc" type="number" min="0" max="23" step="1" placeholder="Optional" /></label>
-              <label>Max Changes w/o Approval<input name="max_changes_without_approval" type="number" min="0" max="1000" step="1" placeholder="Optional" /></label>
-              <label>
-                Enabled
-                <select name="enabled">
-                  <option value="" selected>unchanged</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <div class="inline-row">
-                <button type="submit" class="ghost">Update Schedule</button>
-                <button id="loadPolicyScheduleDetail" type="button" class="ghost">Load Detail</button>
-              </div>
-            </form>
-            <form id="policyScheduleActionForm" class="form-grid">
-              <label>Job ID<input name="job_id" required placeholder="sched-..." /></label>
-              <label>
-                Action
-                <select name="action">
-                  <option value="status" selected>status</option>
-                  <option value="approve">approve</option>
-                  <option value="execute-now">execute-now</option>
-                  <option value="history">history</option>
-                  <option value="enable">enable</option>
-                  <option value="disable">disable</option>
-                  <option value="delete">delete</option>
-                </select>
-              </label>
-              <label>Reason Code<input name="reason_code" placeholder="optional" /></label>
-              <label>
-                Dry Run
-                <select name="dry_run">
-                  <option value="false" selected>false</option>
-                  <option value="true">true</option>
-                </select>
-              </label>
-              <label>Approval Token<input name="approval_token" placeholder="approved" /></label>
-              <label>
-                Idempotent Delete
-                <select name="idempotent">
-                  <option value="false" selected>false</option>
-                  <option value="true">true</option>
-                </select>
-              </label>
-              <button type="submit" class="ghost">Run Schedule Action</button>
-            </form>
-            <p id="policySchedulesResult" class="mono"></p>
-            <p id="policyScheduleSummaryResult" class="mono"></p>
-            <pre id="policyScheduleDetailResult" class="mono"></pre>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Policy schedules</caption>
-                <thead>
-                  <tr><th>Job ID</th><th>Name</th><th>Env</th><th>Optimize</th><th>Enabled</th><th>Last Run</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="policySchedulesTable"></tbody>
-              </table>
-            </div>
-            <div class="card-head config-actions">
-              <h4>Schedule History</h4>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Policy schedule history</caption>
-                <thead>
-                  <tr><th>Timestamp</th><th>Action</th><th>Actor</th><th>Outcome</th><th>Trace</th></tr>
-                </thead>
-                <tbody id="policyScheduleHistoryTable"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+  <div data-console-panel="load-tests" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Load Tests and Checkpoints</h3>
+      </div>
+      <p class="field-help">Load test run and checkpoint create/resume require MFA Verified in Session Context.</p>
+      <form id="agenticLoadTestRunForm" class="form-grid">
+        <label>
+          Tier
+          <select name="tier">
+            <option value="tier1">tier1</option>
+            <option value="tier2">tier2</option>
+            <option value="tier3" selected>tier3</option>
+          </select>
+        </label>
+        <label>Target Capacity<input name="target_capacity" type="number" min="10000" max="1000000" step="1000" value="100000" /></label>
+        <label>Expected Concurrency<input name="expected_concurrency" type="number" min="1" max="200000" step="1" value="1200" /></label>
+        <label>Expected RPS<input name="expected_rps" type="number" min="1" max="500000" step="1" value="4200" /></label>
+        <label>Observed Peak Concurrency<input name="observed_peak_concurrency" type="number" min="0" max="200000" step="1" value="1250" /></label>
+        <label>Observed Peak RPS<input name="observed_peak_rps" type="number" min="0" max="500000" step="1" value="4100" /></label>
+        <label>
+          Degradation Test Pass
+          <select name="degradation_test_pass">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label>
+          Recovery Test Pass
+          <select name="recovery_test_pass">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label>
+          Compliance Continuity Pass
+          <select name="compliance_continuity_pass">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <div class="inline-row">
+          <button type="submit" class="primary">Run Load Test</button>
+          <button id="loadLatestAgenticLoadTest" type="button" class="ghost">Load Latest Test</button>
+        </div>
+      </form>
+      <form id="agenticCheckpointCreateForm" class="form-grid">
+        <label>Session ID<input name="session_id" required value="agentic-session-1" /></label>
+        <label>
+          Agent
+          <select name="agent_id" id="agenticCheckpointAgentSelect" required>
+            <option value="" selected disabled>Loading agents…</option>
+          </select>
+        </label>
+        <label>Stage Name<input name="stage_name" required value="pre-deploy" /></label>
+        <label class="wide-field">State Payload<input name="state_payload" required value='{"route":"support","state":"checkpoint"}' /></label>
+        <button type="submit" class="ghost">Create Checkpoint</button>
+      </form>
+      <form id="agenticCheckpointActionForm" class="form-grid">
+        <label>Session ID<input name="session_id" placeholder="agentic-session-1" /></label>
+        <label>Checkpoint ID<input name="checkpoint_id" placeholder="ckpt-..." /></label>
+        <label>Resume Reason<input name="reason_code" value="operator-approved recovery" /></label>
+        <div class="inline-row">
+          <button id="loadAgenticCheckpoints" type="button" class="ghost">Load Checkpoints</button>
+          <button id="resumeAgenticCheckpoint" type="button" class="ghost">Resume Checkpoint</button>
+        </div>
+      </form>
+      <p id="agenticLoadTestResult" class="mono"></p>
+      <p id="agenticCheckpointResult" class="mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Load test runs</caption>
+          <thead>
+            <tr><th>Run ID</th><th>Tier</th><th>Target</th><th>Peak Concurrency</th><th>Peak RPS</th><th>Passed</th><th>Executed By</th><th>Created</th></tr>
+          </thead>
+          <tbody id="agenticLoadTestsTable"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Execution checkpoints</caption>
+          <thead>
+            <tr><th>Checkpoint ID</th><th>Session</th><th>Agent</th><th>Stage</th><th>Status</th><th>Resume Count</th><th>Created By</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="agenticCheckpointsTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="policy" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Policy Auto Tune</h3>
+      </div>
+      <form id="agenticPolicyAutoTuneForm" class="form-grid">
+        <label>Environment<input name="environment" value="prod" /></label>
+        <label>
+          Optimize For
+          <select name="optimize_for">
+            <option value="balanced" selected>balanced</option>
+            <option value="cost">cost</option>
+            <option value="latency">latency</option>
+          </select>
+        </label>
+        <label>Max Routes<input name="max_routes" type="number" min="1" max="1000" step="1" value="10" /></label>
+        <label>
+          Dry Run
+          <select name="dry_run">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <button type="submit" class="primary">Run Auto Tune</button>
+      </form>
+      <p id="agenticPolicyAutoTuneResult" class="mono"></p>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Policy Schedules</h3>
+        <div class="inline-actions">
+          <button id="loadPolicySchedules" class="ghost" type="button">Load Schedules</button>
+          <button id="loadPolicyScheduleSummary" class="ghost" type="button">Load Summary</button>
+        </div>
+      </div>
+      <form id="policyScheduleCreateForm" class="form-grid">
+        <label>Name<input name="name" required placeholder="nightly-prod-optimizer" /></label>
+        <label>Environment<input name="environment" value="prod" /></label>
+        <label>
+          Optimize For
+          <select name="optimize_for">
+            <option value="balanced" selected>balanced</option>
+            <option value="cost">cost</option>
+            <option value="latency">latency</option>
+          </select>
+        </label>
+        <label>Max Routes<input name="max_routes" type="number" min="1" max="1000" step="1" value="10" /></label>
+        <label>Window Start UTC<input name="window_start_hour_utc" type="number" min="0" max="23" step="1" value="0" /></label>
+        <label>Window End UTC<input name="window_end_hour_utc" type="number" min="0" max="23" step="1" value="0" /></label>
+        <label>Max Changes w/o Approval<input name="max_changes_without_approval" type="number" min="0" max="1000" step="1" value="3" /></label>
+        <label>
+          Enabled
+          <select name="enabled">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <button type="submit" class="primary">Create Schedule</button>
+      </form>
+      <form id="policyScheduledOptimizeForm" class="form-grid">
+        <label>Environment<input name="environment" value="prod" /></label>
+        <label>
+          Optimize For
+          <select name="optimize_for">
+            <option value="balanced" selected>balanced</option>
+            <option value="cost">cost</option>
+            <option value="latency">latency</option>
+          </select>
+        </label>
+        <label>Max Routes<input name="max_routes" type="number" min="1" max="1000" step="1" value="10" /></label>
+        <label>Window Start UTC<input name="window_start_hour_utc" type="number" min="0" max="23" step="1" value="0" /></label>
+        <label>Window End UTC<input name="window_end_hour_utc" type="number" min="0" max="23" step="1" value="0" /></label>
+        <label>Max Changes w/o Approval<input name="max_changes_without_approval" type="number" min="0" max="1000" step="1" value="3" /></label>
+        <label>
+          Dry Run
+          <select name="dry_run">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label>Approval Token<input name="approval_token" placeholder="optional approval token" /></label>
+        <button type="submit" class="ghost">Run Scheduled Optimize</button>
+      </form>
+      <form id="policyScheduleSummaryFilters" class="form-grid">
+        <label>Environment<input name="environment" placeholder="Optional" /></label>
+        <label>
+          Optimize For
+          <select name="optimize_for">
+            <option value="" selected>all</option>
+            <option value="balanced">balanced</option>
+            <option value="cost">cost</option>
+            <option value="latency">latency</option>
+          </select>
+        </label>
+        <label>
+          Enabled
+          <select name="enabled">
+            <option value="" selected>any</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label>
+          Dual Approval Ready
+          <select name="dual_approval_ready">
+            <option value="" selected>any</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <button type="submit" class="ghost">Apply Summary Filters</button>
+      </form>
+      <form id="policyScheduleUpdateForm" class="form-grid">
+        <label>Job ID<input name="job_id" required placeholder="sched-..." /></label>
+        <label>Name<input name="name" placeholder="Optional" /></label>
+        <label>Environment<input name="environment" placeholder="Optional" /></label>
+        <label>
+          Optimize For
+          <select name="optimize_for">
+            <option value="" selected>unchanged</option>
+            <option value="balanced">balanced</option>
+            <option value="cost">cost</option>
+            <option value="latency">latency</option>
+          </select>
+        </label>
+        <label>Max Routes<input name="max_routes" type="number" min="1" max="1000" step="1" placeholder="Optional" /></label>
+        <label>Window Start UTC<input name="window_start_hour_utc" type="number" min="0" max="23" step="1" placeholder="Optional" /></label>
+        <label>Window End UTC<input name="window_end_hour_utc" type="number" min="0" max="23" step="1" placeholder="Optional" /></label>
+        <label>Max Changes w/o Approval<input name="max_changes_without_approval" type="number" min="0" max="1000" step="1" placeholder="Optional" /></label>
+        <label>
+          Enabled
+          <select name="enabled">
+            <option value="" selected>unchanged</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <div class="inline-row">
+          <button type="submit" class="ghost">Update Schedule</button>
+          <button id="loadPolicyScheduleDetail" type="button" class="ghost">Load Detail</button>
+        </div>
+      </form>
+      <form id="policyScheduleActionForm" class="form-grid">
+        <label>Job ID<input name="job_id" required placeholder="sched-..." /></label>
+        <label>
+          Action
+          <select name="action">
+            <option value="status" selected>status</option>
+            <option value="approve">approve</option>
+            <option value="execute-now">execute-now</option>
+            <option value="history">history</option>
+            <option value="enable">enable</option>
+            <option value="disable">disable</option>
+            <option value="delete">delete</option>
+          </select>
+        </label>
+        <label>Reason Code<input name="reason_code" placeholder="optional" /></label>
+        <label>
+          Dry Run
+          <select name="dry_run">
+            <option value="false" selected>false</option>
+            <option value="true">true</option>
+          </select>
+        </label>
+        <label>Approval Token<input name="approval_token" placeholder="approved" /></label>
+        <label>
+          Idempotent Delete
+          <select name="idempotent">
+            <option value="false" selected>false</option>
+            <option value="true">true</option>
+          </select>
+        </label>
+        <button type="submit" class="ghost">Run Schedule Action</button>
+      </form>
+      <p id="policySchedulesResult" class="mono"></p>
+      <p id="policyScheduleSummaryResult" class="mono"></p>
+      <pre id="policyScheduleDetailResult" class="mono"></pre>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Policy schedules</caption>
+          <thead>
+            <tr><th>Job ID</th><th>Name</th><th>Env</th><th>Optimize</th><th>Enabled</th><th>Last Run</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="policySchedulesTable"></tbody>
+        </table>
+      </div>
+      <div class="card-head config-actions">
+        <h4>Schedule History</h4>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Policy schedule history</caption>
+          <thead>
+            <tr><th>Timestamp</th><th>Action</th><th>Login</th><th>Outcome</th><th>Prompt</th><th>Trace</th></tr>
+          </thead>
+          <tbody id="policyScheduleHistoryTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

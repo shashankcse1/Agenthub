@@ -10,13 +10,21 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.logging_utils import get_logger, sanitize_fields
-from app.models import DirectoryUser, SessionRecord
-from app.policy_constants import DUAL_APPROVAL_REQUIRED_APPROVER_ROLE_DEFAULT, ROLE_MASTER_ADMIN, ROLE_SUPER_ADMIN, SUPPORTED_ACTOR_ROLES
+from app.models import DirectoryUser, SessionRecord, VirtualKey
+from app.request_context import set_request_actor
+from app.policy_constants import (
+    DUAL_APPROVAL_REQUIRED_APPROVER_ROLE_DEFAULT,
+    ROLE_AGENT_OWNER,
+    ROLE_MASTER_ADMIN,
+    ROLE_PLATFORM_ADMIN,
+    ROLE_SUPER_ADMIN,
+    SUPPORTED_ACTOR_ROLES,
+)
 from app.services.policy_config import get_auth_policy
 
 logger = get_logger(__name__)
@@ -33,13 +41,15 @@ _MFA_ENFORCEMENT_OPTIONAL_RAW = (os.getenv("MFA_ENFORCEMENT_OPTIONAL") or "false
 _RUNTIME_ENVIRONMENT = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "dev").strip().lower()
 _MFA_ENFORCEMENT_OPTIONAL = _MFA_ENFORCEMENT_OPTIONAL_RAW and _RUNTIME_ENVIRONMENT in {"dev", "test", "local"}
 _ALLOW_HEADER_ACTOR_AUTH_RAW = (os.getenv("ALLOW_HEADER_ACTOR_AUTH") or "").strip().lower()
+# Enterprise default: header-asserted identity only in local/dev/test.
+# Staging/prod require session tokens unless explicitly opted in (staging only).
 if _ALLOW_HEADER_ACTOR_AUTH_RAW:
     _ALLOW_HEADER_ACTOR_AUTH = _ALLOW_HEADER_ACTOR_AUTH_RAW in {"1", "true", "yes"}
 else:
     _ALLOW_HEADER_ACTOR_AUTH = _RUNTIME_ENVIRONMENT in {"dev", "test", "local"}
 
-# Never permit header-asserted identities outside local/test environments.
-if _RUNTIME_ENVIRONMENT not in {"dev", "test", "local"}:
+# Never permit header-asserted identities in production — even with explicit env override.
+if _RUNTIME_ENVIRONMENT in {"prod", "production"}:
     _ALLOW_HEADER_ACTOR_AUTH = False
 
 _PASSWORD_HASH_VERSION = "v1"
@@ -186,6 +196,31 @@ def validate_session_secret_configuration() -> None:
             raise RuntimeError("SESSION_TOKEN_SECRET must be at least 32 characters outside dev/test/local.")
 
 
+def validate_runtime_auth_guardrails() -> None:
+    if _RUNTIME_ENVIRONMENT in {"prod", "production"}:
+        if _ALLOW_HEADER_ACTOR_AUTH_RAW in {"1", "true", "yes"}:
+            raise RuntimeError("ALLOW_HEADER_ACTOR_AUTH must remain disabled in production.")
+        if _MFA_ENFORCEMENT_OPTIONAL_RAW:
+            raise RuntimeError("MFA_ENFORCEMENT_OPTIONAL cannot be enabled outside dev/test/local.")
+        return
+
+    # Staging-like environments: reject accidental header-auth enablement unless
+    # operators also set ALLOW_HEADER_ACTOR_AUTH_STAGING_OVERRIDE=true (migration bridge).
+    if _RUNTIME_ENVIRONMENT not in {"dev", "test", "local"}:
+        staging_override = (os.getenv("ALLOW_HEADER_ACTOR_AUTH_STAGING_OVERRIDE") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if _ALLOW_HEADER_ACTOR_AUTH_RAW in {"1", "true", "yes"} and not staging_override:
+            raise RuntimeError(
+                "ALLOW_HEADER_ACTOR_AUTH is not permitted outside local/dev/test without "
+                "ALLOW_HEADER_ACTOR_AUTH_STAGING_OVERRIDE=true."
+            )
+        if _MFA_ENFORCEMENT_OPTIONAL_RAW:
+            raise RuntimeError("MFA_ENFORCEMENT_OPTIONAL cannot be enabled outside dev/test/local.")
+
+
 def insecure_configuration_warnings() -> list[str]:
     warnings: list[str] = []
     in_non_dev = _RUNTIME_ENVIRONMENT not in {"dev", "test", "local"}
@@ -243,13 +278,196 @@ def insecure_configuration_warnings() -> list[str]:
     return warnings
 
 
+def session_signing_rotation_status() -> dict[str, object]:
+    """Runtime posture for session signing key rotation age (RSK-004 /health re-check)."""
+    in_non_dev = _RUNTIME_ENVIRONMENT not in {"dev", "test", "local"}
+    key_ring_configured = bool(_SESSION_TOKEN_SIGNING_KEYS)
+    last_rotated = _SESSION_TOKEN_SIGNING_LAST_ROTATED_AT
+    max_days = int(_SESSION_TOKEN_ROTATION_MAX_DAYS)
+    age_days: int | None = None
+    exceeded = False
+    monitoring_enabled = bool(in_non_dev and key_ring_configured and last_rotated is not None and max_days > 0)
+    if last_rotated is not None:
+        age_days = max(0, (datetime.utcnow() - last_rotated).days)
+        if monitoring_enabled and age_days > max_days:
+            exceeded = True
+    warnings = [
+        warning
+        for warning in insecure_configuration_warnings()
+        if "SESSION_TOKEN_SIGNING" in warning or "SESSION_TOKEN_ROTATION" in warning
+    ]
+    return {
+        "environment": _RUNTIME_ENVIRONMENT,
+        "key_ring_configured": key_ring_configured,
+        "monitoring_enabled": monitoring_enabled,
+        "max_age_days": max_days,
+        "age_days": age_days,
+        "last_rotated_at": last_rotated.isoformat() + "Z" if last_rotated is not None else None,
+        "rotation_age_exceeded": exceeded,
+        "warnings": warnings,
+    }
+
+
+def mfa_optional_posture() -> dict[str, object]:
+    """RSK-002 / AR-001: expose MFA-optional flag posture on /health (no secrets)."""
+    allowed_envs = {"dev", "test", "local"}
+    return {
+        "environment": _RUNTIME_ENVIRONMENT,
+        "raw_flag_set": bool(_MFA_ENFORCEMENT_OPTIONAL_RAW),
+        "effective": bool(_MFA_ENFORCEMENT_OPTIONAL),
+        "allowed_environments": sorted(allowed_envs),
+        "fail_closed_outside_allowed": _RUNTIME_ENVIRONMENT not in allowed_envs,
+        "warnings": [
+            warning for warning in insecure_configuration_warnings() if "MFA_ENFORCEMENT_OPTIONAL" in warning
+        ],
+    }
+
+
+def token_exposure_posture() -> dict[str, object]:
+    """AR-002: expose workload-identity token exposure flag posture on /health (no secrets)."""
+    expose_token_flag = (os.getenv("EXPOSE_WORKLOAD_IDENTITY_ACCESS_TOKEN") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    allowed_envs = {"dev", "test", "local"}
+    effective = expose_token_flag and _RUNTIME_ENVIRONMENT in allowed_envs
+    return {
+        "environment": _RUNTIME_ENVIRONMENT,
+        "raw_flag_set": bool(expose_token_flag),
+        "effective": bool(effective),
+        "allowed_environments": sorted(allowed_envs),
+        "fail_closed_outside_allowed": _RUNTIME_ENVIRONMENT not in allowed_envs,
+        "warnings": [
+            warning
+            for warning in insecure_configuration_warnings()
+            if "EXPOSE_WORKLOAD_IDENTITY_ACCESS_TOKEN" in warning
+        ],
+    }
+
+
+def transport_posture() -> dict[str, object]:
+    """Residual #3: HTTPS/HSTS app-side posture for /health (ingress still operator-owned)."""
+    expect_https = _RUNTIME_ENVIRONMENT not in {"dev", "test", "local"}
+    expect_https_env = (os.getenv("EXPECT_HTTPS") or "").strip().lower() in {"1", "true", "yes"}
+    if expect_https_env:
+        expect_https = True
+    return {
+        "environment": _RUNTIME_ENVIRONMENT,
+        "expect_https": bool(expect_https),
+        "hsts_header_policy": "max-age=63072000; includeSubDomains; preload",
+        "hsts_configured": True,
+        "notes": (
+            "App middleware always sets Strict-Transport-Security. "
+            "Ingress/load-balancer TLS termination must still be validated in staging/prod."
+        ),
+    }
+
+
 @dataclass
 class ActorContext:
     actor_id: str
     actor_role: str
+    user_login: Optional[str]
     approver_id: Optional[str]
     approver_role: Optional[str]
     mfa_verified: bool
+    approver_session_authenticated: bool = False
+
+
+def resolve_user_login_for_actor(db: Session, actor_id: str) -> Optional[str]:
+    normalized_actor = (actor_id or "").strip()
+    if not normalized_actor:
+        return None
+    if normalized_actor.startswith("ip:") or normalized_actor.startswith("session:"):
+        return None
+    if normalized_actor in {"system-user", "unknown"}:
+        return None
+
+    directory_user = db.query(DirectoryUser).filter_by(user_id=normalized_actor).first()
+    if directory_user:
+        email = (directory_user.email or "").strip()
+        if email:
+            return email
+        display_name = (directory_user.display_name or "").strip()
+        if display_name:
+            return display_name
+    return normalized_actor
+
+
+def resolve_actor_role_for_actor(db: Session, actor_id: str) -> str:
+    normalized_actor = (actor_id or "").strip()
+    if not normalized_actor:
+        return "unknown"
+    if normalized_actor.startswith("ip:") or normalized_actor.startswith("session:"):
+        return "unknown"
+    if normalized_actor in {"system-user", "unknown", "system"}:
+        return "unknown"
+
+    directory_user = db.query(DirectoryUser).filter_by(user_id=normalized_actor).first()
+    if directory_user:
+        directory_role = _canonicalize_role(directory_user.role_name)
+        if directory_role:
+            return directory_role
+
+    session = (
+        db.query(SessionRecord)
+        .filter_by(actor_id=normalized_actor)
+        .order_by(SessionRecord.last_activity_at.desc())
+        .first()
+    )
+    if session:
+        session_role = _canonicalize_role(session.actor_role)
+        if session_role:
+            return session_role
+
+    return "unknown"
+
+
+def _bearer_token_from_authorization(authorization: Optional[str]) -> Optional[str]:
+    auth_header = _normalize_header_value(authorization)
+    if not auth_header:
+        return None
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+def resolve_request_actor_identity(request, db: Session) -> tuple[str, Optional[str], Optional[str]]:
+    from app.services.session_cookies import SESSION_COOKIE_NAME, read_session_cookie
+
+    token = _bearer_token_from_authorization(request.headers.get("Authorization"))
+    if not token:
+        token = read_session_cookie(getattr(request, "cookies", {}) or {}, cookie_name=SESSION_COOKIE_NAME)
+
+    if token:
+        try:
+            session_id = resolve_session_id_from_bearer_token(token)
+            session = db.query(SessionRecord).filter_by(session_id=session_id).first()
+            if session:
+                user_login = resolve_user_login_for_actor(db, session.actor_id)
+                actor_role = _canonicalize_role(session.actor_role)
+                directory_user = db.query(DirectoryUser).filter_by(user_id=session.actor_id).first()
+                if directory_user and str(directory_user.role_name or "").strip():
+                    directory_role = _canonicalize_role(directory_user.role_name)
+                    if directory_role:
+                        actor_role = directory_role
+                return session.actor_id, user_login, actor_role
+        except HTTPException:
+            pass
+
+    if _ALLOW_HEADER_ACTOR_AUTH:
+        header_actor = _normalize_header_value(request.headers.get("X-Actor-Id"))
+        if header_actor:
+            user_login = resolve_user_login_for_actor(db, header_actor)
+            header_role = _canonicalize_role(request.headers.get("X-Actor-Role"))
+            if not header_role:
+                header_role = resolve_actor_role_for_actor(db, header_actor)
+            return header_actor, user_login, header_role
+
+    client_ip = request.client.host if request.client and request.client.host else "unknown"
+    return f"ip:{client_ip}", None, None
 
 
 def _normalize_header_value(value: Optional[str]) -> Optional[str]:
@@ -340,20 +558,131 @@ def resolve_session_id_from_bearer_token(token: str) -> str:
     )
 
 
+def _resolve_session_record_from_token(db: Session, bearer_token: str) -> Optional[SessionRecord]:
+    try:
+        session_id = resolve_session_id_from_bearer_token(bearer_token)
+    except HTTPException:
+        return None
+    return db.query(SessionRecord).filter_by(session_id=session_id).first()
+
+
+def _apply_session_identity(
+    db: Session,
+    session: SessionRecord,
+    auth_policy,
+    *,
+    token_for_logs: str,
+) -> tuple[str, Optional[str], bool]:
+    if session.expires_at < datetime.utcnow():
+        logger.error(
+            "auth_session_expired %s",
+            sanitize_fields({"session_id": token_for_logs}),
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error_code": "AUTHN_SESSION_EXPIRED",
+                "message": "Session token has expired.",
+                "remediation_hint": "Issue a new session and retry.",
+            },
+        )
+
+    if session.last_activity_at < datetime.utcnow() - timedelta(minutes=session.idle_timeout_minutes):
+        logger.error(
+            "auth_session_idle_timeout %s",
+            sanitize_fields({"session_id": token_for_logs}),
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error_code": "AUTHN_SESSION_IDLE_TIMEOUT",
+                "message": "Session is idle and requires re-authentication.",
+                "remediation_hint": "Issue a new session token and retry.",
+            },
+        )
+
+    actor_id = session.actor_id
+    actor_role = _canonicalize_role(session.actor_role)
+    directory_user = db.query(DirectoryUser).filter_by(user_id=actor_id).first()
+    if directory_user and str(directory_user.role_name or "").strip():
+        directory_role = _canonicalize_role(directory_user.role_name)
+        if directory_role and directory_role != actor_role:
+            session.actor_role = directory_role
+            actor_role = directory_role
+    session.last_activity_at = datetime.utcnow()
+    mfa_verified = bool(
+        session.mfa_verified_at
+        and session.mfa_verified_at
+        >= datetime.utcnow() - timedelta(minutes=auth_policy.privileged_mfa_reauth_minutes)
+    )
+    db.commit()
+    logger.info(
+        "auth_session_validated %s",
+        sanitize_fields(
+            {
+                "actor_id": actor_id,
+                "actor_role": actor_role,
+                "user_login": resolve_user_login_for_actor(db, actor_id),
+            }
+        ),
+    )
+    return actor_id, actor_role, mfa_verified
+
+
+def _resolve_approver_from_second_session(
+    db: Session,
+    *,
+    request: Request,
+    x_approver_authorization: Optional[str],
+    auth_policy,
+) -> tuple[Optional[str], Optional[str], bool]:
+    """Resolve co-signer from X-Approver-Authorization Bearer or gb_approver_session cookie."""
+    from app.services.session_cookies import APPROVER_SESSION_COOKIE_NAME, read_session_cookie
+
+    token = _bearer_token_from_authorization(x_approver_authorization)
+    if not token:
+        token = read_session_cookie(
+            getattr(request, "cookies", {}) or {},
+            cookie_name=APPROVER_SESSION_COOKIE_NAME,
+        )
+    if not token:
+        return None, None, False
+
+    session = _resolve_session_record_from_token(db, token)
+    if session is None:
+        logger.warning("auth_approver_session_invalid_ignored")
+        return None, None, False
+    try:
+        approver_id, approver_role, _ = _apply_session_identity(
+            db,
+            session,
+            auth_policy,
+            token_for_logs="approver-session",
+        )
+    except HTTPException:
+        # Expired/idle approver cookie must not break non-co-sign requests.
+        logger.warning("auth_approver_session_expired_ignored")
+        return None, None, False
+    return approver_id, approver_role, True
+
 def get_actor_context(
+    request: Request,
     x_actor_id: Optional[str] = Header(default=None),
     x_actor_role: Optional[str] = Header(default=None),
     x_approver_id: Optional[str] = Header(default=None),
     x_approver_role: Optional[str] = Header(default=None),
+    x_approver_authorization: Optional[str] = Header(default=None, alias="X-Approver-Authorization"),
     x_mfa_verified: Optional[str] = Header(default=None),
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ActorContext:
+    from app.services.session_cookies import SESSION_COOKIE_NAME, read_session_cookie
+
     logger.trace("auth_context_start")
     actor_id = _normalize_header_value(x_actor_id)
     actor_role = _canonicalize_role(x_actor_role)
-    approver_id = _normalize_header_value(x_approver_id)
-    approver_role = _canonicalize_role(x_approver_role)
+    header_approver_id = _normalize_header_value(x_approver_id)
+    header_approver_role = _canonicalize_role(x_approver_role)
 
     mfa_verified = (_normalize_header_value(x_mfa_verified) or "false").lower() in {
         "1",
@@ -362,18 +691,12 @@ def get_actor_context(
     }
 
     auth_header = _normalize_header_value(authorization)
-    auth_policy = get_auth_policy(db)
-    if not auth_header and (not actor_id or not actor_role):
-        logger.error("auth_missing_identity")
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "error_code": "AUTHN_REQUIRED",
-                "message": "Provide Authorization bearer token or explicit actor identity headers.",
-                "remediation_hint": "Use Bearer session token or provide X-Actor-Id and X-Actor-Role.",
-            },
-        )
-
+    cookie_token = read_session_cookie(
+        getattr(request, "cookies", {}) or {},
+        cookie_name=SESSION_COOKIE_NAME,
+    )
+    # Prefer explicit Bearer; fall back to httpOnly session cookie for browser consoles.
+    bearer_token: Optional[str] = None
     if auth_header:
         scheme, _, token = auth_header.partition(" ")
         if scheme.lower() != "bearer" or not token.strip():
@@ -386,67 +709,100 @@ def get_actor_context(
                     "remediation_hint": "Provide a valid bearer session token.",
                 },
             )
+        bearer_token = token.strip()
+    elif cookie_token:
+        bearer_token = cookie_token
 
-        session_id = resolve_session_id_from_bearer_token(token.strip())
-        session = db.query(SessionRecord).filter_by(session_id=session_id).first()
-        if not session:
-            logger.error("auth_session_not_found")
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error_code": "AUTHN_SESSION_NOT_FOUND",
-                    "message": "Session token is invalid.",
-                    "remediation_hint": "Issue a session using /auth/sessions and retry.",
-                },
-            )
-        if session.expires_at < datetime.utcnow():
-            logger.error(
-                "auth_session_expired %s",
-                sanitize_fields({"session_id": token.strip(), "actor_id": actor_id}),
-            )
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error_code": "AUTHN_SESSION_EXPIRED",
-                    "message": "Session token has expired.",
-                    "remediation_hint": "Issue a new session and retry.",
-                },
-            )
-
-        if session.last_activity_at < datetime.utcnow() - timedelta(minutes=session.idle_timeout_minutes):
-            logger.error(
-                "auth_session_idle_timeout %s",
-                sanitize_fields({"session_id": token.strip(), "actor_id": actor_id}),
-            )
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error_code": "AUTHN_SESSION_IDLE_TIMEOUT",
-                    "message": "Session is idle and requires re-authentication.",
-                    "remediation_hint": "Issue a new session token and retry.",
-                },
-            )
-
-        actor_id = session.actor_id
-        actor_role = _canonicalize_role(session.actor_role)
-        directory_user = db.query(DirectoryUser).filter_by(user_id=actor_id).first()
-        if directory_user and str(directory_user.role_name or "").strip():
-            directory_role = _canonicalize_role(directory_user.role_name)
-            if directory_role and directory_role != actor_role:
-                session.actor_role = directory_role
-                actor_role = directory_role
-        session.last_activity_at = datetime.utcnow()
-
-        mfa_verified = bool(
-            session.mfa_verified_at
-            and session.mfa_verified_at
-            >= datetime.utcnow() - timedelta(minutes=auth_policy.privileged_mfa_reauth_minutes)
+    auth_policy = get_auth_policy(db)
+    if not bearer_token and (not actor_id or not actor_role):
+        logger.error("auth_missing_identity")
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error_code": "AUTHN_REQUIRED",
+                "message": "Provide Authorization bearer token, session cookie, or explicit actor identity headers.",
+                "remediation_hint": "Sign in via /auth/login or provide a Bearer session token.",
+            },
         )
-        db.commit()
-        logger.info(
-            "auth_session_validated %s",
-            sanitize_fields({"actor_id": actor_id, "actor_role": actor_role}),
-        )
+
+    if bearer_token:
+        session: Optional[SessionRecord] = _resolve_session_record_from_token(db, bearer_token)
+
+        if session is None:
+            # Cookie path is session-only (never treat cookie as virtual-key bearer).
+            if not auth_header:
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error_code": "AUTHN_INVALID_TOKEN",
+                        "message": "Session cookie is invalid or expired.",
+                        "remediation_hint": "Sign in again via /auth/login.",
+                    },
+                )
+            # Portkey-style virtual key bearer (hashed at rest; legacy plaintext migrated).
+            from app.services.virtual_key_secrets import lookup_virtual_key_by_bearer
+
+            virtual_key = lookup_virtual_key_by_bearer(db, bearer_token)
+            if virtual_key is None:
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error_code": "AUTHN_INVALID_TOKEN",
+                        "message": "Session token format is invalid.",
+                        "remediation_hint": "Issue a new session using /auth/sessions and retry.",
+                    },
+                )
+            key_status = str(virtual_key.status or "").strip().lower()
+            if key_status == "blocked":
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "VIRTUAL_KEY_BLOCKED",
+                        "message": f"Virtual key '{virtual_key.key_id}' is blocked.",
+                        "key_id": virtual_key.key_id,
+                    },
+                )
+            expires_at = getattr(virtual_key, "expires_at", None)
+            if expires_at is not None:
+                try:
+                    expired = expires_at <= datetime.utcnow()
+                except TypeError:
+                    expired = True
+                if expired:
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "error_code": "VIRTUAL_KEY_EXPIRED",
+                            "message": f"Virtual key '{virtual_key.key_id}' has expired.",
+                            "key_id": virtual_key.key_id,
+                        },
+                    )
+            # Prefer explicit operator headers in local/dev; otherwise authenticate as agent-owner of the key scope.
+            if _ALLOW_HEADER_ACTOR_AUTH and actor_id and actor_role:
+                pass
+            else:
+                owner_type = str(virtual_key.owner_scope_type or "user").strip().lower() or "user"
+                owner_id = str(virtual_key.owner_scope_id or virtual_key.key_id).strip()
+                actor_id = f"{owner_type}:{owner_id}"
+                actor_role = ROLE_AGENT_OWNER
+            logger.info(
+                "auth_virtual_key_validated %s",
+                sanitize_fields(
+                    {
+                        "actor_id": actor_id,
+                        "actor_role": actor_role,
+                        "key_id": virtual_key.key_id,
+                        "jit_request_id": getattr(virtual_key, "jit_request_id", None),
+                    }
+                ),
+            )
+        else:
+            actor_id, actor_role, mfa_verified = _apply_session_identity(
+                db,
+                session,
+                auth_policy,
+                token_for_logs="session",
+            )
     else:
         if not _ALLOW_HEADER_ACTOR_AUTH:
             logger.error("auth_header_identity_disabled")
@@ -461,16 +817,42 @@ def get_actor_context(
         actor_id = actor_id or "system-user"
         actor_role = _canonicalize_role(actor_role) or "unknown"
 
+    session_approver_id, session_approver_role, approver_session_authenticated = _resolve_approver_from_second_session(
+        db,
+        request=request,
+        x_approver_authorization=x_approver_authorization,
+        auth_policy=auth_policy,
+    )
+    if approver_session_authenticated:
+        approver_id = session_approver_id
+        approver_role = session_approver_role
+    else:
+        approver_id = header_approver_id
+        approver_role = header_approver_role
+
+    user_login = resolve_user_login_for_actor(db, actor_id)
+    set_request_actor(actor_id, user_login, actor_role)
+
     logger.trace(
         "auth_context_ready %s",
-        sanitize_fields({"actor_id": actor_id, "actor_role": actor_role, "mfa_verified": mfa_verified}),
+        sanitize_fields(
+            {
+                "actor_id": actor_id,
+                "actor_role": actor_role,
+                "user_login": user_login,
+                "mfa_verified": mfa_verified,
+                "approver_session_authenticated": approver_session_authenticated,
+            }
+        ),
     )
     return ActorContext(
         actor_id=actor_id,
         actor_role=actor_role,
+        user_login=user_login,
         approver_id=approver_id,
         approver_role=approver_role,
         mfa_verified=mfa_verified,
+        approver_session_authenticated=approver_session_authenticated,
     )
 
 
@@ -497,13 +879,54 @@ def require_role(ctx: ActorContext, allowed_roles: set[str]) -> None:
         )
 
 
+_PLATFORM_ADMIN_EQUIVALENT_APPROVER_ROLES = {ROLE_PLATFORM_ADMIN, ROLE_SUPER_ADMIN}
+
+
+def approver_role_satisfies(required_approver_role: str, approver_role: Optional[str]) -> bool:
+    actual = str(approver_role or "").strip()
+    if not actual:
+        return False
+    if actual == required_approver_role:
+        return True
+    if required_approver_role == ROLE_PLATFORM_ADMIN and actual in _PLATFORM_ADMIN_EQUIVALENT_APPROVER_ROLES:
+        return True
+    return False
+
+
 def require_dual_approval(
     ctx: ActorContext,
     required_approver_role: str = DUAL_APPROVAL_REQUIRED_APPROVER_ROLE_DEFAULT,
 ) -> None:
     if ctx.actor_role in {ROLE_MASTER_ADMIN, ROLE_SUPER_ADMIN}:
         return
-    if ctx.approver_role != required_approver_role or not ctx.approver_id:
+
+    from app.services.runtime_env import is_production_runtime
+
+    # Production: co-sign must be a second authenticated session (cookie or
+    # X-Approver-Authorization), not client-asserted X-Approver-* headers alone.
+    if is_production_runtime() and not _ALLOW_HEADER_ACTOR_AUTH:
+        if not ctx.approver_session_authenticated or not ctx.approver_id:
+            logger.error(
+                "authz_dual_approval_session_missing %s",
+                sanitize_fields({"actor_id": ctx.actor_id, "approver_id": ctx.approver_id}),
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error_code": "AUTHZ_DUAL_APPROVAL_SESSION_REQUIRED",
+                    "message": "Production co-sign requires a second authenticated approver session.",
+                    "actor_role": ctx.actor_role,
+                    "required_role": required_approver_role,
+                    "policy_version": "v1",
+                    "decision_trace_id": "authz-dual-approval-session",
+                    "remediation_hint": (
+                        "Authenticate the co-signer via POST /auth/approver-session "
+                        "(httpOnly cookie) or send X-Approver-Authorization: Bearer <token>."
+                    ),
+                },
+            )
+
+    if not approver_role_satisfies(required_approver_role, ctx.approver_role) or not ctx.approver_id:
         logger.error(
             "authz_dual_approval_missing %s",
             sanitize_fields({"actor_id": ctx.actor_id, "approver_id": ctx.approver_id}),
@@ -528,8 +951,57 @@ def require_dual_approval(
         )
         raise HTTPException(
             status_code=400,
-            detail="Approver must be different from actor.",
+            detail={
+                "error_code": "AUTHZ_DUAL_APPROVAL_IDENTITY_CONFLICT",
+                "message": "Approver must be different from actor.",
+                "policy_version": "v1",
+                "decision_trace_id": "authz-dual-approval-identity",
+                "remediation_hint": "Use a different approver identity header.",
+            },
         )
+
+    # Production harden: approver must be a real directory user whose stored role
+    # satisfies the required co-sign role.
+    # Local/dev/test keep header-only co-sign for operator tooling and pytest.
+    if is_production_runtime() and not _ALLOW_HEADER_ACTOR_AUTH:
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            directory_user = db.query(DirectoryUser).filter_by(user_id=str(ctx.approver_id)).first()
+            if directory_user is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "AUTHZ_DUAL_APPROVAL_APPROVER_UNKNOWN",
+                        "message": "Approver identity is not a registered directory user.",
+                        "remediation_hint": "Co-sign with a Security Approver directory user_id.",
+                    },
+                )
+            status = str(directory_user.status or "").strip().lower()
+            if status and status not in {"active", "enabled", "ok"}:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "AUTHZ_DUAL_APPROVAL_APPROVER_INACTIVE",
+                        "message": "Approver directory user is not active.",
+                    },
+                )
+            directory_role = _canonicalize_role(directory_user.role_name)
+            if not approver_role_satisfies(required_approver_role, directory_role):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "AUTHZ_DUAL_APPROVAL_APPROVER_ROLE_MISMATCH",
+                        "message": "Approver directory role does not satisfy co-sign requirements.",
+                        "required_role": required_approver_role,
+                        "approver_directory_role": directory_role,
+                    },
+                )
+            # Prefer directory role over client-asserted approver role in prod.
+            ctx.approver_role = directory_role or ctx.approver_role
+        finally:
+            db.close()
 
 
 def require_mfa(ctx: ActorContext) -> None:

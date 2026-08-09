@@ -100,7 +100,41 @@ def test_insecure_configuration_warnings_report_enabled_risky_flags(monkeypatch:
     assert any("SESSION_TOKEN_SECRET" in warning for warning in warnings)
 
 
-def test_header_actor_auth_is_forced_off_in_non_dev(monkeypatch: pytest.MonkeyPatch):
+def test_header_actor_auth_defaults_off_in_staging(monkeypatch: pytest.MonkeyPatch):
+    security = _reload_security(
+        monkeypatch,
+        APP_ENV="staging",
+        SESSION_TOKEN_SECRET="x" * 48,
+    )
+
+    assert security._ALLOW_HEADER_ACTOR_AUTH is False
+
+
+def test_header_actor_auth_defaults_on_in_local_dev(monkeypatch: pytest.MonkeyPatch):
+    security = _reload_security(
+        monkeypatch,
+        APP_ENV="dev",
+        SESSION_TOKEN_SECRET="x" * 48,
+    )
+
+    assert security._ALLOW_HEADER_ACTOR_AUTH is True
+
+
+def test_validate_runtime_auth_guardrails_rejects_header_actor_auth_in_staging_without_override(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    security = _reload_security(
+        monkeypatch,
+        APP_ENV="staging",
+        SESSION_TOKEN_SECRET="x" * 48,
+        ALLOW_HEADER_ACTOR_AUTH="true",
+    )
+
+    with pytest.raises(RuntimeError, match="ALLOW_HEADER_ACTOR_AUTH_STAGING_OVERRIDE"):
+        security.validate_runtime_auth_guardrails()
+
+
+def test_header_actor_auth_is_forced_off_in_prod(monkeypatch: pytest.MonkeyPatch):
     security = _reload_security(
         monkeypatch,
         APP_ENV="prod",
@@ -111,7 +145,19 @@ def test_header_actor_auth_is_forced_off_in_non_dev(monkeypatch: pytest.MonkeyPa
     assert security._ALLOW_HEADER_ACTOR_AUTH is False
 
 
-def test_mfa_optional_is_ignored_in_non_dev(monkeypatch: pytest.MonkeyPatch):
+def test_validate_runtime_auth_guardrails_rejects_header_actor_auth_in_prod(monkeypatch: pytest.MonkeyPatch):
+    security = _reload_security(
+        monkeypatch,
+        APP_ENV="prod",
+        SESSION_TOKEN_SECRET="x" * 48,
+        ALLOW_HEADER_ACTOR_AUTH="true",
+    )
+
+    with pytest.raises(RuntimeError, match="ALLOW_HEADER_ACTOR_AUTH"):
+        security.validate_runtime_auth_guardrails()
+
+
+def test_validate_runtime_auth_guardrails_rejects_mfa_optional_in_non_dev(monkeypatch: pytest.MonkeyPatch):
     security = _reload_security(
         monkeypatch,
         APP_ENV="prod",
@@ -120,8 +166,8 @@ def test_mfa_optional_is_ignored_in_non_dev(monkeypatch: pytest.MonkeyPatch):
     )
 
     assert security._MFA_ENFORCEMENT_OPTIONAL is False
-    warnings = security.insecure_configuration_warnings()
-    assert any("ignored outside dev/test/local" in warning for warning in warnings)
+    with pytest.raises(RuntimeError, match="MFA_ENFORCEMENT_OPTIONAL"):
+        security.validate_runtime_auth_guardrails()
 
 
 def test_rotation_age_warning_when_last_rotated_timestamp_missing(monkeypatch: pytest.MonkeyPatch):
@@ -147,3 +193,18 @@ def test_rotation_age_warning_when_threshold_exceeded(monkeypatch: pytest.Monkey
 
     warnings = security.insecure_configuration_warnings()
     assert any("rotation age exceeded configured threshold" in warning for warning in warnings)
+
+
+def test_session_signing_rotation_status_reports_exceeded(monkeypatch: pytest.MonkeyPatch):
+    security = _reload_security(
+        monkeypatch,
+        APP_ENV="prod",
+        SESSION_TOKEN_SIGNING_KEYS="k2:abcdefghijklmnopqrstuvwxyz123456,k1:ZYXWVUTSRQPONMLKJIHGFEDCBA654321",
+        SESSION_TOKEN_SIGNING_LAST_ROTATED_AT="2020-01-01T00:00:00Z",
+        SESSION_TOKEN_ROTATION_MAX_DAYS="30",
+    )
+    status = security.session_signing_rotation_status()
+    assert status["monitoring_enabled"] is True
+    assert status["rotation_age_exceeded"] is True
+    assert int(status["age_days"] or 0) > 30
+    assert status["warnings"]

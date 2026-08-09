@@ -1,299 +1,571 @@
-<section id="playground" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Playground Studio</h3>
-              <div class="inline-actions">
-                <button id="loadPlaygroundTestSets" class="ghost" type="button">Load Test Sets</button>
-                <button id="runPlaygroundPrompt" class="primary" type="button">Run Prompt</button>
-                <button id="judgePlaygroundPrompt" class="ghost" type="button">Judge Prompt</button>
-                <button id="retryPlaygroundPrompt" class="ghost" type="button">Retry Prompt</button>
-              </div>
-            </div>
-            <p class="mono">Compose a text prompt, attach voice or video files, judge candidate models, and retry with the best result. Media is packaged as prompt context for the backend run.</p>
-            <form id="playgroundRunForm" class="form-grid">
-              <label class="wide-field">Prompt Text<textarea name="prompt_text" rows="6" required placeholder="Describe the agent task, constraints, expected output, and safety checks.">Draft a support response for a customer escalation.</textarea></label>
-              <label>Selected Model<input name="selected_model" required value="gpt-4o-mini" placeholder="gpt-4o-mini" /></label>
-              <label>Candidate Models<input name="candidate_models" value="gpt-4o-mini,gpt-4o" placeholder="gpt-4o-mini,gpt-4o" /></label>
-              <label>Team IDs<input name="team_ids" placeholder="team-platform,team-support" /></label>
-              <label>Group IDs<input name="group_ids" placeholder="grp-platform,grp-support" /></label>
-              <label>Projected Extra Cost (cents)<input name="projected_additional_cost_cents" type="number" min="0" step="1" value="25" /></label>
-              <label>
-                Live Stream Preview
-                <select name="live_stream">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label>Video Attachment<input id="playgroundVideoInput" type="file" accept="video/*" /></label>
-              <label>Voice Attachment<input id="playgroundVoiceInput" type="file" accept="audio/*" /></label>
-              <button id="togglePlaygroundMic" type="button" class="ghost">Turn On Mike</button>
-              <p id="playgroundMicStatus" class="mono">Microphone off.</p>
-            </form>
-            <div class="card-head config-actions">
-              <h4>Prompt Judge</h4>
-              <div class="inline-actions">
-                <button id="applyPlaygroundWinner" class="ghost" type="button">Apply Winner</button>
-                <button id="clearPlaygroundStream" class="ghost" type="button">Clear Stream</button>
-              </div>
-            </div>
-            <p id="playgroundResult" class="mono"></p>
-            <p id="playgroundJudgeSummary" class="mono"></p>
-            <div id="playgroundAttachmentList" class="attachment-list"></div>
-            <pre id="playgroundLiveStreamLog" class="mono live-stream-log" aria-live="polite"></pre>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Playground judge results</caption>
-                <thead>
-                  <tr><th>Model</th><th>Latency</th><th>Cost</th><th>Quality</th><th>Action</th></tr>
-                </thead>
-                <tbody id="playgroundJudgeTable"></tbody>
-              </table>
-            </div>
-            <div class="card-head config-actions">
-              <h4>Prompt Registry</h4>
-              <div class="inline-actions">
-                <button id="loadPromptRegistryItems" class="ghost" type="button">Load Registry</button>
-                <button id="loadPromptRegistryVersions" class="ghost" type="button">Load Versions</button>
-                <button id="deletePromptRegistryItem" class="ghost" type="button">Delete Selected</button>
-              </div>
-            </div>
-            <form id="promptRegistryForm" class="form-grid">
-              <input type="hidden" name="prompt_registry_id" />
-              <label class="wide-field">Registry Name<input name="name" required placeholder="customer-escalation-v1" /></label>
-              <label class="wide-field">Description<textarea name="description" rows="2" placeholder="Purpose, owner, and allowed use cases."></textarea></label>
-              <label class="wide-field">Labels<input name="labels" placeholder="support, safety, production" /></label>
-              <label class="wide-field">Prompt Text<textarea name="prompt_text" rows="6" required placeholder="The prompt body to govern and version."></textarea></label>
-              <label>Change Reason<input name="change_reason" value="updated" placeholder="updated" /></label>
-              <button type="submit" class="primary">Save Registry Item</button>
-            </form>
-            <form id="promptRegistryPromotionForm" class="form-grid">
-              <input type="hidden" name="prompt_registry_id" />
-              <label>Target Environment
-                <select name="target_environment">
-                  <option value="dev">dev</option>
-                  <option value="staging">staging</option>
-                  <option value="prod">prod</option>
-                </select>
-              </label>
-              <label>Promotion Reason<input name="reason" value="promote" placeholder="release approved prompt" /></label>
-              <label>Approval Ticket<input name="approval_ticket" placeholder="CHG-1234" /></label>
-              <label>Require Render Validation
-                <select name="require_render_validation">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="wide-field">Render Variables (one per line as <code>key=value</code>)
-                <textarea name="render_variables" rows="4" placeholder="ticket_id=INC-42&#10;customer_tier=gold"></textarea>
-              </label>
-              <div class="inline-actions">
-                <button id="previewPromptRegistryPromotion" type="button" class="ghost">Preview Promotion</button>
-                <button type="submit" class="primary">Promote Prompt</button>
-              </div>
-            </form>
-            <p id="promptRegistryResult" class="mono"></p>
-            <p id="promptRegistryPromotionResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Prompt registry items</caption>
-                <thead>
-                  <tr><th>Name</th><th>Version</th><th>Status</th><th>Labels</th><th>Updated</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="promptRegistryTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Prompt registry versions</caption>
-                <thead>
-                  <tr><th>Version</th><th>Reason</th><th>Created By</th><th>Created At</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="promptRegistryVersionsTable"></tbody>
-              </table>
-            </div>
-            <div class="card-head config-actions">
-              <h4>Run History</h4>
-              <div class="inline-actions">
-                <button id="loadPlaygroundRuns" class="ghost" type="button">Load History</button>
-                <button id="loadSelectedPlaygroundRun" class="ghost" type="button">Load Selected</button>
-              </div>
-            </div>
-            <form id="playgroundRunHistoryFilters" class="form-grid">
-              <label>Run ID<input name="run_id" placeholder="Optional run id" /></label>
-              <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="25" /></label>
-              <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
-              <button type="submit" class="ghost">Apply Filters</button>
-            </form>
-            <p id="playgroundRunHistoryResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Playground run history</caption>
-                <thead>
-                  <tr><th>Run ID</th><th>Model</th><th>Status</th><th>Policy</th><th>Cost</th><th>Created</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="playgroundRunTable"></tbody>
-              </table>
-            </div>
-            <div class="card-head config-actions">
-              <h4>Feedback Loop</h4>
-              <div class="inline-actions">
-                <button id="loadPlaygroundRunFeedback" class="ghost" type="button">Load Feedback</button>
-              </div>
-            </div>
-            <form id="playgroundFeedbackForm" class="form-grid">
-              <input type="hidden" name="run_id" />
-              <label>Trace ID<input name="trace_id" placeholder="trace-run-id" /></label>
-              <label>Rating<input name="rating" type="number" min="1" max="5" step="1" value="4" /></label>
-              <label>Quality Score<input name="quality_score" type="number" min="0" max="1" step="0.01" value="0.8" /></label>
-              <label class="wide-field">Comment<textarea name="comment" rows="3" placeholder="What worked, what failed, and why."></textarea></label>
-              <button type="submit" class="primary">Save Feedback</button>
-            </form>
-            <p id="playgroundFeedbackResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Playground run feedback</caption>
-                <thead>
-                  <tr><th>Trace</th><th>Rating</th><th>Quality</th><th>Comment</th><th>Created</th></tr>
-                </thead>
-                <tbody id="playgroundRunFeedbackTable"></tbody>
-              </table>
-            </div>
-            <div class="card-head config-actions">
-              <h4>Quality Triage Queue</h4>
-              <div class="inline-actions">
-                <button id="loadPlaygroundQualityTriage" class="ghost" type="button">Load Triage Queue</button>
-              </div>
-            </div>
-            <form id="playgroundQualityTriageForm" class="form-grid">
-              <label>Max Quality Score<input name="max_quality_score" type="number" min="0" max="1" step="0.01" value="0.8" /></label>
-              <label>Max Rating<input name="max_rating" type="number" min="1" max="5" step="1" value="3" /></label>
-              <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
-              <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
-              <button type="submit" class="ghost">Apply Queue Filters</button>
-            </form>
-            <p id="playgroundQualityTriageResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Playground quality triage queue</caption>
-                <thead>
-                  <tr><th>Priority</th><th>Run</th><th>Trace</th><th>Model</th><th>Rating</th><th>Quality</th><th>Reason</th><th>Comment</th><th>Created</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="playgroundQualityTriageTable"></tbody>
-              </table>
-            </div>
-            <div class="card-head config-actions">
-              <h4>Quality Escalations</h4>
-              <div class="inline-actions">
-                <button id="loadPlaygroundQualityEscalations" class="ghost" type="button">Load Escalations</button>
-              </div>
-            </div>
-            <form id="playgroundQualityEscalationCreateForm" class="form-grid">
-              <label>Feedback ID<input name="feedback_id" placeholder="feedback id from triage queue" required /></label>
-              <label>Severity
-                <select name="severity">
-                  <option value="critical">critical</option>
-                  <option value="high" selected>high</option>
-                  <option value="medium">medium</option>
-                  <option value="low">low</option>
-                </select>
-              </label>
-              <label>Priority
-                <select name="priority_tag">
-                  <option value="p0">p0</option>
-                  <option value="p1" selected>p1</option>
-                  <option value="p2">p2</option>
-                </select>
-              </label>
-              <label>SLA Minutes<input name="sla_target_minutes" type="number" min="15" max="10080" step="1" value="60" /></label>
-              <label>Assigned Team<input name="assigned_team" value="ai-trust-ops" /></label>
-              <label>Escalation Channel<input name="escalation_channel" value="security-ops" /></label>
-              <label>External Ticket<input name="external_ticket_ref" placeholder="INC-991" /></label>
-              <label class="wide-field">Escalation Reason<textarea name="escalation_reason" rows="2" placeholder="Describe risk impact and why escalation is required." required></textarea></label>
-              <button type="submit" class="primary">Create Escalation</button>
-            </form>
-            <form id="playgroundQualityEscalationFiltersForm" class="form-grid">
-              <label>Status
-                <select name="status">
-                  <option value="open" selected>open</option>
-                  <option value="acknowledged">acknowledged</option>
-                  <option value="resolved">resolved</option>
-                  <option value="">all</option>
-                </select>
-              </label>
-              <label>Priority
-                <select name="priority_tag">
-                  <option value="">all</option>
-                  <option value="p0">p0</option>
-                  <option value="p1">p1</option>
-                  <option value="p2">p2</option>
-                </select>
-              </label>
-              <label>Assigned Team<input name="assigned_team" placeholder="ai-trust-ops" /></label>
-              <label>Overdue Only
-                <select name="overdue_only">
-                  <option value="false" selected>false</option>
-                  <option value="true">true</option>
-                </select>
-              </label>
-              <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
-              <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
-              <button type="submit" class="ghost">Apply Escalation Filters</button>
-            </form>
-            <form id="playgroundQualityEscalationResolveForm" class="form-grid">
-              <label>Escalation ID<input name="escalation_id" required placeholder="pqe-..." /></label>
-              <label class="wide-field">Resolution Note<textarea name="resolution_note" rows="2" placeholder="Describe final disposition and corrective action."></textarea></label>
-              <label>Notify Channel<input name="notify_channel" value="security-ops" /></label>
-              <label>Notify Destination<input name="notify_destination" placeholder="pagerduty://ai-trust-ops" /></label>
-              <label>Notify Prefix<input name="notify_message_prefix" value="Playground escalation alert" /></label>
-              <div class="inline-actions">
-                <button id="acknowledgePlaygroundQualityEscalation" type="button" class="ghost">Acknowledge Escalation</button>
-                <button id="notifyPlaygroundQualityEscalation" type="button" class="ghost">Notify Channel</button>
-                <button type="submit" class="primary">Resolve Escalation</button>
-              </div>
-            </form>
-            <p id="playgroundQualityEscalationResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Playground quality escalations</caption>
-                <thead>
-                  <tr><th>Status</th><th>Priority</th><th>Severity</th><th>Escalation ID</th><th>Feedback</th><th>Run</th><th>Due At</th><th>Assigned Team</th><th>Ticket</th><th>Reason</th></tr>
-                </thead>
-                <tbody id="playgroundQualityEscalationTable"></tbody>
-              </table>
-            </div>
-            <div class="card-head config-actions">
-              <h4>Quality Analytics Rollups</h4>
-              <div class="inline-actions">
-                <button id="loadPlaygroundQualityRollups" class="ghost" type="button">Load Rollups</button>
-              </div>
-            </div>
-            <form id="playgroundQualityRollupsForm" class="form-grid">
-              <label>Window Hours<input name="window_hours" type="number" min="24" max="2160" step="1" value="168" /></label>
-              <label>Bucket Hours<input name="bucket_hours" type="number" min="1" max="168" step="1" value="24" /></label>
-              <label>Provider ID<input name="provider_id" placeholder="openai" /></label>
-              <label>Route Policy ID<input name="route_policy_id" placeholder="snapshot-..." /></label>
-              <label>Model Name<input name="model_name" placeholder="openai/gpt-4o-mini" /></label>
-              <label>Limit<input name="limit" type="number" min="1" max="5000" step="1" value="500" /></label>
-              <button type="submit" class="ghost">Apply Rollup Filters</button>
-            </form>
-            <p id="playgroundQualityRollupsResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Playground quality analytics rollups</caption>
-                <thead>
-                  <tr><th>Bucket Start</th><th>Bucket End</th><th>Provider</th><th>Route</th><th>Model</th><th>Samples</th><th>Avg Quality</th><th>Avg Rating</th><th>Critical</th><th>Elevated</th></tr>
-                </thead>
-                <tbody id="playgroundQualityRollupsTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Playground test sets</caption>
-                <thead>
-                  <tr><th>Test Set ID</th><th>Name</th><th>Cases</th></tr>
-                </thead>
-                <tbody id="playgroundTestSetsTable"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+<section id="playground" class="view runtime-config-view">
+  <article class="card runtime-config-hero">
+    <div class="card-head">
+      <div>
+        <p class="sig-kicker">Prompt laboratory</p>
+        <h3>Studio &amp; quality</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Laboratory governed</span></p>
+      </div>
+      <button id="refreshPlaygroundConsole" class="ghost" type="button">Refresh All</button>
+    </div>
+    <p class="card-lead">Run prompts, judge models, and triage quality.</p>
+    <p id="playgroundConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading playground inventory…</p>
+    <div class="view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Playground
+          <input class="view-page-search-input" data-view-search-input type="search" placeholder="Filter playground tables and sections" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Runs</span>
+        <strong>Ledgered</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Registry</span>
+        <strong>Versioned</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Quality</span>
+        <strong>Triaged</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Promote</span>
+        <strong>Dual-approval</strong>
+      </div>
+    </section>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Playground console sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="studio">Studio</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="registry">Registry</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="quality">Quality</button>
+    </div>
+  </article>
+
+  <div data-console-panel="overview" class="runtime-console-panel active">
+    <article class="card">
+      <div class="card-head">
+        <h4>Laboratory operating sequence</h4>
+      </div>
+      <div class="runtime-workflow-steps" aria-label="Recommended playground workflow">
+        <div class="runtime-workflow-step">
+          <strong>0. Credentials</strong>
+          <span>Ensure model credentials exist in Providers (Store Secret Value or workload identity). Gateway Cursor runs need binding + <code>gateway/cursor-token</code>.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>1. Compose and run</strong>
+          <span>Build a prompt with model candidates, optional voice or video attachments, and live stream preview.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Judge and retry</strong>
+          <span>Compare candidate model latency, cost, and quality scores; apply the winner or retry with the best result.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Govern prompts</strong>
+          <span>Save registry items, version changes, and promote approved prompts across environments.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>4. Triage quality</strong>
+          <span>Review feedback, escalate low-quality runs, analyze rollups, and load test sets for regression checks.</span>
+        </div>
+      </div>
+      <div class="chip-row" aria-label="Jump to playground workspaces">
+        <button type="button" class="chip" data-providers-console-tab-jump="secrets" data-providers-nav-view="providers" data-providers-scroll-target="providersSecretValueStore">Configure Credentials</button>
+        <button type="button" class="chip" data-console-tab-jump="studio">Playground Studio</button>
+        <button type="button" class="chip" data-console-tab-jump="registry">Prompt Registry</button>
+        <button type="button" class="chip" data-console-tab-jump="quality">Quality Triage</button>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="studio" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head playground-card-head">
+        <div>
+          <p class="sig-kicker">Run ledger</p>
+          <h4>Prompt studio</h4>
+        </div>
+        <div class="inline-actions">
+          <button id="runPlaygroundPrompt" class="primary" type="button">Run Prompt</button>
+          <button id="judgePlaygroundPrompt" class="ghost" type="button">Judge Prompt</button>
+          <button id="retryPlaygroundPrompt" class="ghost" type="button">Retry Prompt</button>
+        </div>
+      </div>
+      <p class="help-copy" data-help-label="About prompt studio">Compose, attach media, and run via the gateway. Models are grouped by provider and tagged live / needs creds from inference readiness.</p>
+      <div class="leadership-status-compact" aria-live="polite">
+        <p id="playgroundCredentialStatus" class="runtime-feedback mono"></p>
+        <p id="playgroundLeadershipTrafficLight" class="runtime-feedback mono"></p>
+        <p id="playgroundAutoRouteMeta" class="runtime-feedback mono"></p>
+        <p id="playgroundLeadershipWarn" class="runtime-feedback mono"></p>
+        <p id="playgroundLeadershipDiagnoseStatus" class="runtime-feedback mono"></p>
+      </div>
+      <div class="chip-row" style="margin:0.25rem 0 0.5rem;flex-wrap:wrap;gap:0.4rem;">
+        <button id="runPlaygroundLeadershipDiagnose" type="button" class="ghost">Leadership diagnose</button>
+      </div>
+      <div class="form-grid" style="margin-bottom: 0.5rem;">
+        <label>
+          Provider filter
+          <select id="playgroundProviderFilter" aria-label="Filter playground models by provider">
+            <option value="" selected>All providers</option>
+          </select>
+        </label>
+        <label class="playground-retry-option" style="align-self:end;">
+          <span>
+            <input id="playgroundPreferLiveReady" name="prefer_live_ready" type="checkbox" checked />
+            Prefer live-ready vendors in model lists
+          </span>
+        </label>
+        <div class="wide-field chip-row" id="playgroundProviderChips" aria-label="Quick provider filters"></div>
+      </div>
+      <form id="playgroundRunForm" class="form-grid">
+        <label class="wide-field">Prompt Text<textarea name="prompt_text" rows="6" required placeholder="Describe the agent task, constraints, expected output, and safety checks.">Draft a support response for a customer escalation.</textarea></label>
+        <label>Selected Model<select name="selected_model" data-gateway-model-select data-model-filter-scope="playground" data-default-model="gpt-4o-mini" required><option value="" disabled hidden selected>Load models first...</option></select></label>
+        <label class="checkbox-field"><input type="checkbox" name="auto_route" value="true" /> Complexity auto-router (override selected model)</label>
+        <label>Environment
+          <select name="environment" aria-label="Playground environment">
+            <option value="dev" selected>Dev</option>
+            <option value="staging">Staging</option>
+            <option value="prod">Prod</option>
+          </select>
+        </label>
+        <label class="wide-field">Candidate Models (fallback)<select name="candidate_models" data-gateway-model-select-multi data-model-filter-scope="playground" data-default-models="gpt-4o-mini,gpt-4o" multiple size="4"><option value="" disabled hidden>Load models first...</option></select></label>
+        <label>Team IDs<input name="team_ids" placeholder="team-platform,team-support" /></label>
+        <label>Group IDs<input name="group_ids" placeholder="grp-platform,grp-support" /></label>
+        <label>Session ID (memory scope)<input name="session_id" placeholder="session-abc123" /></label>
+        <label>Conversation ID (memory scope)<input name="conversation_id" placeholder="conv-abc123" /></label>
+        <label>Projected Extra Cost (cents)<input name="projected_additional_cost_cents" type="number" min="0" step="1" value="25" /></label>
+        <label>
+          Live Stream Preview
+          <select name="live_stream">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label>Video Attachment<input id="playgroundVideoInput" type="file" accept="video/*" /></label>
+        <label>Voice Attachment<input id="playgroundVoiceInput" type="file" accept="audio/*" /></label>
+        <div class="wide-field playground-mic-row">
+          <button id="togglePlaygroundMic" type="button" class="ghost">Turn On Mike</button>
+          <p id="playgroundMicStatus" class="mono playground-mic-status">Microphone off.</p>
+        </div>
+        <div class="inline-actions wide-field">
+          <button id="savePlaygroundMemoryContext" type="button" class="ghost">Save Prompt Context to Memory</button>
+        </div>
+      </form>
+      <p id="playgroundResult" class="mono"></p>
+      <div id="playgroundAttachmentList" class="attachment-list"></div>
+      <pre id="playgroundLiveStreamLog" class="mono live-stream-log" aria-live="polite"></pre>
+    </article>
+
+    <article class="card" id="playgroundJudgeCard">
+      <div class="card-head playground-card-head">
+        <h4>Prompt Judge &amp; Retry</h4>
+        <div class="inline-actions playground-judge-actions">
+          <button id="judgePlaygroundPromptSecondary" class="ghost" type="button">Judge Candidates</button>
+          <button id="applyPlaygroundWinner" class="ghost" type="button">Apply Winner</button>
+          <button id="retryPlaygroundPromptSecondary" class="ghost" type="button">Prepare Retry</button>
+          <button id="retryAndRunPlaygroundPrompt" class="primary" type="button">Retry &amp; Run</button>
+          <button id="clearPlaygroundStream" class="ghost" type="button">Clear Stream</button>
+        </div>
+      </div>
+      <p class="card-lead">Rank candidate models by quality, then latency.</p>
+      <details class="playground-judge-help">
+        <summary>How judging works</summary>
+        <ol class="playground-judge-steps">
+          <li><strong>Run inference</strong> — <code>POST /playground/compare</code> calls gateway chat completion once per candidate model.</li>
+          <li><strong>Measure</strong> — latency is wall-clock time; cost is estimated from token usage.</li>
+          <li><strong>Score quality (0–1)</strong> — factual prompts (e.g. capitals) match against known answers; echo/stub responses score lowest; other prompts use a length heuristic.</li>
+          <li><strong>Rank</strong> — highest quality wins; ties break on lower latency.</li>
+          <li><strong>Retry</strong> — applies the winner to <em>Selected Model</em> and optionally appends judge guidance to the prompt before re-running.</li>
+        </ol>
+      </details>
+      <p id="playgroundJudgeStatus" class="runtime-feedback mono" aria-live="polite">Judge idle — fill prompt + candidate models, then click Judge Candidates.</p>
+      <div id="playgroundJudgeWinner" class="playground-judge-winner" hidden>
+        <p class="playground-judge-winner-label">Winner</p>
+        <h5 id="playgroundJudgeWinnerModel">—</h5>
+        <p id="playgroundJudgeWinnerMeta" class="mono"></p>
+        <pre id="playgroundJudgeWinnerResponse" class="mono playground-judge-response"></pre>
+        <p id="playgroundJudgeWinnerReason" class="mono playground-judge-reason"></p>
+      </div>
+      <div id="playgroundRetryOptions" class="playground-retry-options">
+        <label class="playground-retry-option">
+          <span class="checkbox-row">
+            <input id="playgroundRetryAutoRun" name="auto_run" type="checkbox" />
+            Auto-run after Judge
+          </span>
+        </label>
+        <label class="playground-retry-option">
+          <span class="checkbox-row">
+            <input id="playgroundRetryAppendGuidance" name="append_guidance" type="checkbox" checked />
+            Append judge guidance on retry
+          </span>
+        </label>
+      </div>
+      <p id="playgroundJudgeSummary" class="mono playground-judge-summary"></p>
+      <div class="table-wrap playground-judge-table-wrap">
+        <table>
+          <caption class="sr-only">Playground judge results</caption>
+          <thead>
+            <tr><th>Rank</th><th>Model</th><th>Quality</th><th>Why</th><th>Response</th><th>Latency</th><th>Cost</th><th>Action</th></tr>
+          </thead>
+          <tbody id="playgroundJudgeTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head playground-card-head">
+        <h4>Run History</h4>
+        <div class="inline-actions">
+          <button id="loadPlaygroundRuns" class="ghost" type="button">Load History</button>
+          <button id="loadSelectedPlaygroundRun" class="ghost" type="button">Load Selected</button>
+        </div>
+      </div>
+      <form id="playgroundRunHistoryFilters" class="form-grid">
+        <label>Run ID<input name="run_id" placeholder="Optional run id" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="25" /></label>
+        <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+        <button type="submit" class="ghost">Apply Filters</button>
+      </form>
+      <p id="playgroundRunHistoryResult" class="mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Playground run history</caption>
+          <thead>
+            <tr><th>Run ID</th><th>Model</th><th>Status</th><th>Policy</th><th>Cost</th><th>Created</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="playgroundRunTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card" id="playgroundRunDrilldownPanel">
+      <div class="card-head">
+        <h4>Run Drill-down</h4>
+        <div class="inline-actions">
+          <button id="refreshPlaygroundRunDrilldown" class="ghost" type="button">Refresh Drill-down</button>
+        </div>
+      </div>
+      <div class="runtime-console-tabs" role="tablist" aria-label="Playground run drill-down tabs">
+        <button class="ghost active" type="button" data-playground-drilldown-tab="run">Run</button>
+        <button class="ghost" type="button" data-playground-drilldown-tab="feedback">Feedback</button>
+        <button class="ghost" type="button" data-playground-drilldown-tab="assessment">Assessment</button>
+        <button class="ghost" type="button" data-playground-drilldown-tab="audit">Audit trace</button>
+        <button class="ghost" type="button" data-playground-drilldown-tab="actions">Actions</button>
+      </div>
+      <div data-playground-drilldown-panel="run" class="runtime-console-panel active">
+        <pre id="playgroundDrilldownRun" class="mono">Select a run to load drill-down details.</pre>
+      </div>
+      <div data-playground-drilldown-panel="feedback" class="runtime-console-panel" hidden>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Playground run feedback drill-down</caption>
+            <thead><tr><th>Rating</th><th>Score</th><th>Comment</th><th>Created</th></tr></thead>
+            <tbody id="playgroundDrilldownFeedbackTable"></tbody>
+          </table>
+        </div>
+      </div>
+      <div data-playground-drilldown-panel="assessment" class="runtime-console-panel" hidden>
+        <pre id="playgroundDrilldownAssessment" class="mono">No assessment loaded.</pre>
+      </div>
+      <div data-playground-drilldown-panel="audit" class="runtime-console-panel" hidden>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Playground run audit trace</caption>
+            <thead><tr><th>Time</th><th>Action</th><th>Resource</th><th>Outcome</th><th>Trace</th></tr></thead>
+            <tbody id="playgroundDrilldownAuditTable"></tbody>
+          </table>
+        </div>
+      </div>
+      <div data-playground-drilldown-panel="actions" class="runtime-console-panel" hidden>
+        <div class="inline-actions">
+          <button id="drilldownAssessPlaygroundRun" class="ghost" type="button">Assess Run</button>
+          <button id="drilldownCreateRouteDraft" class="ghost" type="button">Create Route Draft</button>
+          <button id="drilldownPivotObservability" class="ghost" type="button">Pivot to Observability</button>
+        </div>
+        <pre id="playgroundDrilldownActions" class="mono"></pre>
+      </div>
+      <p id="playgroundDrilldownResult" class="mono"></p>
+    </article>
+
+    <article class="card" id="playgroundFeedbackLoopCard">
+      <div class="card-head playground-card-head">
+        <h4>Feedback Loop</h4>
+        <div class="inline-actions">
+          <button id="assessPlaygroundRunFeedback" class="ghost" type="button">AI Assess</button>
+          <button id="loadPlaygroundRunFeedback" class="ghost" type="button">Load Feedback</button>
+        </div>
+      </div>
+      <p id="playgroundFeedbackContext" class="runtime-feedback mono playground-feedback-context" aria-live="polite">
+        No run linked — run a prompt or open a run from history to rate its output.
+      </p>
+      <p id="playgroundFeedbackAssessStatus" class="runtime-feedback mono" aria-live="polite">AI assess idle.</p>
+      <p id="playgroundFeedbackAiReason" class="playground-feedback-ai-reason mono" hidden></p>
+      <form id="playgroundFeedbackForm" class="form-grid">
+        <input type="hidden" name="run_id" />
+        <input type="hidden" name="feedback_id" />
+        <label>Run ID<input name="run_id_display" readonly placeholder="Select a run first" /></label>
+        <label>Trace ID<input name="trace_id" placeholder="Gateway trace id" required /></label>
+        <label>Rating<input name="rating" type="number" min="1" max="5" step="1" value="4" /></label>
+        <label>Quality Score<input name="quality_score" type="number" min="0" max="1" step="0.01" value="0.8" /></label>
+        <label class="wide-field">Operator Comment
+          <textarea name="comment" rows="3" placeholder="Your notes: what worked, what failed, customer impact, repro steps. Shown in Quality Triage and copied into escalations."></textarea>
+        </label>
+        <p class="playground-feedback-help wide-field">Comments are saved with feedback, appear in the <strong>Quality Triage</strong> queue, and pre-fill the escalation reason when you escalate a low-quality run.</p>
+        <button type="submit" class="primary">Save Feedback</button>
+      </form>
+      <p id="playgroundFeedbackResult" class="mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Playground run feedback</caption>
+          <thead>
+            <tr><th>Trace</th><th>Rating</th><th>Quality</th><th>Comment</th><th>Created</th></tr>
+          </thead>
+          <tbody id="playgroundRunFeedbackTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="registry" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head playground-card-head">
+        <h4>Prompt Registry</h4>
+        <div class="inline-actions">
+          <button id="loadPromptRegistryItems" class="ghost" type="button">Load Registry</button>
+          <button id="loadPromptRegistryVersions" class="ghost" type="button">Load Versions</button>
+          <button id="deletePromptRegistryItem" class="ghost" type="button">Delete Selected</button>
+        </div>
+      </div>
+      <form id="promptRegistryForm" class="form-grid">
+        <input type="hidden" name="prompt_registry_id" />
+        <label class="wide-field">Registry Name<input name="name" required placeholder="customer-escalation-v1" /></label>
+        <label class="wide-field">Description<textarea name="description" rows="2" placeholder="Purpose, owner, and allowed use cases."></textarea></label>
+        <label class="wide-field">Labels<input name="labels" placeholder="support, safety, production" /></label>
+        <label class="wide-field">Prompt Text<textarea name="prompt_text" rows="6" required placeholder="The prompt body to govern and version."></textarea></label>
+        <label>Change Reason<input name="change_reason" value="updated" placeholder="updated" /></label>
+        <button type="submit" class="primary">Save Registry Item</button>
+      </form>
+      <form id="promptRegistryPromotionForm" class="form-grid">
+        <input type="hidden" name="prompt_registry_id" />
+        <label>Target Environment
+          <select name="target_environment">
+            <option value="dev">dev</option>
+            <option value="staging">staging</option>
+            <option value="prod">prod</option>
+          </select>
+        </label>
+        <label>Promotion Reason<input name="reason" value="promote" placeholder="release approved prompt" /></label>
+        <label>Approval Ticket<input name="approval_ticket" placeholder="CHG-1234" /></label>
+        <label>Require Render Validation
+          <select name="require_render_validation">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </label>
+        <label>Approver Role (required for prod)
+          <select name="approver_role">
+            <option value="">—</option>
+            <option value="Security Approver">Security Approver</option>
+            <option value="Platform Admin">Platform Admin</option>
+            <option value="AI Ops Approver">AI Ops Approver</option>
+          </select>
+        </label>
+        <label>Approver ID (required for prod)<input name="approver_id" placeholder="security-approver-1" autocomplete="off" /></label>
+        <label class="wide-field">Render Variables (one per line as <code>key=value</code>)
+          <textarea name="render_variables" rows="4" placeholder="ticket_id=INC-42&#10;customer_tier=gold"></textarea>
+        </label>
+        <div class="inline-actions">
+          <button id="renderPromptRegistryItem" type="button" class="ghost">Render Prompt</button>
+          <button id="previewPromptRegistryPromotion" type="button" class="ghost">Preview Promotion</button>
+          <button type="submit" class="primary">Promote Prompt</button>
+        </div>
+      </form>
+      <p id="promptRegistryResult" class="mono"></p>
+      <p id="promptRegistryPromotionResult" class="mono"></p>
+      <pre id="promptRegistryRenderPayload" class="mono"></pre>
+      <pre id="promptRegistryVersionPayload" class="mono" aria-live="polite"></pre>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Prompt registry items</caption>
+          <thead>
+            <tr><th>Name</th><th>Version</th><th>Status</th><th>Labels</th><th>Updated</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="promptRegistryTable"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Prompt registry versions</caption>
+          <thead>
+            <tr><th>Version</th><th>Reason</th><th>Created By</th><th>Created At</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="promptRegistryVersionsTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="quality" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head playground-card-head">
+        <h4>Quality Triage Queue</h4>
+        <div class="inline-actions">
+          <button id="loadPlaygroundQualityTriage" class="ghost" type="button">Load Triage Queue</button>
+        </div>
+      </div>
+      <form id="playgroundQualityTriageForm" class="form-grid">
+        <label>Max Quality Score<input name="max_quality_score" type="number" min="0" max="1" step="0.01" value="0.8" /></label>
+        <label>Max Rating<input name="max_rating" type="number" min="1" max="5" step="1" value="3" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+        <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+        <button type="submit" class="ghost">Apply Queue Filters</button>
+      </form>
+      <p id="playgroundQualityTriageResult" class="mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Playground quality triage queue</caption>
+          <thead>
+            <tr><th>Priority</th><th>Run</th><th>Trace</th><th>Model</th><th>Rating</th><th>Quality</th><th>Reason</th><th>Comment</th><th>Created</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="playgroundQualityTriageTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head playground-card-head">
+        <h4>Quality Escalations</h4>
+        <div class="inline-actions">
+          <button id="loadPlaygroundQualityEscalations" class="ghost" type="button">Load Escalations</button>
+        </div>
+      </div>
+      <form id="playgroundQualityEscalationCreateForm" class="form-grid">
+        <label>Feedback ID<input name="feedback_id" placeholder="feedback id from triage queue" required /></label>
+        <label>Severity
+          <select name="severity">
+            <option value="critical">critical</option>
+            <option value="high" selected>high</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+          </select>
+        </label>
+        <label>Priority
+          <select name="priority_tag">
+            <option value="p0">p0</option>
+            <option value="p1" selected>p1</option>
+            <option value="p2">p2</option>
+          </select>
+        </label>
+        <label>SLA Minutes<input name="sla_target_minutes" type="number" min="15" max="10080" step="1" value="60" /></label>
+        <label>Assigned Team<input name="assigned_team" value="ai-trust-ops" /></label>
+        <label>Escalation Channel<input name="escalation_channel" value="security-ops" /></label>
+        <label>External Ticket<input name="external_ticket_ref" placeholder="INC-991" /></label>
+        <label class="wide-field">Escalation Reason<textarea name="escalation_reason" rows="2" placeholder="Describe risk impact and why escalation is required." required></textarea></label>
+        <button type="submit" class="primary">Create Escalation</button>
+      </form>
+      <form id="playgroundQualityEscalationFiltersForm" class="form-grid">
+        <label>Status
+          <select name="status">
+            <option value="open" selected>open</option>
+            <option value="acknowledged">acknowledged</option>
+            <option value="resolved">resolved</option>
+            <option value="">all</option>
+          </select>
+        </label>
+        <label>Priority
+          <select name="priority_tag">
+            <option value="">all</option>
+            <option value="p0">p0</option>
+            <option value="p1">p1</option>
+            <option value="p2">p2</option>
+          </select>
+        </label>
+        <label>Assigned Team<input name="assigned_team" placeholder="ai-trust-ops" /></label>
+        <label>Overdue Only
+          <select name="overdue_only">
+            <option value="false" selected>false</option>
+            <option value="true">true</option>
+          </select>
+        </label>
+        <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+        <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+        <button type="submit" class="ghost">Apply Escalation Filters</button>
+      </form>
+      <form id="playgroundQualityEscalationResolveForm" class="form-grid">
+        <label>Escalation ID<input name="escalation_id" required placeholder="pqe-..." /></label>
+        <label class="wide-field">Resolution Note<textarea name="resolution_note" rows="2" placeholder="Describe final disposition and corrective action."></textarea></label>
+        <label>Notify Channel<input name="notify_channel" value="security-ops" /></label>
+        <label>Notify Destination<input name="notify_destination" placeholder="pagerduty://ai-trust-ops" /></label>
+        <label>Notify Prefix<input name="notify_message_prefix" value="Playground escalation alert" /></label>
+        <div class="inline-actions">
+          <button id="acknowledgePlaygroundQualityEscalation" type="button" class="ghost">Acknowledge Escalation</button>
+          <button id="notifyPlaygroundQualityEscalation" type="button" class="ghost">Notify Channel</button>
+          <button type="submit" class="primary">Resolve Escalation</button>
+        </div>
+      </form>
+      <p id="playgroundQualityEscalationResult" class="mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Playground quality escalations</caption>
+          <thead>
+            <tr><th>Status</th><th>Priority</th><th>Severity</th><th>Escalation ID</th><th>Feedback</th><th>Run</th><th>Due At</th><th>Assigned Team</th><th>Ticket</th><th>Reason</th></tr>
+          </thead>
+          <tbody id="playgroundQualityEscalationTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head playground-card-head">
+        <h4>Quality Analytics Rollups</h4>
+        <div class="inline-actions">
+          <button id="loadPlaygroundQualityRollups" class="ghost" type="button">Load Rollups</button>
+        </div>
+      </div>
+      <form id="playgroundQualityRollupsForm" class="form-grid">
+        <label>Window Hours<input name="window_hours" type="number" min="24" max="2160" step="1" value="168" /></label>
+        <label>Bucket Hours<input name="bucket_hours" type="number" min="1" max="168" step="1" value="24" /></label>
+        <label>Provider ID<input name="provider_id" placeholder="openai" /></label>
+        <label>Route Policy ID<input name="route_policy_id" placeholder="snapshot-..." /></label>
+        <label>Model Name<select name="model_name" data-gateway-model-select data-allow-empty="true"><option value="" disabled hidden selected>Load models first...</option></select></label>
+        <label>Limit<input name="limit" type="number" min="1" max="5000" step="1" value="500" /></label>
+        <button type="submit" class="ghost">Apply Rollup Filters</button>
+      </form>
+      <p id="playgroundQualityRollupsResult" class="mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Playground quality analytics rollups</caption>
+          <thead>
+            <tr><th>Bucket Start</th><th>Bucket End</th><th>Provider</th><th>Route</th><th>Model</th><th>Samples</th><th>Avg Quality</th><th>Avg Rating</th><th>Critical</th><th>Elevated</th></tr>
+          </thead>
+          <tbody id="playgroundQualityRollupsTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head playground-card-head">
+        <h4>Test Sets</h4>
+        <div class="inline-actions">
+          <button id="loadPlaygroundTestSets" class="ghost" type="button">Load Test Sets</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Playground test sets</caption>
+          <thead>
+            <tr><th>Test Set ID</th><th>Name</th><th>Cases</th></tr>
+          </thead>
+          <tbody id="playgroundTestSetsTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

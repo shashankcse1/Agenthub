@@ -1,0 +1,46 @@
+name: SDK publish dry-run
+
+on:
+  push:
+    paths:
+      - "sdk/**"
+      - ".github/workflows/sdk-publish-dry-run.yml"
+  pull_request:
+    paths:
+      - "sdk/**"
+      - ".github/workflows/sdk-publish-dry-run.yml"
+  workflow_dispatch:
+
+jobs:
+  js-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Syntax check
+        run: npm run check
+      - name: npm pack / publish dry-run
+        run: |
+          npm pack --dry-run
+          npm publish --dry-run
+
+  python-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build and twine check
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check dist/*

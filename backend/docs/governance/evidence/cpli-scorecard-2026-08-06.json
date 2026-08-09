@@ -1,0 +1,750 @@
+{
+  "app_plane": "all",
+  "attestation_freshness": {
+    "age_hours": 0.0,
+    "attested_at_unix": 1786072621.8769321,
+    "fresh": true,
+    "max_age_hours": 168,
+    "reason": "ok"
+  },
+  "attestation_history": [
+    {
+      "attestation_id": "cpla-04cf09930bbe4fb3",
+      "attested_at": "2026-08-07T03:17:01.876933Z",
+      "attested_by": "program-leader-enhance",
+      "band": "leader_ready_engineering",
+      "canonical_sha256": "19e2d29b56139083cfc9d1d3cc9d5ca42c4985c94ec6794d8072e184e82cd182",
+      "score": 17,
+      "signed": false
+    },
+    {
+      "attestation_id": "cpla-0d4c8f1526c5478f",
+      "attested_at": "2026-08-07T03:17:01.801039Z",
+      "attested_by": "program-leader-enhance",
+      "band": "leader_ready_engineering",
+      "canonical_sha256": "efc6bcd8f837a55443e127bba80dc32e1a8c1d3f0e8b5e6dcc8cee3c6d3e37a8",
+      "score": 17,
+      "signed": false
+    },
+    {
+      "attestation_id": "cpla-b07056e1b1b3481a",
+      "attested_at": "2026-08-07T03:16:36.031250Z",
+      "attested_by": "plane-admin",
+      "band": "leader_ready_engineering",
+      "canonical_sha256": "e1059d9e0e1adcd0cf26ec02c009b8636d0cff3d020ebe5c1067a311dfe7daaf",
+      "score": 17,
+      "signed": true
+    },
+    {
+      "attestation_id": "cpla-59aa47c8c3114f63",
+      "attested_at": "2026-08-07T03:16:35.692484Z",
+      "attested_by": "plane-admin",
+      "band": "leader_ready_engineering",
+      "canonical_sha256": "7015567348a0fbe6a4803309826d1b3086f4e01ad0af59150820295895cc8080",
+      "score": 17,
+      "signed": true
+    },
+    {
+      "attestation_id": "cpla-cf227fa4b2054467",
+      "attested_at": "2026-08-07T03:12:23.225337Z",
+      "attested_by": "program-leader-enhance",
+      "band": "leader_ready_engineering",
+      "canonical_sha256": "835ae69b39ef5cf023af36040a03e3143dad9785cf44e4b632627c378bf40f0a",
+      "score": 17,
+      "signed": false
+    },
+    {
+      "attestation_id": "cpla-b9cc0d1741ea4cca",
+      "attested_at": "2026-08-07T03:12:23.182154Z",
+      "attested_by": "program-leader-enhance",
+      "band": "leader_ready_engineering",
+      "canonical_sha256": "097112c4f85c4611b39fd6ea59e3e660b175bf7b359ce8beeadf43cb0a559033",
+      "score": 17,
+      "signed": false
+    },
+    {
+      "attestation_id": "cpla-8c6137efac3a4ac4",
+      "attested_at": "2026-08-07T03:12:11.961103Z",
+      "attested_by": "plane-admin",
+      "band": "leader_ready_engineering",
+      "canonical_sha256": "16eb222aa60a630ead30bfa8514caea721b1f2d92219483a67d700f56ae08095",
+      "score": 17,
+      "signed": true
+    },
+    {
+      "attestation_id": "cpla-8c8baf9762264dae",
+      "attested_at": "2026-08-07T03:12:11.783579Z",
+      "attested_by": "plane-admin",
+      "band": "leader_ready_engineering",
+      "canonical_sha256": "f55b6eb2ca2bf01be85778951cd2c912a2382dc09e80560e42312104745f9ac2",
+      "score": 17,
+      "signed": true
+    }
+  ],
+  "band": "leader_ready_engineering",
+  "blockers": [],
+  "competitor_parity_notes": [
+    "Isolation + fail-closed + measured on-plane % match Portkey/Helicone control-plane narrative.",
+    "Hot policy publish + durable drift evidence close the ops gap vs proxy-only dashboards.",
+    "Signed attestation + history ring give release-gate evidence competitors often lack in UI.",
+    "Release-gate checklist + evidence pack close the ops parity gap vs checklist-only dashboards.",
+    "Honesty fence prevents checklist theater from becoming a marketing claim."
+  ],
+  "dimensions": [
+    {
+      "id": "isolation",
+      "label": "Process isolation",
+      "max": 3,
+      "note": "APP_PLANE=all \u00b7 plane-split compose profile available (deploy to earn 3/3)",
+      "score": 2,
+      "split_ready": true
+    },
+    {
+      "id": "hot_publish",
+      "label": "Hot policy publish",
+      "max": 3,
+      "note": "Published fingerprint 232fc65478507b64 via runtime_config",
+      "score": 3
+    },
+    {
+      "id": "durable_drift",
+      "label": "Durable drift evidence",
+      "max": 3,
+      "note": "10 durable drift events in recent window",
+      "score": 3
+    },
+    {
+      "id": "fail_closed",
+      "label": "Fail-closed gate",
+      "max": 3,
+      "note": "Fail-closed available but mode=off (safe default)",
+      "score": 1
+    },
+    {
+      "id": "slos",
+      "label": "Measured plane SLOs",
+      "max": 4,
+      "note": "on-plane\u2265SLO, peer latency ok, generation fresh, overall ok",
+      "score": 4
+    },
+    {
+      "id": "active_reconcile",
+      "label": "Active reconcile",
+      "max": 2,
+      "note": "Fresh reconcile within 24h (watcher optional on combined plane)",
+      "score": 2
+    },
+    {
+      "id": "honesty",
+      "label": "Honesty fence",
+      "max": 2,
+      "note": "Program LRS gate met (40/40) \u2014 CPLI remains engineering-only; external claims follow QBR honesty block",
+      "score": 2
+    }
+  ],
+  "drift_status": "none_combined",
+  "engineering_leader_ready": true,
+  "generated_at": "2026-08-07T03:17:01.922328Z",
+  "index_name": "control_plane_leadership_index",
+  "last_attestation": {
+    "attestation_id": "cpla-04cf09930bbe4fb3",
+    "attested_at": "2026-08-07T03:17:01.876933Z",
+    "attested_at_unix": 1786072621.8769321,
+    "attested_by": "program-leader-enhance",
+    "canonical_sha256": "19e2d29b56139083cfc9d1d3cc9d5ca42c4985c94ec6794d8072e184e82cd182",
+    "marketing_claim_allowed": false,
+    "scorecard": {
+      "app_plane": "all",
+      "band": "leader_ready_engineering",
+      "blockers": [],
+      "dimensions": [
+        {
+          "id": "isolation",
+          "label": "Process isolation",
+          "max": 3,
+          "note": "APP_PLANE=all \u00b7 plane-split compose profile available (deploy to earn 3/3)",
+          "score": 2,
+          "split_ready": true
+        },
+        {
+          "id": "hot_publish",
+          "label": "Hot policy publish",
+          "max": 3,
+          "note": "Published fingerprint 232fc65478507b64 via runtime_config",
+          "score": 3
+        },
+        {
+          "id": "durable_drift",
+          "label": "Durable drift evidence",
+          "max": 3,
+          "note": "10 durable drift events in recent window",
+          "score": 3
+        },
+        {
+          "id": "fail_closed",
+          "label": "Fail-closed gate",
+          "max": 3,
+          "note": "Fail-closed available but mode=off (safe default)",
+          "score": 1
+        },
+        {
+          "id": "slos",
+          "label": "Measured plane SLOs",
+          "max": 4,
+          "note": "on-plane\u2265SLO, peer latency ok, generation fresh, overall ok",
+          "score": 4
+        },
+        {
+          "id": "active_reconcile",
+          "label": "Active reconcile",
+          "max": 2,
+          "note": "Fresh reconcile within 24h (watcher optional on combined plane)",
+          "score": 2
+        },
+        {
+          "id": "honesty",
+          "label": "Honesty fence",
+          "max": 2,
+          "note": "Program LRS gate met (40/40) \u2014 CPLI remains engineering-only; external claims follow QBR honesty block",
+          "score": 2
+        }
+      ],
+      "drift_status": "none_combined",
+      "engineering_leader_ready": true,
+      "max_score": 20,
+      "on_plane_coverage_percent": 100.0,
+      "policy_fingerprint": "232fc65478507b64",
+      "published_fingerprint": "232fc65478507b64",
+      "score": 17,
+      "slos": {
+        "drift_status": "none_combined",
+        "generation_freshness_slo_seconds": 120.0,
+        "generation_publish_age_seconds": 0.12,
+        "generation_within_slo": true,
+        "on_plane_coverage_percent": 100.0,
+        "on_plane_coverage_slo_percent": 90.0,
+        "on_plane_within_slo": true,
+        "overall_within_slo": true,
+        "peer_probe_latency_ms": null,
+        "peer_probe_latency_slo_ms": 2000.0,
+        "peer_probe_within_slo": true
+      }
+    },
+    "signature": {
+      "algorithm": "SHA256",
+      "key_id": null,
+      "note": "SESSION_TOKEN_SIGNING_KEYS not configured; content hash only.",
+      "signature": "19e2d29b56139083cfc9d1d3cc9d5ca42c4985c94ec6794d8072e184e82cd182",
+      "signed": false
+    }
+  },
+  "last_attestation_verification": {
+    "algorithm": "SHA256",
+    "attestation_id": "cpla-04cf09930bbe4fb3",
+    "reason": "ok",
+    "signed": false,
+    "valid": true
+  },
+  "leader_band_threshold": 16,
+  "marketing_claim_allowed": false,
+  "marketing_claim_reason": "LRS 40/40 (Governed velocity) with no Authority/Clocks zeros and formal sign-off complete (attestation PROG-LRS-2026-08-06)",
+  "max_score": 20,
+  "next_actions": [
+    {
+      "action": "Engineering band met \u2014 keep attesting each release; program LRS/Authority still required before external leadership claims.",
+      "closes_toward": "honesty_fence",
+      "priority": 1
+    }
+  ],
+  "on_plane_coverage_percent": 100.0,
+  "plane_split_ready": true,
+  "points_to_leader_band": 0,
+  "policy_fingerprint": "232fc65478507b64",
+  "program_lrs": {
+    "attestation_id": "PROG-LRS-2026-08-06",
+    "attested_on": "2026-08-06",
+    "authority_zeros": 0,
+    "band": "Governed velocity",
+    "clocks_zeros": 0,
+    "formal_signoff_complete": true,
+    "max_score": 40,
+    "score": 40
+  },
+  "promotion_readiness": {
+    "attestation_fresh": true,
+    "attestation_valid": true,
+    "blockers": [],
+    "current_gate_passed": true,
+    "engineering_leader_ready": true,
+    "marketing_claim_allowed": false,
+    "note": "Promotion readiness is engineering-only. Program Leader Readiness / Authority remain required for external leadership claims.",
+    "ready": true,
+    "streak": 10,
+    "streak_required": 2
+  },
+  "published_fingerprint": "232fc65478507b64",
+  "release_gate": {
+    "advisory_failed_checks": [
+      "process_isolation"
+    ],
+    "attestation_freshness": {
+      "age_hours": 0.0,
+      "attested_at_unix": 1786072621.8769321,
+      "fresh": true,
+      "max_age_hours": 168,
+      "reason": "ok"
+    },
+    "band": "leader_ready_engineering",
+    "checks": [
+      {
+        "detail": "17/20 (need \u226516)",
+        "id": "cpli_leader_band",
+        "label": "CPLI \u2265 leader band",
+        "passed": true
+      },
+      {
+        "detail": "cpla-04cf09930bbe4fb3",
+        "id": "attestation_present",
+        "label": "Attestation present",
+        "passed": true
+      },
+      {
+        "detail": "ok",
+        "id": "attestation_valid",
+        "label": "Attestation integrity valid",
+        "passed": true
+      },
+      {
+        "detail": "age=0.0h",
+        "id": "attestation_fresh",
+        "label": "Attestation fresh (\u2264168h)",
+        "passed": true
+      },
+      {
+        "detail": "live=232fc65478507b64 published=232fc65478507b64",
+        "id": "fingerprint_aligned",
+        "label": "Published fingerprint aligns with live policy",
+        "passed": true
+      },
+      {
+        "detail": "none_combined",
+        "id": "no_active_drift",
+        "label": "No active peer/policy drift",
+        "passed": true
+      },
+      {
+        "detail": "hash-only",
+        "id": "hmac_signed",
+        "label": "Attestation HMAC-signed (preferred)",
+        "passed": true,
+        "preferred": true,
+        "preferred_met": false
+      },
+      {
+        "detail": "APP_PLANE=all",
+        "id": "process_isolation",
+        "label": "Process isolation (APP_PLANE\u2260all)",
+        "passed": false,
+        "severity": "advisory"
+      }
+    ],
+    "ci": {
+      "exit_code_hint": 0,
+      "go_no_go": "go",
+      "note": "Engineering gate only \u2014 does not authorize marketing leadership claims."
+    },
+    "engineering_leader_ready": true,
+    "failed_checks": [],
+    "gate_name": "control_plane_engineering_release_gate",
+    "generated_at": "2026-08-07T03:17:01.922388Z",
+    "marketing_claim_allowed": false,
+    "marketing_claim_reason": "Release gate is engineering-only. External leadership claims require program LRS + Authority.",
+    "max_attestation_age_hours": 168,
+    "next_actions": [
+      {
+        "action": "Engineering band met \u2014 keep attesting each release; program LRS/Authority still required before external leadership claims.",
+        "closes_toward": "honesty_fence",
+        "priority": 1
+      }
+    ],
+    "passed": true,
+    "release_gate_history": [
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "leader_ready_engineering",
+        "ci_exit_code_hint": 0,
+        "evaluated_at": "2026-08-07T03:17:01.831223Z",
+        "evaluated_by": "program-leader-enhance",
+        "evaluation_id": "cprg-ce958ee311644d80",
+        "failed_checks": [],
+        "passed": true,
+        "require_hmac": false,
+        "score": 17
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "leader_ready_engineering",
+        "ci_exit_code_hint": 0,
+        "evaluated_at": "2026-08-07T03:16:36.051122Z",
+        "evaluated_by": "plane-admin",
+        "evaluation_id": "cprg-8b904d605e5547be",
+        "failed_checks": [],
+        "passed": true,
+        "require_hmac": false,
+        "score": 17
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "leader_ready_engineering",
+        "ci_exit_code_hint": 0,
+        "evaluated_at": "2026-08-07T03:16:35.976949Z",
+        "evaluated_by": "plane-admin",
+        "evaluation_id": "cprg-d0435f2ac5b64602",
+        "failed_checks": [],
+        "passed": true,
+        "require_hmac": false,
+        "score": 17
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "leader_ready_engineering",
+        "ci_exit_code_hint": 0,
+        "evaluated_at": "2026-08-07T03:12:23.199615Z",
+        "evaluated_by": "program-leader-enhance",
+        "evaluation_id": "cprg-d0bedf1c63a04e75",
+        "failed_checks": [],
+        "passed": true,
+        "require_hmac": false,
+        "score": 17
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "leader_ready_engineering",
+        "ci_exit_code_hint": 0,
+        "evaluated_at": "2026-08-07T03:12:11.970887Z",
+        "evaluated_by": "plane-admin",
+        "evaluation_id": "cprg-fa0c4a49cd8742a4",
+        "failed_checks": [],
+        "passed": true,
+        "require_hmac": false,
+        "score": 17
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "leader_ready_engineering",
+        "ci_exit_code_hint": 0,
+        "evaluated_at": "2026-08-07T03:12:11.934824Z",
+        "evaluated_by": "plane-admin",
+        "evaluation_id": "cprg-70f87e4a8c8145f8",
+        "failed_checks": [],
+        "passed": true,
+        "require_hmac": false,
+        "score": 17
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "leader_ready_engineering",
+        "ci_exit_code_hint": 0,
+        "evaluated_at": "2026-08-07T03:12:07.621777Z",
+        "evaluated_by": "program-leader-enhance",
+        "evaluation_id": "cprg-fcec646878bf4b39",
+        "failed_checks": [],
+        "passed": true,
+        "require_hmac": false,
+        "score": 17
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "leader_ready_engineering",
+        "ci_exit_code_hint": 0,
+        "evaluated_at": "2026-08-07T03:11:15.177731Z",
+        "evaluated_by": "plane-admin",
+        "evaluation_id": "cprg-96cf7616ad5b4712",
+        "failed_checks": [],
+        "passed": true,
+        "require_hmac": false,
+        "score": 17
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "leader_ready_engineering",
+        "ci_exit_code_hint": 0,
+        "evaluated_at": "2026-08-07T03:11:15.128862Z",
+        "evaluated_by": "plane-admin",
+        "evaluation_id": "cprg-d8c2b96ecaca43d0",
+        "failed_checks": [],
+        "passed": true,
+        "require_hmac": false,
+        "score": 17
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "leader_ready_engineering",
+        "ci_exit_code_hint": 0,
+        "evaluated_at": "2026-08-07T03:11:10.795851Z",
+        "evaluated_by": "program-leader-enhance",
+        "evaluation_id": "cprg-68bd8f0eb4384c77",
+        "failed_checks": [],
+        "passed": true,
+        "require_hmac": false,
+        "score": 17
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "contender",
+        "ci_exit_code_hint": 1,
+        "evaluated_at": "2026-08-04T03:28:13.738002Z",
+        "evaluated_by": "plane-admin",
+        "evaluation_id": "cprg-c71c28372ee14bcc",
+        "failed_checks": [
+          "cpli_leader_band"
+        ],
+        "passed": false,
+        "require_hmac": false,
+        "score": 15
+      },
+      {
+        "advisory_failed_checks": [
+          "process_isolation"
+        ],
+        "band": "contender",
+        "ci_exit_code_hint": 1,
+        "evaluated_at": "2026-08-04T03:28:13.638808Z",
+        "evaluated_by": "plane-admin",
+        "evaluation_id": "cprg-fffec11843a44c26",
+        "failed_checks": [
+          "cpli_leader_band"
+        ],
+        "passed": false,
+        "require_hmac": false,
+        "score": 15
+      }
+    ],
+    "require_hmac": false,
+    "score": 17,
+    "score_trend": {
+      "current_score": 17,
+      "delta": 0,
+      "direction": "flat",
+      "prior_attested_score": 17,
+      "samples": 8
+    }
+  },
+  "release_gate_history": [
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "leader_ready_engineering",
+      "ci_exit_code_hint": 0,
+      "evaluated_at": "2026-08-07T03:17:01.831223Z",
+      "evaluated_by": "program-leader-enhance",
+      "evaluation_id": "cprg-ce958ee311644d80",
+      "failed_checks": [],
+      "passed": true,
+      "require_hmac": false,
+      "score": 17
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "leader_ready_engineering",
+      "ci_exit_code_hint": 0,
+      "evaluated_at": "2026-08-07T03:16:36.051122Z",
+      "evaluated_by": "plane-admin",
+      "evaluation_id": "cprg-8b904d605e5547be",
+      "failed_checks": [],
+      "passed": true,
+      "require_hmac": false,
+      "score": 17
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "leader_ready_engineering",
+      "ci_exit_code_hint": 0,
+      "evaluated_at": "2026-08-07T03:16:35.976949Z",
+      "evaluated_by": "plane-admin",
+      "evaluation_id": "cprg-d0435f2ac5b64602",
+      "failed_checks": [],
+      "passed": true,
+      "require_hmac": false,
+      "score": 17
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "leader_ready_engineering",
+      "ci_exit_code_hint": 0,
+      "evaluated_at": "2026-08-07T03:12:23.199615Z",
+      "evaluated_by": "program-leader-enhance",
+      "evaluation_id": "cprg-d0bedf1c63a04e75",
+      "failed_checks": [],
+      "passed": true,
+      "require_hmac": false,
+      "score": 17
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "leader_ready_engineering",
+      "ci_exit_code_hint": 0,
+      "evaluated_at": "2026-08-07T03:12:11.970887Z",
+      "evaluated_by": "plane-admin",
+      "evaluation_id": "cprg-fa0c4a49cd8742a4",
+      "failed_checks": [],
+      "passed": true,
+      "require_hmac": false,
+      "score": 17
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "leader_ready_engineering",
+      "ci_exit_code_hint": 0,
+      "evaluated_at": "2026-08-07T03:12:11.934824Z",
+      "evaluated_by": "plane-admin",
+      "evaluation_id": "cprg-70f87e4a8c8145f8",
+      "failed_checks": [],
+      "passed": true,
+      "require_hmac": false,
+      "score": 17
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "leader_ready_engineering",
+      "ci_exit_code_hint": 0,
+      "evaluated_at": "2026-08-07T03:12:07.621777Z",
+      "evaluated_by": "program-leader-enhance",
+      "evaluation_id": "cprg-fcec646878bf4b39",
+      "failed_checks": [],
+      "passed": true,
+      "require_hmac": false,
+      "score": 17
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "leader_ready_engineering",
+      "ci_exit_code_hint": 0,
+      "evaluated_at": "2026-08-07T03:11:15.177731Z",
+      "evaluated_by": "plane-admin",
+      "evaluation_id": "cprg-96cf7616ad5b4712",
+      "failed_checks": [],
+      "passed": true,
+      "require_hmac": false,
+      "score": 17
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "leader_ready_engineering",
+      "ci_exit_code_hint": 0,
+      "evaluated_at": "2026-08-07T03:11:15.128862Z",
+      "evaluated_by": "plane-admin",
+      "evaluation_id": "cprg-d8c2b96ecaca43d0",
+      "failed_checks": [],
+      "passed": true,
+      "require_hmac": false,
+      "score": 17
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "leader_ready_engineering",
+      "ci_exit_code_hint": 0,
+      "evaluated_at": "2026-08-07T03:11:10.795851Z",
+      "evaluated_by": "program-leader-enhance",
+      "evaluation_id": "cprg-68bd8f0eb4384c77",
+      "failed_checks": [],
+      "passed": true,
+      "require_hmac": false,
+      "score": 17
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "contender",
+      "ci_exit_code_hint": 1,
+      "evaluated_at": "2026-08-04T03:28:13.738002Z",
+      "evaluated_by": "plane-admin",
+      "evaluation_id": "cprg-c71c28372ee14bcc",
+      "failed_checks": [
+        "cpli_leader_band"
+      ],
+      "passed": false,
+      "require_hmac": false,
+      "score": 15
+    },
+    {
+      "advisory_failed_checks": [
+        "process_isolation"
+      ],
+      "band": "contender",
+      "ci_exit_code_hint": 1,
+      "evaluated_at": "2026-08-04T03:28:13.638808Z",
+      "evaluated_by": "plane-admin",
+      "evaluation_id": "cprg-fffec11843a44c26",
+      "failed_checks": [
+        "cpli_leader_band"
+      ],
+      "passed": false,
+      "require_hmac": false,
+      "score": 15
+    }
+  ],
+  "score": 17,
+  "score_trend": {
+    "current_score": 17,
+    "delta": 0,
+    "direction": "flat",
+    "prior_attested_score": 17,
+    "samples": 8
+  },
+  "slos": {
+    "drift_status": "none_combined",
+    "generation_freshness_slo_seconds": 120.0,
+    "generation_publish_age_seconds": 0.16,
+    "generation_within_slo": true,
+    "on_plane_coverage_percent": 100.0,
+    "on_plane_coverage_slo_percent": 90.0,
+    "on_plane_within_slo": true,
+    "overall_within_slo": true,
+    "peer_probe_latency_ms": null,
+    "peer_probe_latency_slo_ms": 2000.0,
+    "peer_probe_within_slo": true
+  }
+}

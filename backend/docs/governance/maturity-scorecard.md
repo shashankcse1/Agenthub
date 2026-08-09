@@ -70,20 +70,21 @@ Use this scorecard each release cycle to measure readiness and identify gaps.
 
 ## Release Scoring Sheet
 
-- Release ID:
-- Date:
-- Reviewer:
+- Release ID: `leadership-loop-2026-08-06`
+- Date: 2026-08-06
+- Reviewer: Program Owner + SecArch (consolidated attestation `PROG-LRS-2026-08-06`)
 
-| Domain | Weight | Raw Score (0-4) | Weighted Score |
-| --- | --- | --- | --- |
-| Reliability and Release Safety | 25 |  |  |
-| Security and Vulnerability Management | 25 |  |  |
-| Operations and Incident Readiness | 20 |  |  |
-| Product Quality and UX Accessibility | 15 |  |  |
-| Governance and Compliance Evidence | 15 |  |  |
+| Domain | Weight | Raw Score (0-4) | Weighted Score | Notes |
+| --- | --- | ---: | ---: | --- |
+| Reliability and Release Safety | 25 | 3 | 75 | CI + smoke gates + rollback docs; flake rate not continuously measured |
+| Security and Vulnerability Management | 25 | 4 | 100 | Dual-approval, PAM, secret providers; L6 signed; AR-001/002 Retired |
+| Operations and Incident Readiness | 20 | 3 | 60 | Runbooks + dated RT/Tabletop 2026-08-06; MTTR dashboards still maturing |
+| Product Quality and UX Accessibility | 15 | 2 | 30 | Consoles/Studio mature; accessibility report not refreshed this cycle |
+| Governance and Compliance Evidence | 15 | 4 | 60 | LRS 40/40; formal signatures complete; QBR + drill registry live |
 
-- Total Weighted Score (0-400):
-- Normalized Score (0-100):
+- Total Weighted Score (0-400): **325**
+- Normalized Score (0-100): **81** (Mature)
+- Leadership blockers: none for LRS gate (sustain quarterly drills)
 
 ## Maturity Bands
 

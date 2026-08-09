@@ -1,0 +1,1302 @@
+/**
+ * Overall page polish — shared by every console view.
+ * Density, hero rhythm, feedback surfaces, tables, and responsive shell.
+ */
+
+/* ——— Page / section anchors clear sticky header ——— */
+.view .card,
+.view [id],
+.overview-section,
+.runtime-console-panel,
+[data-console-panel] {
+  scroll-margin-top: 5.5rem;
+}
+
+/* ——— Unified console page stack ———
+   Only when .active — equal-specificity `display: grid` was overriding
+   `.view { display: none }` and left prefetched views (esp. Flow Studio)
+   stacked under Playground / Runtime Config / etc. */
+.runtime-config-view.active,
+.providers-view.active,
+.modules-view.active,
+.routing-gateway-view.active,
+.browser-security-view.active,
+.security-console-view.active,
+.discovery-console-view.active,
+.observability-console-view.active,
+.cost-console-view.active,
+.flow-orchestration-view.active {
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+}
+
+/* Hard hide inactive views so later CSS cannot resurrect them */
+.views-root > .view:not(.active) {
+  display: none !important;
+}
+
+.runtime-config-view > .card,
+.runtime-config-view > [data-console-panel],
+.runtime-config-view > .runtime-console-panel {
+  margin: 0;
+}
+
+/* ——— Heroes (all consoles) ——— */
+.runtime-config-hero,
+.gateway-console-hero,
+.security-hero,
+.discovery-hero,
+.observability-hero,
+.cost-console-hero {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-color: rgba(196, 163, 90, 0.26);
+  background:
+    linear-gradient(135deg, rgba(196, 163, 90, 0.1), transparent 42%),
+    rgba(255, 255, 255, 0.03);
+}
+
+/* Flow Studio keeps a compact hero so the n8n-style canvas owns the viewport */
+.flow-studio-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.2rem 0.45rem;
+  border-color: rgba(196, 163, 90, 0.22);
+  background:
+    linear-gradient(120deg, rgba(196, 163, 90, 0.08), transparent 45%),
+    rgba(14, 20, 30, 0.72);
+}
+
+/* Canvas-first: demote hero title so toolbar CORE mark owns the workspace */
+#orchestration:has([data-console-panel="studio"].active) .flow-studio-hero .flow-hero-title,
+#orchestration:has([data-console-panel="studio"].active) .flow-studio-hero .flow-hero-subtitle,
+#orchestration:has([data-console-panel="studio"].active) .flow-studio-hero .flow-hero-kicker {
+  display: none;
+}
+
+#orchestration:has([data-console-panel="studio"].active) .flow-studio-hero {
+  padding: 0.15rem 0.4rem;
+  gap: 0.1rem;
+}
+
+#orchestration:has([data-console-panel="studio"].active) .flow-studio-hero > .card-head {
+  min-height: 0;
+}
+
+#orchestration:has([data-console-panel="studio"].active) .flow-hero-footer {
+  margin-top: 0;
+}
+
+.flow-tab-core {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.flow-tab-core-mark {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.55rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #141a24;
+  background: linear-gradient(145deg, #e0c078, #c4a35a);
+  border-radius: 3px;
+  padding: 0.12rem 0.28rem;
+  line-height: 1;
+}
+
+.flow-studio-tabs [role="tab"].flow-tab-core.active,
+.flow-studio-tabs [role="tab"].flow-tab-core[aria-selected="true"] {
+  border-color: rgba(196, 163, 90, 0.55);
+  background: rgba(196, 163, 90, 0.16);
+  box-shadow: inset 0 -2px 0 var(--sig-brass, #c4a35a);
+}
+
+.runtime-config-hero > .card-head,
+.gateway-console-hero > .card-head,
+.security-hero > .card-head,
+.discovery-hero > .card-head,
+.observability-hero > .card-head,
+.cost-console-hero > .card-head {
+  margin: 0;
+  padding: 0 0 var(--space-2);
+  border-bottom: 1px solid rgba(196, 163, 90, 0.14);
+  align-items: flex-start;
+}
+
+.flow-studio-hero > .card-head {
+  margin: 0;
+  padding: 0;
+  border-bottom: none;
+  align-items: center;
+}
+
+.runtime-config-hero h3,
+.gateway-console-hero h3,
+.security-hero h3,
+.discovery-hero h3,
+.observability-hero h3,
+.cost-console-hero h3,
+.flow-studio-hero h3 {
+  margin: 0;
+  max-width: 42ch;
+  text-wrap: balance;
+}
+
+.runtime-config-hero .card-lead,
+.gateway-console-hero .card-lead,
+.security-hero .card-lead,
+.discovery-hero .card-lead,
+.observability-hero .card-lead,
+.cost-console-hero .card-lead,
+.flow-hero-subtitle,
+.security-intro,
+.observability-intro,
+.cost-console-lead {
+  margin: 0;
+  max-width: 68ch;
+}
+
+.runtime-rule-count,
+.console-alert-banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid rgba(196, 163, 90, 0.18);
+  background: rgba(196, 163, 90, 0.05);
+  font-size: var(--type-label);
+  line-height: var(--leading-snug);
+  color: var(--ink-soft);
+}
+
+.console-alert-banner[hidden] {
+  display: none;
+}
+
+.view-page-search-toolbar {
+  margin: 0;
+}
+
+/* ——— Interior cards ——— */
+.view .card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.view .card > .card-head {
+  margin: 0;
+  padding: 0 0 var(--space-2);
+  border-bottom: 1px solid rgba(154, 178, 209, 0.1);
+}
+
+.view .card > .card-head + *,
+.view .card > .form-grid,
+.view .card > .table-wrap,
+.view .card > .inline-actions,
+.view .card > .chip-row,
+.view .card > .runtime-workflow-steps,
+.view .card > .gateway-workflow-steps {
+  margin-top: 0;
+}
+
+.view .card > pre,
+.view .card > .mono,
+.view .card > [id$="Result"],
+.view .card > [id$="Feedback"],
+.view .card > .operator-result-mount,
+.view .card > .key-feedback,
+.view .card > .feedback {
+  margin: 0;
+}
+
+/* ——— Workflow steps denser, consistent ——— */
+.runtime-workflow-steps,
+.gateway-workflow-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11.5rem, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.runtime-workflow-step,
+.gateway-workflow-step {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+}
+
+/* ——— Forms & actions ——— */
+.view .form-grid {
+  margin: 0;
+}
+
+.view label {
+  margin-bottom: 0;
+}
+
+.view .inline-actions {
+  gap: var(--space-2);
+}
+
+.view .chip-row {
+  margin: 0;
+  gap: var(--space-2);
+}
+
+/* ——— Tables ——— */
+.view .table-wrap {
+  margin: 0;
+  max-width: 100%;
+}
+
+.view .table-wrap table {
+  width: 100%;
+}
+
+.view .table-wrap td,
+.view .table-wrap th {
+  padding: 0.55rem 0.7rem;
+}
+
+/* ——— Metric / signal tiles ——— */
+.card-grid,
+.overview-metrics-grid,
+.signal-strip,
+.overview-readiness {
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.card.metric,
+.signal-tile,
+.overview-readiness-item {
+  margin: 0;
+  padding: var(--space-3);
+}
+
+.card.metric .metric-value {
+  margin: var(--space-1) 0 0;
+}
+
+/* ——— Overview page ——— */
+.overview-hero {
+  margin: 0 0 var(--space-4);
+}
+
+.overview-section {
+  margin: 0;
+  padding: 0;
+}
+
+.overview-section + .overview-section,
+.overview-section + .sig-trust-ledger,
+.overview-section + .card-grid,
+.sig-trust-ledger + .card-grid,
+.card-grid + .card,
+.overview-hero + .overview-section {
+  margin-top: 0;
+}
+
+.overview-section-head {
+  margin: 0 0 var(--space-2);
+  padding: 0;
+}
+
+.sig-trust-ledger {
+  margin: 0;
+}
+
+/* ——— Status / feedback surfaces ——— */
+.view .mono[data-empty="true"],
+.view [id$="Result"][data-empty="true"],
+.view [id$="Feedback"][data-empty="true"] {
+  display: none;
+}
+
+.page-card-head,
+.view .card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.view .mono,
+.view [id$="Result"],
+.view [id$="Feedback"],
+.view .key-feedback,
+.view .feedback {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm, 6px);
+  border-left: 2px solid rgba(196, 163, 90, 0.4);
+  background: rgba(255, 255, 255, 0.02);
+  line-height: var(--leading-normal);
+}
+
+.view .feedback-success,
+.view .key-feedback.success {
+  border-left-color: var(--ok, #5dbf8a);
+}
+
+.view .feedback-error,
+.view .key-feedback.error {
+  border-left-color: var(--danger, #d9655c);
+}
+
+/* ——— Sticky topbar separation ——— */
+.topbar.app-header {
+  backdrop-filter: blur(16px);
+  border-color: rgba(196, 163, 90, 0.24);
+}
+
+.content > .views-root {
+  margin-top: 0;
+}
+
+/* ——— Primary actions affordance ——— */
+.card-head .primary,
+.inline-actions .primary,
+.runtime-config-hero .card-head .ghost,
+.gateway-console-hero .card-head .ghost {
+  flex-shrink: 0;
+}
+
+.card-head .inline-actions,
+.card-head > .ghost,
+.card-head > .primary {
+  align-self: center;
+}
+
+/* ——— Long GuardBridge title wraps cleanly ——— */
+#browser-security .runtime-config-hero h3 {
+  max-width: 28ch;
+}
+
+/* ——— Compact help blocks ——— */
+.help-details {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+}
+
+.field-help,
+.profile-note {
+  margin: var(--space-1) 0 0;
+}
+
+/* ——— Responsive density ——— */
+@media (max-width: 980px) {
+  .runtime-config-hero,
+  .gateway-console-hero,
+  .security-hero,
+  .discovery-hero,
+  .observability-hero,
+  .cost-console-hero,
+  .view .card {
+    padding: var(--space-3);
+  }
+
+  .flow-orchestration-view .flow-studio-hero {
+    padding: 0.2rem 0.45rem !important;
+  }
+
+  .runtime-workflow-steps,
+  .gateway-workflow-steps {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .runtime-workflow-steps,
+  .gateway-workflow-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-config-hero > .card-head,
+  .view .card > .card-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .card-head .inline-actions,
+  .card-head > .ghost,
+  .card-head > .primary {
+    width: 100%;
+  }
+
+  .card-head .inline-actions .ghost,
+  .card-head .inline-actions .primary,
+  .card-head > .ghost,
+  .card-head > .primary {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+body[data-theme="light"] .runtime-rule-count,
+body[data-theme="light"] .console-alert-banner {
+  background: rgba(138, 109, 47, 0.06);
+  border-color: rgba(138, 109, 47, 0.2);
+}
+
+body[data-theme="light"] .view .mono,
+body[data-theme="light"] .view [id$="Result"],
+body[data-theme="light"] .view [id$="Feedback"] {
+  background: rgba(20, 28, 42, 0.03);
+}
+
+/* ——— Breadcrumb ——— */
+.view-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 0.35rem;
+  font-family: var(--font-body);
+  font-size: var(--type-kicker);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--tracking-kicker);
+  text-transform: uppercase;
+  color: rgba(196, 163, 90, 0.8);
+  line-height: var(--leading-tight);
+}
+
+.view-breadcrumb-sep {
+  opacity: 0.55;
+  font-weight: var(--font-weight-regular);
+}
+
+#viewBreadcrumbPage {
+  color: var(--sig-brass-hot, #e0c078);
+}
+
+.app-header-title .view-domain-kicker {
+  display: none;
+}
+
+/* ——— Density toggle ——— */
+#densityToggle.is-active {
+  border-color: rgba(196, 163, 90, 0.5);
+  color: var(--sig-brass-hot, #e0c078);
+  background: rgba(196, 163, 90, 0.12);
+}
+
+/* ——— Scroll top ——— */
+.scroll-top-fab {
+  position: fixed;
+  right: 1.15rem;
+  bottom: 4.75rem;
+  z-index: 45;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(196, 163, 90, 0.4);
+  background: rgba(10, 14, 20, 0.92);
+  color: var(--sig-brass-hot, #e0c078);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-soft, 0 8px 22px rgba(0, 0, 0, 0.16));
+}
+
+.scroll-top-fab:hover,
+.scroll-top-fab:focus-visible {
+  border-color: rgba(196, 163, 90, 0.65);
+  background: rgba(196, 163, 90, 0.16);
+}
+
+.scroll-top-fab[hidden] {
+  display: none;
+}
+
+body:has(#orchestration.active) .scroll-top-fab {
+  bottom: 5.5rem;
+}
+
+/* ——— Compact density ——— */
+body[data-density="compact"] {
+  --space-2: 0.4rem;
+  --space-3: 0.55rem;
+  --space-4: 0.75rem;
+  --space-5: 0.9rem;
+  --space-card: 0.75rem;
+  --space-section: 0.85rem;
+  --space-stack: 0.55rem;
+  --control-height: 2.2rem;
+  --type-body: 0.9375rem;
+  --type-label: 0.8125rem;
+}
+
+body[data-density="compact"] .view .card,
+body[data-density="compact"] .runtime-config-hero,
+body[data-density="compact"] .gateway-console-hero,
+body[data-density="compact"] .security-hero,
+body[data-density="compact"] .discovery-hero,
+body[data-density="compact"] .observability-hero,
+body[data-density="compact"] .cost-console-hero,
+body[data-density="compact"] .flow-studio-hero {
+  padding: 0.75rem 0.85rem;
+  gap: 0.45rem;
+}
+
+body[data-density="compact"] .nav-item,
+body[data-density="compact"] [role="tablist"] [role="tab"],
+body[data-density="compact"] .runtime-console-tabs .ghost,
+body[data-density="compact"] .gateway-console-tabs .ghost {
+  min-height: 2rem;
+  padding: 0.35rem 0.6rem;
+}
+
+body[data-density="compact"] .view .table-wrap td,
+body[data-density="compact"] .view .table-wrap th {
+  padding: 0.4rem 0.55rem;
+}
+
+body[data-density="compact"] .runtime-workflow-step,
+body[data-density="compact"] .gateway-workflow-step {
+  padding: 0.45rem 0.55rem;
+}
+
+body[data-density="compact"] .topbar.app-header {
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+body[data-density="compact"] .view-subtitle {
+  display: none;
+}
+
+/* ——— Signal / metric polish ——— */
+.signal-tile,
+.overview-readiness-item,
+.card.metric {
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.signal-tile:hover,
+.overview-readiness-item:hover,
+.card.metric:hover {
+  border-color: rgba(196, 163, 90, 0.4);
+  background: rgba(196, 163, 90, 0.06);
+}
+
+/* ——— Operator feedback panel ——— */
+.operator-feedback-panel {
+  border-color: rgba(196, 163, 90, 0.3);
+  box-shadow: var(--shadow, 0 18px 40px rgba(0, 0, 0, 0.28));
+}
+
+@media (max-width: 900px) {
+  .scroll-top-fab {
+    right: 0.85rem;
+    bottom: 4.25rem;
+  }
+
+  .view-breadcrumb {
+    font-size: 0.62rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-top-fab,
+  .signal-tile,
+  .card.metric {
+    transition: none !important;
+  }
+}
+
+/* ——— Shell banners ——— */
+.content > .guard-banner,
+.content > .error-banner {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md, 10px);
+  font-size: var(--type-label);
+  line-height: var(--leading-snug);
+}
+
+.content > .guard-banner[hidden],
+.content > .error-banner[hidden] {
+  display: none;
+}
+
+/* ——— Status pills (institutional, not bubble pills) ——— */
+.status-pill {
+  border-radius: 4px;
+  min-width: 0;
+  padding: 0.22rem 0.55rem;
+  font-size: var(--type-kicker);
+  letter-spacing: var(--tracking-kicker);
+}
+
+/* ——— Table pagination ——— */
+.table-pagination {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+  border-color: rgba(196, 163, 90, 0.18);
+  background: rgba(196, 163, 90, 0.04);
+}
+
+.table-pagination-summary,
+.table-pagination-page-size {
+  font-size: var(--type-label);
+  color: var(--ink-soft);
+}
+
+.table-pagination-buttons .ghost {
+  min-height: 2.1rem;
+}
+
+/* ——— Meta / last refreshed ——— */
+.view-meta-line {
+  margin: 0.25rem 0 0;
+  font-size: var(--type-kicker);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: var(--font-weight-semibold);
+}
+
+#viewLastRefreshed {
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-density="compact"] .view-meta-line {
+  display: none;
+}
+
+/* ——— Feedback + scroll FABs ——— */
+.operator-feedback-fab {
+  border-color: rgba(196, 163, 90, 0.45);
+  background: rgba(10, 14, 20, 0.94);
+  color: var(--sig-brass-hot, #e0c078);
+  font-family: var(--font-body);
+  font-size: var(--type-label);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+}
+
+.operator-feedback-fab:hover,
+.operator-feedback-fab:focus-visible {
+  background: rgba(196, 163, 90, 0.16);
+}
+
+.scroll-top-fab {
+  font-family: var(--font-body);
+}
+
+/* ——— Primary button micro-affordance ——— */
+button.primary {
+  letter-spacing: 0.02em;
+}
+
+button.primary:disabled,
+button.ghost:disabled {
+  opacity: 0.55;
+}
+
+/* ——— Details / drawers ——— */
+.view details.help-details > summary,
+.view .settings-panel > summary {
+  min-height: 2.1rem;
+}
+
+/* ——— Login alignment helpers when pages.css not loaded ——— */
+.login-form button.primary.is-busy {
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .view-meta-line {
+    display: none;
+  }
+}
+
+/* ——— Keyboard shortcuts overlay ——— */
+.shortcuts-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(4, 7, 12, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.shortcuts-overlay[hidden] {
+  display: none;
+}
+
+.shortcuts-dialog {
+  width: min(32rem, 100%);
+  border: 1px solid rgba(196, 163, 90, 0.35);
+  border-radius: var(--radius-lg, 12px);
+  background:
+    linear-gradient(180deg, rgba(196, 163, 90, 0.08), transparent 28%),
+    rgba(10, 14, 20, 0.96);
+  box-shadow: var(--shadow, 0 18px 40px rgba(0, 0, 0, 0.28));
+  padding: 1rem 1.1rem 1.15rem;
+}
+
+.shortcuts-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid rgba(196, 163, 90, 0.18);
+}
+
+.shortcuts-dialog-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--type-title);
+}
+
+.shortcuts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.shortcuts-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: var(--type-label);
+  color: var(--ink-soft);
+}
+
+.shortcuts-list kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  margin-right: 0.2rem;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid rgba(196, 163, 90, 0.35);
+  border-radius: 4px;
+  background: rgba(196, 163, 90, 0.1);
+  color: var(--sig-brass-hot, #e0c078);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.shortcuts-note {
+  margin: 0.9rem 0 0;
+  font-size: var(--type-caption);
+  color: var(--ink-soft);
+}
+
+#shortcutsHelpButton {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--sig-brass-hot, #e0c078);
+}
+
+/* ——— Evolved nav hierarchy polish ——— */
+.nav-section-kicker {
+  margin: 0.35rem 0.55rem 0.2rem;
+  font-size: var(--type-kicker);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--tracking-kicker);
+  text-transform: uppercase;
+  color: rgba(196, 163, 90, 0.7);
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.nav-item-main {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.nav-item-label {
+  font-size: var(--type-label);
+  font-weight: var(--font-weight-semibold);
+  color: inherit;
+  line-height: var(--leading-tight);
+}
+
+.nav-item-hint {
+  font-size: var(--text-3xs);
+  color: rgba(154, 178, 209, 0.75);
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.nav-item-code {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  letter-spacing: 0.08em;
+  color: rgba(196, 163, 90, 0.75);
+}
+
+.nav-core-badge {
+  flex-shrink: 0;
+  padding: 0.12rem 0.35rem;
+  border: 1px solid rgba(196, 163, 90, 0.45);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--sig-brass-hot, #e0c078);
+  background: rgba(196, 163, 90, 0.12);
+}
+
+.nav-item-primary {
+  border-color: rgba(196, 163, 90, 0.22);
+  background: rgba(196, 163, 90, 0.06);
+}
+
+.nav-group-toggle-copy {
+  display: grid;
+  gap: 0.05rem;
+  text-align: left;
+  min-width: 0;
+}
+
+.nav-group-toggle-label {
+  font-size: var(--type-kicker);
+  letter-spacing: var(--tracking-kicker);
+  text-transform: uppercase;
+}
+
+.nav-group-toggle-meta {
+  font-size: var(--text-3xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(154, 178, 209, 0.7);
+  font-weight: 600;
+}
+
+.nav-group-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: rgba(196, 163, 90, 0.8);
+}
+
+body[data-density="compact"] .nav-item-hint {
+  display: none;
+}
+
+body[data-theme="light"] .shortcuts-dialog {
+  background:
+    linear-gradient(180deg, rgba(138, 109, 47, 0.08), transparent 28%),
+    rgba(255, 255, 255, 0.97);
+  color: #141a24;
+}
+
+body[data-theme="light"] .shortcuts-list li {
+  color: #5a6578;
+}
+
+/* ——— Shell progress + connectivity ——— */
+.shell-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: 3px;
+  pointer-events: none;
+  overflow: hidden;
+  background: transparent;
+}
+
+.shell-progress[hidden] {
+  display: none;
+}
+
+.shell-progress-bar {
+  height: 100%;
+  width: 32%;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(90deg, rgba(196, 163, 90, 0.2), var(--sig-brass-hot, #e0c078), rgba(196, 163, 90, 0.35));
+  transform: translateX(-120%);
+}
+
+.shell-progress.is-active .shell-progress-bar {
+  animation: shellProgressSweep 1.05s ease-in-out infinite;
+}
+
+@keyframes shellProgressSweep {
+  0% { transform: translateX(-120%); }
+  50% { transform: translateX(160%); }
+  100% { transform: translateX(320%); }
+}
+
+.connectivity-banner {
+  position: sticky;
+  top: 0;
+  z-index: 70;
+  padding: 0.45rem 1rem;
+  text-align: center;
+  font-size: var(--type-caption);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #1a1208;
+  background: linear-gradient(90deg, #c4a35a, #e0c078);
+  border-bottom: 1px solid rgba(20, 16, 8, 0.18);
+}
+
+.connectivity-banner[hidden] {
+  display: none;
+}
+
+/* ——— Global search recent + active ——— */
+.global-search-heading {
+  padding: 0.45rem 0.7rem 0.2rem;
+  font-size: var(--text-3xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(196, 163, 90, 0.8);
+}
+
+.global-search-item {
+  position: relative;
+}
+
+.global-search-item.is-active,
+.global-search-item:focus-visible {
+  background: rgba(196, 163, 90, 0.14);
+  outline: none;
+}
+
+.global-search-recent-badge {
+  position: absolute;
+  right: 0.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-style: normal;
+  font-size: var(--text-3xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(196, 163, 90, 0.85);
+}
+
+/* ——— Sticky inventory tables with brass header ——— */
+.view .table-wrap {
+  max-height: min(64vh, 42rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.view .table-wrap thead th {
+  background: rgba(10, 14, 20, 0.94);
+  box-shadow: inset 0 -1px 0 rgba(196, 163, 90, 0.22);
+}
+
+body[data-theme="light"] .view .table-wrap thead th {
+  background: rgba(252, 250, 246, 0.96);
+}
+
+body[data-density="compact"] .view .table-wrap {
+  max-height: min(72vh, 36rem);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-progress.is-active .shell-progress-bar {
+    animation: none;
+    width: 100%;
+    transform: none;
+    opacity: 0.85;
+  }
+}
+
+/* ——— Confirm dialog ——— */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(4, 7, 12, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.confirm-overlay[hidden] {
+  display: none;
+}
+
+.confirm-dialog {
+  width: min(26rem, 100%);
+  border: 1px solid rgba(196, 163, 90, 0.35);
+  border-radius: var(--radius-lg, 12px);
+  background:
+    linear-gradient(180deg, rgba(196, 163, 90, 0.1), transparent 30%),
+    rgba(10, 14, 20, 0.97);
+  box-shadow: var(--shadow, 0 18px 40px rgba(0, 0, 0, 0.28));
+  padding: 1rem 1.15rem 1.1rem;
+}
+
+.confirm-dialog h2 {
+  margin: 0.15rem 0 0.55rem;
+  font-family: var(--font-display);
+  font-size: var(--type-title);
+}
+
+.confirm-message {
+  margin: 0 0 1rem;
+  color: var(--ink-soft);
+  font-size: var(--type-body);
+  line-height: var(--leading-snug);
+  white-space: pre-wrap;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.confirm-actions .danger,
+button.danger {
+  border-color: rgba(217, 101, 92, 0.55);
+  background: rgba(217, 101, 92, 0.18);
+  color: #f2c4bf;
+}
+
+body[data-theme="light"] .confirm-dialog {
+  background:
+    linear-gradient(180deg, rgba(138, 109, 47, 0.08), transparent 28%),
+    rgba(255, 255, 255, 0.97);
+  color: #141a24;
+}
+
+body[data-theme="light"] .confirm-message {
+  color: #5a6578;
+}
+
+body[data-theme="light"] .confirm-actions .danger,
+body[data-theme="light"] button.danger {
+  color: #8a2f28;
+  background: rgba(217, 101, 92, 0.12);
+}
+
+/* ——— Header compact when scrolled ——— */
+.topbar.app-header {
+  transition: padding 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.topbar.app-header.is-scrolled {
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  border-color: rgba(196, 163, 90, 0.32);
+}
+
+.topbar.app-header.is-scrolled .view-subtitle,
+.topbar.app-header.is-scrolled .view-meta-line,
+.topbar.app-header.is-scrolled .view-domain-kicker {
+  display: none;
+}
+
+.topbar.app-header.is-scrolled h2 {
+  font-size: var(--type-title);
+}
+
+/* ——— View enter motion ——— */
+.views-root .view.active.view-enter {
+  animation: viewEnter 0.28s ease both;
+}
+
+@keyframes viewEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .views-root .view.active.view-enter {
+    animation: none;
+  }
+  .topbar.app-header {
+    transition: none;
+  }
+}
+
+/* ——— Progressive disclosure / copy diet ——— */
+.operator-guide {
+  margin: 0;
+  border: 1px solid rgba(196, 163, 90, 0.18);
+  border-radius: var(--radius-sm, 6px);
+  background: rgba(196, 163, 90, 0.04);
+  padding: 0;
+}
+
+.operator-guide + .chip-row,
+.operator-guide + .card-lead,
+.card-head + .operator-guide {
+  margin-top: var(--space-2, 0.5rem);
+}
+
+.operator-guide > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  list-style: none;
+  cursor: pointer;
+  padding: 0.55rem 0.75rem;
+  font-size: var(--type-label);
+  color: var(--ink-soft);
+}
+
+.operator-guide > summary::-webkit-details-marker {
+  display: none;
+}
+
+.operator-guide > summary::after {
+  content: "+";
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--sig-brass-hot, #e0c078);
+}
+
+.operator-guide[open] > summary::after {
+  content: "−";
+}
+
+.operator-guide-label {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: var(--text-3xs);
+  color: rgba(196, 163, 90, 0.9);
+  flex-shrink: 0;
+}
+
+.operator-guide-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
+  font-size: var(--type-caption);
+}
+
+.operator-guide[open] > .operator-guide-preview,
+.operator-guide[open] > summary .operator-guide-preview {
+  display: none;
+}
+
+.operator-guide > .sig-trust-ledger-console,
+.operator-guide > .runtime-workflow-steps,
+.operator-guide > .gateway-workflow-steps,
+.operator-guide > .card-lead {
+  margin: 0;
+  padding: 0.15rem 0.75rem 0.75rem;
+  border: 0;
+  background: transparent;
+}
+
+.runtime-config-hero > .card-lead,
+.gateway-console-hero > .card-lead {
+  max-width: 52ch;
+  font-size: var(--type-body);
+  line-height: var(--leading-snug);
+}
+
+/* Compact steppers: titles first; detail spans only when guide open or on step focus */
+.workflow-steps-compact .runtime-workflow-step > span,
+.workflow-steps-compact .gateway-workflow-step > span,
+.runtime-workflow-step > span,
+.gateway-workflow-step > span {
+  display: none;
+}
+
+.operator-guide[open] .runtime-workflow-step > span,
+.operator-guide[open] .gateway-workflow-step > span,
+.runtime-workflow-step:focus-within > span,
+.gateway-workflow-step:focus-within > span {
+  display: block;
+  margin-top: 0.2rem;
+}
+
+.workflow-steps-compact,
+.runtime-workflow-steps,
+.gateway-workflow-steps {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.runtime-workflow-step,
+.gateway-workflow-step {
+  padding: 0.45rem 0.55rem;
+}
+
+body[data-density="compact"] .operator-guide-preview {
+  display: none;
+}
+
+body[data-density="compact"] .runtime-config-hero > .card-lead,
+body[data-density="compact"] .gateway-console-hero > .card-lead {
+  display: none;
+}
+
+body[data-theme="light"] .operator-guide {
+  background: rgba(138, 109, 47, 0.05);
+  border-color: rgba(138, 109, 47, 0.18);
+}
+
+body[data-theme="light"] .operator-guide-label {
+  color: #8a6d2f;
+}
+
+/* ——— Copyable operator results ——— */
+.copyable-result,
+.operator-result,
+.mono[id$="Result"],
+.mono[id$="Feedback"],
+.key-feedback {
+  position: relative;
+}
+
+.copy-result-btn {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  padding: 0.15rem 0.45rem;
+  font-size: var(--text-3xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.copyable-result:hover .copy-result-btn,
+.operator-result:hover .copy-result-btn,
+.mono[id$="Result"]:hover .copy-result-btn,
+.mono[id$="Feedback"]:hover .copy-result-btn,
+.key-feedback:hover .copy-result-btn,
+.copy-result-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}

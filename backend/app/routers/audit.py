@@ -11,6 +11,7 @@ from app.policy_constants import ROLE_AGENT_OWNER
 from app.router_constants import AUDIT_READ_ROLES
 from app.schemas import AuditEventResponse
 from app.security import ActorContext, get_actor_context, require_role
+from app.services.audit import serialize_audit_event
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -22,6 +23,7 @@ def list_audit_events(
     offset: int = Query(default=0, ge=0),
     since_hours: int = Query(default=24, ge=1, le=720),
     action_type: Optional[str] = None,
+    action_type_prefix: Optional[str] = None,
     resource_type: Optional[str] = None,
     resource_id: Optional[str] = None,
     actor_id: Optional[str] = None,
@@ -57,8 +59,19 @@ def list_audit_events(
 
     since = datetime.utcnow().replace(microsecond=0) - timedelta(hours=since_hours)
     query = db.query(AuditEvent).filter(AuditEvent.timestamp >= since)
+    if action_type and action_type_prefix:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "VALIDATION_CONFLICT",
+                "message": "Use either action_type or action_type_prefix, not both.",
+                "decision_trace_id": "audit-events-filter-conflict",
+            },
+        )
     if action_type:
         query = query.filter(AuditEvent.action_type == action_type)
+    elif action_type_prefix and action_type_prefix.strip():
+        query = query.filter(AuditEvent.action_type.like(f"{action_type_prefix.strip()}%"))
     if resource_type:
         query = query.filter(AuditEvent.resource_type == resource_type)
     if resource_id:
@@ -77,4 +90,4 @@ def list_audit_events(
         "audit_events_list_completed %s",
         sanitize_fields({"actor_id": ctx.actor_id, "returned_count": len(events), "total_count": total_count}),
     )
-    return events
+    return [AuditEventResponse(**serialize_audit_event(event, db)) for event in events]

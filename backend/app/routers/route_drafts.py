@@ -39,18 +39,33 @@ ROUTE_DRAFT_EXPIRY_DAYS = 14
 
 
 def _evaluate_promotion_gates(db: Session, agent_id: str, target_environment: str) -> dict:
+    normalized_environment = str(target_environment or "dev").strip().lower() or "dev"
     latest_benchmark = (
         db.query(BenchmarkRun)
-        .filter_by(agent_id=agent_id)
+        .filter_by(agent_id=agent_id, environment=normalized_environment)
         .order_by(BenchmarkRun.created_at.desc())
         .first()
     )
+    if latest_benchmark is None:
+        latest_benchmark = (
+            db.query(BenchmarkRun)
+            .filter_by(agent_id=agent_id)
+            .order_by(BenchmarkRun.created_at.desc())
+            .first()
+        )
     latest_scan = (
         db.query(ScanRun)
-        .filter_by(agent_id=agent_id)
+        .filter_by(agent_id=agent_id, environment=normalized_environment)
         .order_by(ScanRun.created_at.desc())
         .first()
     )
+    if latest_scan is None:
+        latest_scan = (
+            db.query(ScanRun)
+            .filter_by(agent_id=agent_id)
+            .order_by(ScanRun.created_at.desc())
+            .first()
+        )
     latest_contract_check = (
         db.query(AuditEvent)
         .filter_by(action_type="agentic.contract.validate", resource_id=agent_id)
@@ -227,17 +242,24 @@ def approve_route_draft(
     if draft.submitted_by == ctx.actor_id:
         raise HTTPException(status_code=400, detail="Submitter cannot approve their own draft")
 
-    if ctx.actor_role == ROLE_SECURITY_APPROVER or (
-        ctx.actor_role in {ROLE_MASTER_ADMIN, ROLE_SUPER_ADMIN} and draft.status == "submitted"
-    ):
+    if ctx.actor_role in {ROLE_MASTER_ADMIN, ROLE_SUPER_ADMIN}:
+        if draft.status == "submitted":
+            state_from = draft.status
+            draft.approved_security = True
+            draft.status = "security_approved"
+        elif draft.status == "security_approved":
+            state_from = draft.status
+            draft.approved_ai_ops = True
+            draft.status = "aiops_approved"
+        else:
+            raise HTTPException(status_code=400, detail="Route draft is not in an approvable state")
+    elif ctx.actor_role == ROLE_SECURITY_APPROVER:
         if draft.status != "submitted":
             raise HTTPException(status_code=400, detail="Security approval requires submitted state")
         state_from = draft.status
         draft.approved_security = True
         draft.status = "security_approved"
-    elif ctx.actor_role == ROLE_AI_OPS_APPROVER or (
-        ctx.actor_role in {ROLE_MASTER_ADMIN, ROLE_SUPER_ADMIN} and draft.status == "security_approved"
-    ):
+    elif ctx.actor_role == ROLE_AI_OPS_APPROVER:
         if draft.status != "security_approved":
             raise HTTPException(status_code=400, detail="AI Ops approval requires security_approved state")
         state_from = draft.status
@@ -417,7 +439,9 @@ def promote_route_draft(
             },
         )
 
-    if payload.target_environment.strip().lower() == "prod":
+    from app.services.runtime_env import is_prod_target_environment
+
+    if is_prod_target_environment(payload.target_environment):
         require_dual_approval(ctx)
 
     if not (draft.approved_security and draft.approved_ai_ops and draft.status == "change_window_approved"):

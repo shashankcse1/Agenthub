@@ -1,7 +1,90 @@
 # Architecture Document
 
-Date: 2026-06-02
-System: Enterprise Multi-Agent Platform
+Date: 2026-06-09 (sync §0 updated 2026-08-08, local auth UX)  
+System: Enterprise Multi-Agent Platform (AgentHub)
+
+## 0. Product Completion Sync (2026-08-08)
+
+**Verdict:** Designed product lane is **complete** — see `backend/docs/governance/product-completion-status.md`.  
+**Doc sync:** Operator UX deepen (NHI click-to-fill + HMAC probes, Route Draft / Canary / VK auto-route) + local same-origin session login (UI API proxy) reflected below and in SoT delta.
+
+1. Program Leader Readiness (LRS **40/40**, band Governed velocity):
+- Attestation `PROG-LRS-2026-08-06` with sustain refresh `last_sustain_on=2026-08-08`.
+- QBR honesty gate `leader_claim_allowed` (external claims ≤ attestation).
+- CPLI remains engineering posture (max 20); does not raise LRS marketing claims.
+- Explicit blocked register: distinct L6 holders (human), live npm/PyPI (secrets), SaaS crawler / full IARA (out of scope).
+
+2. Gateway NHI & IGA coexistence (inference plane — not enterprise SaaS ISPM):
+- Inventory/hygiene/orphans/evidence; Agents & Access (Discovery + Shadow AI + MCP + VK + WIF); access policies (IARA-lite) + shadow actions; insights/lifecycle/intent; IGA export/deny/correlation; native gate-events.
+- Intent Mode ≠ Access Mode ≠ IGA Deny Gate (independent opt-in gates; defaults off).
+- Operator UI (Routing & Gateway four panels): click-to-fill inventory/orphan/agent/deny/gate rows; **Revoke Deny**; **Load/Save Intent Mode**; **Probe HMAC Deny Ingest**; **Test Correlation Ingest**.
+- Operator UI uses gateway/IGA naming — not competitor product branding. **No SaaS OAuth crawler.**
+
+3. Plane isolation & publish readiness:
+- Compose profile `plane-split` contract verified by `backend/scripts/verify_plane_split_compose.py`; runbook `plane-split-runbook.md`.
+- SDK dry-run CI + secrets-gated `.github/workflows/sdk-publish.yml`.
+
+4. Cross-cutting operator experience:
+- Overview / Cost QBR chips (LRS, sustain date, leader claim, CPLI); **Raise Leadership Score** with Enhance CPLI + Probe peer selects.
+- Auth explain matrix + single-action simulation (Security console) marked Full in coverage map.
+- Route Draft Browser: status-aware actions + **Recommend Auto-Route**.
+- Canary Lifecycle: **Explain × Auto-Route**; Governance: **VK Auto-Route Policies** list/upsert.
+- Local console auth: same-origin UI→API proxy so `gb_session`/`gb_csrf` bind to `:4173`; idle/expired sessions bounce cleanly to login; incident guidance page distinguishes loopback healthy recovery from production outage copy.
+
+## 0.1 Prior Delivery Sync (2026-08-02) — Control / data plane
+
+1. Control / data plane isolation foundation (`APP_PLANE`):
+- Process role `all` (default monolith), `control` (admin only), or `data` (inference/RAG only) with path-classified middleware rejection (`PLANE_ROUTE_REJECTED`).
+- Discovery/orchestration schedulers run only on control/combined planes.
+- `GET /health` exposes `plane` posture; `GET /platform/control-plane` adds on-plane coverage for Overview.
+- Production compose profile `plane-split` runs `api-control` (:8001) and `api-gateway` (:8002) alongside optional combined `api`.
+- Policy-generation fingerprint + peer probe (`DATA_PLANE_PEER_URL` / `CONTROL_PLANE_PEER_URL`) report drift; plane rejections emit throttled audit `platform.plane.route_rejected`.
+- Active reconcile: `POST /platform/control-plane/reconcile`, drift event history, background watcher (`PLANE_DRIFT_WATCHER_*`), optional data-plane fail-closed (`PLANE_FAIL_CLOSED_MODE` → 503 `PLANE_FAIL_CLOSED`), QBR `plane_isolation`.
+- L3: durable `plane_drift_events`, hot policy publish (runtime_config + optional Redis), published fingerprint fencing, plane SLO scorecard on `/platform/control-plane`.
+- CPLI (Control Plane Leadership Index, max 20): leadership + signed attest/verify; release-gate evaluate (CI go/no-go) + promotion readiness streak; signed evidence pack mint; reconcile ceremony; ops advisory banner. Env: `PLANE_RELEASE_GATE_REQUIRE_HMAC`, `PLANE_RELEASE_GATE_STREAK_REQUIRED`. Engineering ≠ marketing claim.
+- Best-practice contract (`plane-contract-v2`): desired vs observed, last-known-good, liveness vs readiness probes, env + audited runtime freeze, LKG rollback ceremony, peer ack, GitOps snapshot export/mint/apply.
+- UI Session Context supports optional Gateway API Base and **Plane Split** profile (control :8001 / gateway :8002); Overview Force Reconcile + drift table.
+
+## 0.2 Prior Delivery Sync (2026-06-12)
+
+1. Frontend clean-architecture component slice:
+- Shared JS modules (`constants`, `api-client`, `api-cache`, `ui-coverage`, `platform-status`, `operator-feedback`) load before `app.js`; Gap gating, boot GET dedupe, operational banners, and feedback capture are componentized without a build step.
+- Lazy view loading via `view-loader.js` hydrates only `overview` at boot; other consoles load on first navigation.
+
+2. Governance and platform operator experience:
+- `GET /governance/ui-coverage*` reports backend-vs-frontend gaps; `GET /platform/operational-status` and `/platform/feedback*` support maintenance/slow/downtime banners and operator feedback analytics with triage actions.
+- Domain constants (`backend/app/domain_constants.py`) and runtime-config keys centralize discovery, observability, and platform UX thresholds.
+
+3. Runtime config cache observability:
+- `GET /health` exposes `runtime_config_cache` posture for cloud operators without leaking secret values.
+
+4. Discovery operator UX:
+- Source topology uses horizontal-scroll layout with clickable nodes; agent-ops trace sources use functional labels and Observability pivot from Discovery.
+
+5. Autonomous enhancement agent integration (2026-07-04):
+- Sibling repo **gateway-enhancement-agent** runs local SDLC cycles against this platform as **TARGET_REPO** (gap matrix, Ollama implement, subprocess validation, optional git merge).
+- Gap sources: `inv-*` from API inventory, `cmp-*` from competitor capability coverage, `opt-*` optional themes (disabled in default agent config), `sec-*` security audit gaps (abuse-case tests + residual register).
+- Artifacts (`agent_work_order.md`, validation reports) live in the agent repo or Application Support — not in this repo's tree.
+- Operators implement work orders here per [AGENTS.md](../AGENTS.md) and [`.cursor/skills/gateway-competitor-sdlc/SKILL.md`](../.cursor/skills/gateway-competitor-sdlc/SKILL.md); governance docs here remain canonical.
+- Agent validation runs `node --check frontend/app.js`, security smoke, control coverage, and focused gateway pytest — with **governance-only skip** when diffs are solely under `backend/docs/governance/`.
+
+## 0.3 Prior Delivery Sync (2026-06-10)
+
+The architecture baseline now includes these delivered governance-depth capabilities:
+
+1. Realtime/media transport governance depth in gateway compatibility layer:
+- Inline-binary stream policy controls now include event-type allowlists, dedicated inline byte caps, and optional correlation-id requirements, enforced at realtime session ingest.
+- Existing production dual-approval semantics for inline binary operations remain mandatory.
+
+2. Prompt and quality operations governance depth:
+- Prompt promotion now includes stricter release discipline and validation workflow depth.
+- Quality triage and escalation lifecycle controls include operator-grade queueing, SLA-based progression, and auditable notification handoff metadata.
+
+3. Model catalog governance depth:
+- Supported-model catalog now includes recommendation explainability metadata plus approval/version progression controls suitable for CISO and security-architecture review.
+
+4. External observability sink productization:
+- Gateway external callbacks now support sink-specific routing metadata and correlation preset policy controls for downstream audit and incident triage workflows.
 
 ## 1. Architectural Goals
 
@@ -592,6 +675,8 @@ Run rolling-baseline and spike detectors for sudden token or tool cost jumps.
 26. AgenticReadinessRecord
 27. WorkloadIdentityFederationProfile
 28. SecretProviderConfig
+29. SecretProviderStoredValue (encrypted db-type secret material keyed by provider + secret_ref)
+30. SecretProviderLease
 
 ## 9. API Architecture
 
@@ -842,7 +927,7 @@ Core connectors, normalization, matching, and review queue.
 Token exchange, gateways, and actor-chain propagation.
 
 4. Security integrations
-Workload identity provider setup (STS adapter optional), secret provider onboarding (HashiCorp adapter optional), and lease health observability.
+Workload identity provider setup (STS adapter optional), unified secret provider onboarding (`db` platform-encrypted store, Vault/AWS/Azure adapters), gateway cursor secret binding, and lease health observability.
 
 5. Reliability, governance, and cost intelligence
 Checkpoint/resume, benchmarks, scans, progressive rollout, real-time cost tracking.
@@ -1200,7 +1285,7 @@ Control mapping update and evidence references attached.
 
 ### 22.8 Phase 1 implementation order by service
 
-1. Service 1: Discovery connector runtime and normalization pipeline.
+1. Service 1: Discovery connector runtime and normalization pipeline (including cloud product connectors).
 Dependencies: source auth integration and event bus contracts.
 
 2. Service 2: Gateway compatibility and key services.
@@ -1209,7 +1294,7 @@ Dependencies: service 1 discovery metadata and policy decision APIs.
 3. Service 3: Workload identity and secret provider adapters.
 Dependencies: gateway key service, policy store, audit pipeline.
 
-4. Service 4: Discovery and gateway UI projection APIs.
+4. Service 4: Discovery, modules (AI skills), and gateway UI projection APIs.
 Dependencies: services 1-3 for health, parity, and control evidence views.
 
 ### 22.9 Phase 2 implementation order by service

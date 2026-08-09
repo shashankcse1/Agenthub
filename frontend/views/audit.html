@@ -1,17 +1,128 @@
-<section id="audit" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Recent Audit Events</h3>
-              <button id="loadAudit" class="ghost">Load</button>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Recent audit events by time, actor, action, and outcome</caption>
-                <thead>
-                  <tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Outcome</th></tr>
-                </thead>
-                <tbody id="auditTable"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+<section id="audit" class="view runtime-config-view">
+  <article class="card runtime-config-hero">
+    <div class="card-head">
+      <div>
+        <p class="sig-kicker">Immutable evidence</p>
+        <h3>Immutable evidence</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Immutable trail</span></p>
+      </div>
+      <button id="refreshAuditConsole" class="ghost" type="button">Refresh All</button>
+    </div>
+    <p class="help-copy" data-help-label="About audit">Review recent audit events by actor, action, resource, and outcome.</p>
+    <p id="auditConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Load audit events to populate inventory.</p>
+    <div class="view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Audit
+          <input class="view-page-search-input" data-view-search-input type="search" placeholder="Filter audit tables and sections" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Evidence</span>
+        <strong>Immutable</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Actors</span>
+        <strong>Attributed</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Outcomes</span>
+        <strong>Decisioned</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Window</span>
+        <strong>Queryable</strong>
+      </div>
+    </section>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Audit console sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="events">Events</button>
+    </div>
+  </article>
+
+  <div data-console-panel="overview" class="runtime-console-panel active">
+    <article class="card">
+      <div class="card-head"><h4>Evidence review sequence</h4></div>
+      <div class="runtime-workflow-steps" aria-label="Audit workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Load events</strong>
+          <span>Fetch the latest audit stream for the current environment.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Filter</strong>
+          <span>Use hero or table search to narrow by actor, action, resource, or outcome.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Investigate</strong>
+          <span>Cross-reference trace IDs in Observability when present in resource metadata.</span>
+        </div>
+      </div>
+      <div class="chip-row" aria-label="Jump to audit workspace">
+        <button type="button" class="chip" data-console-tab-jump="events">Recent Events</button>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="events" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <div>
+          <p class="sig-kicker">Evidence stream</p>
+          <h4>Recent evidence events</h4>
+        </div>
+        <button id="loadAudit" class="ghost" type="button">Load Events</button>
+      </div>
+      <form id="auditFilterForm" class="audit-filter-form" aria-label="Audit event filters">
+        <label>Action prefix
+          <select id="auditActionPrefix" name="action_type_prefix" aria-label="Filter by action type prefix">
+            <option value="">All actions</option>
+            <option value="orchestration.flow">Flow orchestration</option>
+            <option value="platform.feedback">Platform feedback</option>
+            <option value="gateway.">Gateway</option>
+            <option value="playground.">Playground</option>
+            <option value="compliance.">Compliance</option>
+            <option value="agentic.">Agentic</option>
+            <option value="browser.">Browser security</option>
+            <option value="gateway.assistants.">Gateway assistants</option>
+            <option value="gateway.fine_tuning.">Gateway fine-tuning</option>
+            <option value="gateway.passthrough">Gateway passthrough</option>
+            <option value="compliance.evidence">Compliance evidence</option>
+            <option value="observability.siem">Observability SIEM</option>
+          </select>
+        </label>
+        <label>Resource type
+          <input id="auditResourceType" name="resource_type" type="text" placeholder="e.g. orchestration_flow" autocomplete="off" />
+        </label>
+        <label>Outcome
+          <select id="auditDecisionOutcome" name="decision_outcome" aria-label="Filter by decision outcome">
+            <option value="">Any</option>
+            <option value="allow">allow</option>
+            <option value="deny">deny</option>
+          </select>
+        </label>
+        <label>Since (hours)
+          <input id="auditSinceHours" name="since_hours" type="number" min="1" max="720" value="168" />
+        </label>
+        <label>Limit
+          <input id="auditLimit" name="limit" type="number" min="1" max="500" value="50" />
+        </label>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Recent audit events by time, actor, action, and outcome</caption>
+          <thead>
+            <tr><th>Time</th><th>Login</th><th>Role</th><th>Actor</th><th>Action</th><th>Description</th><th>Resource</th><th>Context</th><th>Outcome</th></tr>
+          </thead>
+          <tbody id="auditTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.database import SessionLocal
 from app.main import app
 from app.models import SecretProviderConfig, WorkloadIdentityFederationProfile
+from tests.conftest import response_error_message
 
 client = TestClient(app)
 
@@ -129,6 +130,6 @@ def test_workload_provider_rejects_invalid_subject_patterns_json_with_example():
     )
 
     assert created.status_code == 400
-    detail = created.json().get("detail", "")
+    detail = response_error_message(created)
     assert "JSON array of strings" in detail
     assert "Example" in detail

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.logging_utils import get_logger, sanitize_fields
 from app.models import (
+    AgentConfig,
     AuditEvent,
     BenchmarkRun,
     ComplianceEvidenceArtifact,
@@ -59,10 +60,37 @@ from app.schemas import (
     AuditEventResponse,
 )
 from app.security import ActorContext, get_actor_context, require_dual_approval, require_mfa, require_role
-from app.services.audit import create_audit_event
+from app.services.audit import create_audit_event, serialize_audit_event
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+READINESS_SCAN_LOOKBACK = timedelta(hours=24)
+
+
+def _readiness_scan_signals(db: Session) -> tuple[int, bool]:
+    """Return (open_high_findings, security_scan_pass) from recent completed scans."""
+    since = datetime.utcnow() - READINESS_SCAN_LOOKBACK
+    recent = (
+        db.query(ScanRun)
+        .filter(ScanRun.status == "completed", ScanRun.created_at >= since)
+        .order_by(ScanRun.created_at.desc())
+        .all()
+    )
+    if recent:
+        open_high = recent[0].severity_high_count
+        security_pass = any(row.severity_high_count == 0 for row in recent)
+        return open_high, security_pass
+
+    latest = (
+        db.query(ScanRun)
+        .filter(ScanRun.status == "completed")
+        .order_by(ScanRun.created_at.desc())
+        .first()
+    )
+    if latest is None:
+        return 0, False
+    return latest.severity_high_count, latest.severity_high_count == 0
 
 
 def _cost_24h_for_environment(db: Session, environment: str) -> int:
@@ -223,6 +251,16 @@ def validate_contracts(
     else:
         issues.append("required_capabilities should include at least one capability")
 
+    runtime_model = str(payload.runtime_model or "").strip()
+    if runtime_model:
+        config = db.query(AgentConfig).filter(AgentConfig.agent_key == payload.agent_id).first()
+        if config and str(config.model or "").strip() == runtime_model:
+            checks_passed += 1
+        elif not config:
+            issues.append("runtime_model provided but agent has no saved runtime configuration")
+        else:
+            issues.append("runtime_model does not match agent runtime configuration")
+
     checks_failed = len(issues)
     status = "pass" if checks_failed == 0 else "fail"
 
@@ -255,7 +293,7 @@ def readiness_report(
 
     benchmark_count = db.query(BenchmarkRun).count()
     scan_count = db.query(ScanRun).count()
-    high_findings = db.query(ScanRun).filter(ScanRun.severity_high_count > 0).count()
+    high_findings, _security_scan_pass = _readiness_scan_signals(db)
 
     score = 100
     score -= max(0, 10 - benchmark_count)
@@ -312,7 +350,7 @@ def run_readiness_certification(
 
     benchmark_count = db.query(BenchmarkRun).count()
     scan_count = db.query(ScanRun).count()
-    high_findings = db.query(ScanRun).filter(ScanRun.severity_high_count > 0).count()
+    high_findings, security_scan_pass = _readiness_scan_signals(db)
 
     score = 100
     score -= max(0, 10 - benchmark_count)
@@ -327,7 +365,6 @@ def run_readiness_certification(
         .count()
         > 0
     )
-    security_scan_pass = high_findings == 0
     contract_validation_pass = (
         db.query(AuditEvent)
         .filter(
@@ -724,9 +761,13 @@ def auto_tune_policies(
     db: Session = Depends(get_db),
     ctx: ActorContext = Depends(get_actor_context),
 ):
+    logger.trace(
+        "agentic_policy_auto_tune_start %s",
+        sanitize_fields({"actor_id": ctx.actor_id, "environment": payload.environment, "dry_run": payload.dry_run}),
+    )
     require_role(ctx, ROLES_ADMIN_RELEASE)
 
-    high_findings = db.query(ScanRun).filter(ScanRun.severity_high_count > 0).count()
+    high_findings, _ = _readiness_scan_signals(db)
     controls_status = "pass" if high_findings == 0 else "needs_attention"
     recent_cost = _cost_24h_for_environment(db, payload.environment)
 
@@ -758,7 +799,28 @@ def auto_tune_policies(
         )
 
     if not payload.dry_run:
+        create_audit_event(
+            db,
+            actor_id=ctx.actor_id,
+            action_type="agentic.policy.auto_tune",
+            resource_type="route_policy",
+            resource_id=f"auto-tune:{payload.environment}",
+            trace_id=f"trace-auto-tune-{payload.environment}",
+            decision_outcome="allow",
+            environment=payload.environment,
+        )
         db.commit()
+    logger.info(
+        "agentic_policy_auto_tune_completed %s",
+        sanitize_fields(
+            {
+                "actor_id": ctx.actor_id,
+                "environment": payload.environment,
+                "dry_run": payload.dry_run,
+                "total_routes_changed": changed_count,
+            }
+        ),
+    )
 
     return {
         "environment": payload.environment,
@@ -782,7 +844,7 @@ def scheduled_optimize_policies(
     now_hour = datetime.utcnow().hour
     within_window = _is_within_change_window(now_hour, payload.window_start_hour_utc, payload.window_end_hour_utc)
 
-    high_findings = db.query(ScanRun).filter(ScanRun.severity_high_count > 0).count()
+    high_findings, _ = _readiness_scan_signals(db)
     controls_status = "pass" if high_findings == 0 else "needs_attention"
     recent_cost = _cost_24h_for_environment(db, payload.environment)
 
@@ -809,7 +871,9 @@ def scheduled_optimize_policies(
             }
         )
 
-    approval_required = proposed_changes > payload.max_changes_without_approval
+    approval_required = proposed_changes > payload.max_changes_without_approval or (
+        payload.max_changes_without_approval == 0 and not payload.dry_run
+    )
     approved = (not approval_required) or (payload.approval_token == "approved")
 
     executed = False
@@ -1289,7 +1353,7 @@ def list_policy_schedule_history(
     total_count = query.count()
     if response is not None:
         response.headers["X-Total-Count"] = str(total_count)
-    return query.order_by(AuditEvent.timestamp.desc()).offset(offset).limit(limit).all()
+    return [AuditEventResponse(**serialize_audit_event(event, db)) for event in query.order_by(AuditEvent.timestamp.desc()).offset(offset).limit(limit).all()]
 
 
 @router.delete(

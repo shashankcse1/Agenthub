@@ -1,4 +1,4 @@
-<section id="browser-security" class="view">
+<section id="browser-security" class="view browser-security-view runtime-config-view">
           <!-- GuardBridge — browser extension governance console -->
           <!-- Data minimization contract:
                - browser_name / version / extension_version: canonical slug only (chrome|firefox|safari|edge|opera|brave|arc|vivaldi|samsung)
@@ -8,46 +8,96 @@
                - geo: country (ISO 3166-1 α-2) and region only; city requires explicit CISO policy + jurisdiction notice
                - content_fingerprint: hash of prompt/content; raw prompt text never sent or stored
                - All fields are optional at ingestion; missing fields default to empty string -->
-          <!-- ── GuardBridge Overview ── -->
-          <article class="card">
-            <h3>GuardBridge — Browser Extension Governance</h3>
-            <p class="mono" style="margin-top:0.25rem">
-              GuardBridge is the browser extension component of AgentHub. It operates independently under its own extension identity,
-              governs AI interactions at the browser layer, and reports minimal, privacy-safe telemetry back to this control plane.
-              No raw prompt text, raw IP addresses, or raw user-agent strings are ever transmitted or stored.
-            </p>
+          <article class="card runtime-config-hero">
+            <div class="card-head">
+              <div>
+                <p class="sig-kicker">Browser governance</p>
+                <h3>GuardBridge</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Minimized telemetry</span></p>
+              </div>
+              <button id="refreshBrowserSecurityConsole" class="ghost" type="button">Refresh All</button>
+            </div>
+            <p class="card-lead">Browser extension governance with minimal telemetry.</p>
+            <p class="help-copy" data-help-label="About GuardBridge">GuardBridge governs AI interactions at the browser layer, reports privacy-safe telemetry to this control plane, and never transmits raw prompt text, raw IPs, or raw user-agent strings.</p>
+            <p id="browserSecurityConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading GuardBridge telemetry…</p>
+            <div id="browserSecurityAlertBanner" class="console-alert-banner" hidden aria-live="polite"></div>
+            <div class="browser-security-search-bar view-page-search-toolbar" data-view-search-toolbar>
+              <div class="view-page-search-row">
+                <label class="view-page-search-label">
+                  Search GuardBridge
+                  <input class="view-page-search-input" data-view-search-input type="search" placeholder="Filter events, sessions, policies, and tables" autocomplete="off" />
+                </label>
+                <div class="view-page-search-actions">
+                  <button type="button" class="primary view-page-search-btn">Search</button>
+                  <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+                </div>
+              </div>
+              <p class="view-page-search-status mono" aria-live="polite"></p>
+            </div>
+            <div class="signal-strip browser-security-signal-strip" aria-label="Browser security posture signals">
+              <article class="signal-tile signal-tile-clickable" data-bsec-jump="events" tabindex="0" role="button" aria-label="View interaction events">
+                <p class="signal-label">Events (24h)</p>
+                <p class="signal-value" id="bsecEventCount">--</p>
+                <p class="signal-hint">Extension telemetry volume</p>
+              </article>
+              <article class="signal-tile signal-tile-warn signal-tile-clickable" id="bsecDenyTile" data-bsec-jump="events" data-bsec-preset="deny" tabindex="0" role="button" aria-label="Review denied interactions">
+                <p class="signal-label">Denied (24h)</p>
+                <p class="signal-value" id="bsecDenyCount">--</p>
+                <p class="signal-hint" id="bsecDenyHint">Policy enforcement blocks</p>
+              </article>
+              <article class="signal-tile signal-tile-clickable" data-bsec-jump="shadow-ai" tabindex="0" role="button" aria-label="Review shadow AI inventory">
+                <p class="signal-label">Shadow AI Apps</p>
+                <p class="signal-value" id="bsecShadowCount">--</p>
+                <p class="signal-hint">Unsanctioned app inventory</p>
+              </article>
+              <article class="signal-tile signal-tile-clickable" data-bsec-jump="sessions" tabindex="0" role="button" aria-label="Review extension sessions">
+                <p class="signal-label">Active Sessions</p>
+                <p class="signal-value" id="bsecSessionCount">--</p>
+                <p class="signal-hint">Live extension heartbeats</p>
+              </article>
+            </div>
+            <div class="console-panel-toolbar browser-security-toolbar">
+              <button id="refreshBrowserSecuritySummary" class="ghost" type="button">Refresh Summary</button>
+              <label class="console-auto-refresh-label">
+                <input id="browserSecurityAutoRefresh" type="checkbox" />
+                Auto-refresh
+              </label>
+              <select id="browserSecurityAutoRefreshInterval" aria-label="Auto-refresh interval">
+                <option value="30">Every 30s</option>
+                <option value="60" selected>Every 60s</option>
+                <option value="120">Every 2m</option>
+              </select>
+            </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Events</span>
+        <strong>Minimized</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Policies</span>
+        <strong>Enforced</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Shadow AI</span>
+        <strong>Inventoried</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Incidents</span>
+        <strong>Exportable</strong>
+      </div>
+    </section>
+            <div class="runtime-console-tabs" role="tablist" aria-label="GuardBridge console sections">
+              <button class="ghost active" type="button" role="tab" aria-selected="true" data-browser-security-console-tab="events">Events <span id="bsecEventsTabBadge" class="console-tab-badge" hidden></span></button>
+              <button class="ghost" type="button" role="tab" aria-selected="false" data-browser-security-console-tab="sessions">Sessions</button>
+              <button class="ghost" type="button" role="tab" aria-selected="false" data-browser-security-console-tab="shadow-ai">Shadow AI <span id="bsecShadowTabBadge" class="console-tab-badge" hidden></span></button>
+              <button class="ghost" type="button" role="tab" aria-selected="false" data-browser-security-console-tab="policies">Risk Policies</button>
+              <button class="ghost" type="button" role="tab" aria-selected="false" data-browser-security-console-tab="analytics">Analytics</button>
+              <button class="ghost" type="button" role="tab" aria-selected="false" data-browser-security-console-tab="incident">Incident Export</button>
+            </div>
           </article>
-          <div class="card-grid">
-            <article class="card metric">
-              <h3>Events (24h)</h3>
-              <p class="metric-value" id="bsecEventCount">--</p>
-            </article>
-            <article class="card metric">
-              <h3>Denied (24h)</h3>
-              <p class="metric-value" id="bsecDenyCount">--</p>
-            </article>
-            <article class="card metric">
-              <h3>Shadow AI Apps</h3>
-              <p class="metric-value" id="bsecShadowCount">--</p>
-            </article>
-            <article class="card metric">
-              <h3>Active Sessions</h3>
-              <p class="metric-value" id="bsecSessionCount">--</p>
-            </article>
-          </div>
-
-          <!-- ── Console tabs ── -->
-          <div class="card security-console-tabs">
-            <button class="ghost active" type="button" data-browser-console="events">Events</button>
-            <button class="ghost" type="button" data-browser-console="sessions">Sessions</button>
-            <button class="ghost" type="button" data-browser-console="shadow-ai">Shadow AI</button>
-            <button class="ghost" type="button" data-browser-console="policies">Risk Policies</button>
-            <button class="ghost" type="button" data-browser-console="analytics">Analytics</button>
-            <button class="ghost" type="button" data-browser-console="incident">Incident Export</button>
-          </div>
 
           <!-- ── Events panel ── -->
-          <article id="bsecConsoleEvents" class="card browser-security-console active">
+          <article id="bsecConsoleEvents" data-browser-security-console-panel="events" class="card browser-security-console runtime-console-panel active">
             <div class="card-head">
               <h3>Interaction Events</h3>
               <button id="loadBrowserEvents" class="ghost" type="button">Load</button>
@@ -133,10 +183,21 @@
               </table>
             </div>
             <div id="browserEventsPagination" class="pagination-row"></div>
+            <aside id="browserEventDetailDrawer" class="card browser-security-detail-drawer" hidden aria-label="Browser event detail">
+              <div class="card-head">
+                <h4>Event Detail</h4>
+                <button id="closeBrowserEventDetail" type="button" class="ghost">Close</button>
+              </div>
+              <div id="browserEventDetailBody" class="browser-security-detail-body"></div>
+              <div class="inline-row browser-security-detail-actions">
+                <button id="browserEventPivotObservability" type="button" class="ghost">Open Trace in Observability</button>
+                <button id="browserEventPivotAudit" type="button" class="ghost">Open Audit Feed</button>
+              </div>
+            </aside>
           </article>
 
           <!-- ── Sessions panel ── -->
-          <article id="bsecConsoleSessions" class="card browser-security-console" hidden>
+          <article id="bsecConsoleSessions" data-browser-security-console-panel="sessions" class="card browser-security-console runtime-console-panel" hidden>
             <div class="card-head">
               <h3>Extension Sessions</h3>
               <button id="loadBrowserSessions" class="ghost" type="button">Load</button>
@@ -194,7 +255,7 @@
           </article>
 
           <!-- ── Shadow AI panel ── -->
-          <article id="bsecConsoleShadowAi" class="card browser-security-console" hidden>
+          <article id="bsecConsoleShadowAi" data-browser-security-console-panel="shadow-ai" class="card browser-security-console runtime-console-panel" hidden>
             <div class="card-head">
               <h3>Shadow AI App Inventory</h3>
               <button id="loadShadowAiApps" class="ghost" type="button">Load</button>
@@ -236,10 +297,33 @@
               </table>
             </div>
             <div id="shadowAiPagination" class="pagination-row"></div>
+            <aside id="shadowAiReviewPanel" class="card browser-security-review-panel" hidden aria-label="Shadow AI app review">
+              <div class="card-head">
+                <h4>Review Shadow AI App</h4>
+                <button id="closeShadowAiReview" type="button" class="ghost">Close</button>
+              </div>
+              <p id="shadowAiReviewDomain" class="mono"></p>
+              <form id="shadowAiReviewForm" class="form-grid">
+                <input type="hidden" name="app_id" />
+                <label>
+                  Status
+                  <select name="status" required>
+                    <option value="unsanctioned">unsanctioned</option>
+                    <option value="under-review">under-review</option>
+                    <option value="sanctioned">sanctioned</option>
+                    <option value="blocked">blocked</option>
+                  </select>
+                </label>
+                <label class="wide-field">Review Notes<textarea name="notes" rows="3" placeholder="Optional triage notes for audit evidence"></textarea></label>
+                <label>Adjust Risk Score (optional)<input name="risk_score" type="number" min="0" max="100" placeholder="Leave blank to keep current" /></label>
+                <button type="submit" class="primary">Save Review</button>
+              </form>
+              <p id="shadowAiReviewResult" class="mono key-feedback"></p>
+            </aside>
           </article>
 
           <!-- ── Risk Policies panel ── -->
-          <article id="bsecConsolePolicies" class="card browser-security-console" hidden>
+          <article id="bsecConsolePolicies" data-browser-security-console-panel="policies" class="card browser-security-console runtime-console-panel" hidden>
             <div class="card-head">
               <h3>Browser Risk Policies</h3>
               <button id="loadBrowserRiskPolicies" class="ghost" type="button">Load</button>
@@ -326,7 +410,7 @@
           </article>
 
           <!-- ── Analytics panel ── -->
-          <article id="bsecConsoleAnalytics" class="card browser-security-console" hidden>
+          <article id="bsecConsoleAnalytics" data-browser-security-console-panel="analytics" class="card browser-security-console runtime-console-panel" hidden>
             <div class="card-head">
               <h3>Browser Security Analytics</h3>
               <button id="loadBrowserAnalytics" class="ghost" type="button">Load</button>
@@ -371,7 +455,7 @@
           </article>
 
           <!-- ── Incident Export panel ── -->
-          <article id="bsecConsoleIncident" class="card browser-security-console" hidden>
+          <article id="bsecConsoleIncident" data-browser-security-console-panel="incident" class="card browser-security-console runtime-console-panel" hidden>
             <div class="card-head">
               <h3>Incident Evidence Export</h3>
             </div>

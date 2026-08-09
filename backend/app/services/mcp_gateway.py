@@ -12,6 +12,7 @@ from app.runtime_constants import (
     RUNTIME_CONFIG_GATEWAY_MCP_SERVERS_JSON,
 )
 from app.services.runtime_config import get_runtime_config, get_runtime_config_float
+from app.services.prompt_injection_guard import arguments_to_scan_text, evaluate_prompt_injection_text
 
 
 _ALLOWED_TRANSPORTS = {"streamable_http", "http"}
@@ -44,6 +45,17 @@ def _validate_server_record(record: dict, idx: int) -> tuple[bool, str]:
     enabled = record.get("enabled", True)
     if not isinstance(enabled, bool):
         return False, f"gateway.mcp.servers_json[{idx}] enabled must be boolean"
+
+    # Prod/staging: empty allowlist is default-deny (Leader Readiness MCP gate).
+    if (
+        enabled
+        and not _is_localish_environment()
+        and not [str(item).strip() for item in allowed_tools if str(item).strip()]
+    ):
+        return (
+            False,
+            f"gateway.mcp.servers_json[{idx}] allowed_tools must be non-empty outside local/dev/test (default-deny)",
+        )
 
     return True, ""
 
@@ -217,12 +229,30 @@ def call_tool(db: Session, server: dict, tool_name: str, arguments: dict) -> obj
         raise HTTPException(status_code=422, detail="tool_name is required")
 
     allowed_tools = server.get("allowed_tools") or []
-    if allowed_tools and normalized_name not in allowed_tools:
+    # Empty allowlist: allow-all only in local/dev/test; default-deny elsewhere.
+    if not allowed_tools:
+        if not _is_localish_environment():
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Tool {normalized_name} denied: MCP server {server['server_id']} "
+                    "has empty allowed_tools (default-deny outside local/dev/test)"
+                ),
+            )
+    elif normalized_name not in allowed_tools:
         raise HTTPException(status_code=403, detail=f"Tool {normalized_name} is not allowed for MCP server {server['server_id']}")
 
     normalized_prefix = str(server.get("tool_name_prefix") or "").strip()
     if normalized_prefix and not normalized_name.startswith(normalized_prefix):
         raise HTTPException(status_code=403, detail=f"Tool {normalized_name} does not match allowed prefix for MCP server {server['server_id']}")
+
+    scan_text = arguments_to_scan_text(arguments)
+    evaluate_prompt_injection_text(
+        db,
+        scan_text,
+        source=f"mcp.tools.call:{normalized_name}",
+        raise_on_block=True,
+    )
 
     rpc = _rpc_request(
         db,

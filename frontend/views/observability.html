@@ -1,129 +1,453 @@
-<section id="observability" class="view">
-          <article class="card observability-hero">
-            <div class="card-head observability-hero-head">
-              <div>
-                <p class="eyebrow">Trace, Logs, and Schema Health</p>
-                <h3>Observability Console</h3>
-              </div>
-              <div class="inline-actions">
-                <button id="refreshObservability" class="ghost" type="button">Refresh Console</button>
-              </div>
-            </div>
-            <p class="mono observability-intro">
-              Search a trace ID, inspect recent audit-backed logs, and review schema conformance without leaving the platform.
-            </p>
-            <div class="observability-links">
-              <a href="#observabilityTraceCard">Trace lookup</a>
-              <a href="#observabilityLogsCard">Log explorer</a>
-              <a href="#observabilitySchemaCard">Schema health</a>
-            </div>
-          </article>
+<section id="observability" class="view runtime-config-view observability-console-view">
+  <article class="card runtime-config-hero observability-hero">
+    <div class="card-head observability-hero-head">
+      <div>
+        <p class="sig-kicker">Signals &amp; lineage</p>
+        <h3>Traces &amp; contracts</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Signals ledgered</span></p>
+        <p class="card-lead">Traces, audit logs, schema health, and SIEM pivots.</p>
+        <p class="help-copy" data-help-label="About traces & contracts">Queryless drilldown — inspect traces, explore audit logs, and validate schema health with one-click pivots from compliance and gateway workflows.</p>
+      </div>
+      <div class="inline-actions observability-console-toolbar">
+        <label class="observability-workspace-label">
+          Workspace
+          <select id="observabilityWorkspaceSelect" aria-label="Jump to observability workspace">
+            <option value="overview">Overview</option>
+            <option value="traces">Traces</option>
+            <option value="logs">Logs</option>
+            <option value="schema">Schema</option>
+            <option value="siem">SIEM Rules</option>
+          </select>
+        </label>
+        <button id="refreshObservability" class="ghost" type="button">Refresh All</button>
+      </div>
+    </div>
+    <p id="observabilityConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Console ready.</p>
+    <div class="view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Observability
+          <input class="view-page-search-input" data-view-search-input type="search" placeholder="Filter tables, panels, and trace fields" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Traces</span>
+        <strong>Queryable</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Logs</span>
+        <strong>Correlated</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Schema</span>
+        <strong>Contracted</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Health</span>
+        <strong>Monitored</strong>
+      </div>
+    </section>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Observability console sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="traces">Traces</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="logs">Logs <span id="observabilityLogsTabBadge" class="console-tab-badge" hidden></span></button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="schema">Schema</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="siem">SIEM Rules</button>
+    </div>
+  </article>
 
-          <div class="card-grid observability-metrics">
-            <article class="card metric">
-              <h3>Trace Status</h3>
-              <p class="metric-value" id="observabilityTraceStatus">Ready</p>
-            </article>
-            <article class="card metric">
-              <h3>Log Window</h3>
-              <p class="metric-value" id="observabilityLogsStatus">Ready</p>
-            </article>
-            <article class="card metric">
-              <h3>Schema Coverage</h3>
-              <p class="metric-value" id="observabilitySchemaStatus">Ready</p>
-            </article>
+  <div data-console-panel="overview" class="runtime-console-panel active">
+    <div id="observabilityAlertBanner" class="console-alert-banner" hidden aria-live="polite"></div>
+
+    <div class="console-panel-toolbar observability-overview-toolbar">
+      <label class="console-window-label">
+        Time window
+        <select id="observabilitySummaryWindow" aria-label="Observability summary time window">
+          <option value="1">Last 1 hour</option>
+          <option value="6">Last 6 hours</option>
+          <option value="24" selected>Last 24 hours</option>
+          <option value="72">Last 3 days</option>
+          <option value="168">Last 7 days</option>
+        </select>
+      </label>
+      <button id="refreshObservabilitySummary" class="ghost" type="button">Refresh Overview</button>
+      <label class="console-auto-refresh-label">
+        <input id="observabilityAutoRefresh" type="checkbox" />
+        Auto-refresh
+      </label>
+      <select id="observabilityAutoRefreshInterval" aria-label="Auto-refresh interval">
+        <option value="30">Every 30s</option>
+        <option value="60" selected>Every 60s</option>
+        <option value="120">Every 2m</option>
+      </select>
+      <p id="observabilitySummaryWindowLabel" class="console-window-meta mono">Window: last 24 hours</p>
+    </div>
+
+    <div class="signal-strip observability-red-strip" aria-label="Telemetry signals">
+      <article class="signal-tile signal-tile-clickable" data-observability-jump="logs" tabindex="0" role="button" aria-label="View logs for event volume">
+        <p class="signal-label">Ledger volume</p>
+        <p class="signal-value" id="observabilityOverviewEvents">--</p>
+        <p class="signal-hint">Events in selected window</p>
+      </article>
+      <article class="signal-tile signal-tile-warn signal-tile-clickable" data-observability-preset="deny" tabindex="0" role="button" aria-label="Filter deny and warn outcomes">
+        <p class="signal-label">Deny · warn rate</p>
+        <p class="signal-value" id="observabilityOverviewErrors">--</p>
+        <p class="signal-hint" id="observabilityOverviewErrorDetail">Non-allow outcomes</p>
+      </article>
+      <article class="signal-tile signal-tile-clickable" data-observability-jump="traces" tabindex="0" role="button" aria-label="Open trace lookup">
+        <p class="signal-label">Span ledger</p>
+        <p class="signal-value" id="observabilityOverviewTraces">--</p>
+        <p class="signal-hint">Distinct trace IDs</p>
+      </article>
+      <article class="signal-tile signal-tile-clickable" id="observabilitySchemaSignalTile" data-observability-jump="schema" tabindex="0" role="button" aria-label="Check schema health">
+        <p class="signal-label">Contract health</p>
+        <p class="signal-value" id="observabilitySchemaStatus">Ready</p>
+        <p class="signal-hint">Audit log field coverage</p>
+      </article>
+    </div>
+
+    <div id="observabilityOutcomePills" class="outcome-pills-row" aria-label="Outcome breakdown"></div>
+
+    <div class="card-grid compact observability-overview-metrics">
+      <article class="card metric observability-metric-card">
+        <h4>Span ledger lookup</h4>
+        <p class="metric-value" id="observabilityTraceStatus">Ready</p>
+        <p class="metric-sub">Last trace investigation</p>
+      </article>
+      <article class="card metric observability-metric-card">
+        <h4>Event stream</h4>
+        <p class="metric-value" id="observabilityLogsStatus">Ready</p>
+        <p class="metric-sub">Rows loaded in explorer</p>
+      </article>
+    </div>
+
+    <div class="observability-drilldown-grid">
+      <article class="card observability-drill-card">
+        <div class="card-head">
+          <h4>Outcome Distribution</h4>
+          <span class="field-help">Outcome counts with conditional severity highlighting</span>
+        </div>
+        <div id="observabilityOutcomeChart" class="observability-bar-chart" aria-live="polite">
+          <p class="observability-chart-empty">Load overview to populate outcome distribution.</p>
+        </div>
+      </article>
+      <article class="card observability-drill-card">
+        <div class="card-head">
+          <h4>Hourly Event Volume</h4>
+          <span class="field-help">Hourly event volume over the selected window</span>
+        </div>
+        <div id="observabilityHourlyVolumeChart" class="observability-bar-chart" aria-live="polite">
+          <p class="observability-chart-empty">Load overview to see hourly volume.</p>
+        </div>
+      </article>
+    </div>
+
+    <div class="observability-drilldown-grid">
+      <article class="card observability-drill-card">
+        <div class="card-head">
+          <h4>Top Actors</h4>
+          <span class="field-help">Most active operators in the selected window</span>
+        </div>
+        <div id="observabilityActorBreakdownChart" class="observability-bar-chart" aria-live="polite">
+          <p class="observability-chart-empty">Load overview to see top actors.</p>
+        </div>
+      </article>
+      <article class="card observability-drill-card">
+        <div class="card-head">
+          <h4>Recent Traces</h4>
+          <span class="field-help">Latest trace IDs — click to investigate</span>
+        </div>
+        <div id="observabilityRecentTraces" class="observability-recent-traces" aria-live="polite">
+          <p class="observability-chart-empty">Load overview to list recent traces.</p>
+        </div>
+      </article>
+    </div>
+
+    <article class="card observability-drill-card">
+      <div class="card-head">
+        <h4>Top Actions</h4>
+        <span class="field-help">Most frequent audit actions in the selected window</span>
+      </div>
+      <div id="observabilityActionBreakdownChart" class="observability-bar-chart" aria-live="polite">
+        <p class="observability-chart-empty">Load overview to see top actions.</p>
+      </div>
+    </article>
+
+    <article class="card observability-drill-card">
+      <div class="card-head">
+        <h4>Signal Drilldown</h4>
+        <span class="field-help">One-click pivots to traces, logs, schema, and preset filters</span>
+      </div>
+      <div class="chip-row observability-signal-links">
+        <button type="button" class="chip" data-console-tab-jump="traces">Open span ledger</button>
+        <button type="button" class="chip" data-console-tab-jump="logs">Open event stream</button>
+        <button type="button" class="chip" data-console-tab-jump="schema">Check contract health</button>
+        <button type="button" class="chip" data-observability-preset="deny">Filter Deny Outcomes</button>
+        <button type="button" class="chip" data-observability-preset="gateway">Gateway Actions</button>
+      </div>
+      <div class="runtime-workflow-steps observability-workflow" aria-label="Observability workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Start from a trace</strong>
+          <span>Paste a trace ID from compliance, gateway, or audit pivots.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Drill into logs</strong>
+          <span>Filter by actor, action, outcome, or free-text search without writing queries.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Validate schema</strong>
+          <span>Confirm audit events include required fields for governance evidence.</span>
+        </div>
+      </div>
+    </article>
+  </div>
+
+  <div data-console-panel="traces" class="runtime-console-panel" hidden>
+    <div class="observability-trace-layout">
+      <article id="observabilityTraceCard" class="card observability-panel observability-trace-main">
+        <div class="card-head">
+          <div>
+            <h4>Trace Lookup</h4>
+            <p class="field-help">Trace investigation with summary fields and a chronological event timeline.</p>
           </div>
-
-          <div class="observability-grid">
-            <article id="observabilityTraceCard" class="card observability-panel">
-              <div class="card-head">
-                <h3>Trace Lookup</h3>
-                <button id="loadObservabilityTrace" class="ghost" type="button">Lookup</button>
-              </div>
-              <form id="observabilityTraceForm" class="form-grid observability-form">
-                <label class="wide-field">Trace ID<input name="trace_id" required placeholder="trace-..." /></label>
-              </form>
-              <p id="observabilityTraceResult" class="mono"></p>
-              <div class="observability-summary" id="observabilityTraceSummary"></div>
-              <div class="table-wrap">
-                <table>
-                  <caption class="sr-only">Trace lookup details</caption>
-                  <thead>
-                    <tr><th>Field</th><th>Value</th></tr>
-                  </thead>
-                  <tbody id="observabilityTraceTable"></tbody>
-                </table>
-              </div>
-            </article>
-
-            <article id="observabilityLogsCard" class="card observability-panel">
-              <div class="card-head">
-                <h3>Log Explorer</h3>
-                <button id="loadObservabilityLogs" class="ghost" type="button">Load Logs</button>
-              </div>
-              <form id="observabilityLogsForm" class="form-grid observability-form">
-                <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="25" /></label>
-                <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
-                <label>Since (hours)<input name="since_hours" type="number" min="1" max="720" step="1" value="24" /></label>
-                <label>
-                  Redact Sensitive
-                  <select name="redact_sensitive">
-                    <option value="false" selected>false</option>
-                    <option value="true">true</option>
-                  </select>
-                </label>
-                <label>Actor ID<input name="actor_id" placeholder="ui-operator" /></label>
-                <label>Trace ID<input name="trace_id" placeholder="trace-..." /></label>
-                <label>Action<input name="action_type" placeholder="agentic_certification_override" /></label>
-                <label>Resource Type<input name="resource_type" placeholder="agent" /></label>
-                <label>Resource ID<input name="resource_id" placeholder="agent-id" /></label>
-                <label>Decision Outcome<input name="decision_outcome" placeholder="approved" /></label>
-                <label class="wide-field">Search<input name="search" placeholder="keyword across actor, action, resource, trace, and outcome" /></label>
-              </form>
-              <p id="observabilityLogsResult" class="mono"></p>
-              <div class="table-wrap observability-table-wrap">
-                <table>
-                  <caption class="sr-only">Observability logs</caption>
-                  <thead>
-                    <tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Resource Type</th><th>Resource ID</th><th>Outcome</th><th>Trace</th><th>Actions</th></tr>
-                  </thead>
-                  <tbody id="observabilityLogsTable"></tbody>
-                </table>
-              </div>
-            </article>
-
-            <article id="observabilitySchemaCard" class="card observability-panel">
-              <div class="card-head">
-                <h3>Schema Health</h3>
-                <button id="loadObservabilitySchema" class="ghost" type="button">Check Schema</button>
-              </div>
-              <p id="observabilitySchemaResult" class="mono"></p>
-              <div class="observability-summary" id="observabilitySchemaSummary"></div>
-              <div class="table-wrap">
-                <table>
-                  <caption class="sr-only">Observability schema missing field counts</caption>
-                  <thead>
-                    <tr><th>Required Field</th><th>Missing Count</th></tr>
-                  </thead>
-                  <tbody id="observabilitySchemaTable"></tbody>
-                </table>
-              </div>
-            </article>
-
-            <article class="card observability-panel">
-              <div class="card-head">
-                <h3>Observability Request Map</h3>
-                <p class="mono">Endpoint links remain available for quick navigation and troubleshooting.</p>
-              </div>
-              <div class="table-wrap">
-                <table>
-                  <caption class="sr-only">Observability endpoint request map</caption>
-                  <thead>
-                    <tr><th>Method</th><th>Endpoint</th><th>Purpose</th><th>Link</th></tr>
-                  </thead>
-                  <tbody id="observabilityRequestMapTable"></tbody>
-                </table>
-              </div>
-            </article>
+          <button id="loadObservabilityTrace" class="primary" type="button">Lookup Trace</button>
+        </div>
+        <form id="observabilityTraceForm" class="form-grid observability-form">
+          <label class="wide-field">Trace ID<input name="trace_id" required placeholder="trace-gateway-responses-…" /></label>
+        </form>
+        <p id="observabilityTraceResult" class="runtime-feedback mono"></p>
+        <div class="observability-summary" id="observabilityTraceSummary"></div>
+        <details class="observability-trace-details" open>
+          <summary>Trace metadata</summary>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Trace lookup details</caption>
+              <thead>
+                <tr><th>Field</th><th>Value</th></tr>
+              </thead>
+              <tbody id="observabilityTraceTable"></tbody>
+            </table>
           </div>
-        </section>
+        </details>
+        <div class="observability-timeline-section">
+          <div class="card-head observability-timeline-head">
+            <h4>Event Timeline</h4>
+            <span id="observabilityTraceTimelineCount" class="field-help mono">0 events</span>
+          </div>
+          <div id="observabilityTraceWaterfall" class="observability-trace-waterfall" aria-label="Visual trace waterfall"></div>
+          <div class="table-wrap observability-trace-timeline-wrap">
+            <table class="observability-trace-timeline-table">
+              <caption class="sr-only">Trace event timeline</caption>
+              <thead>
+                <tr><th>Timestamp</th><th>Type</th><th>Action / Model</th><th>Resource</th><th>Outcome</th><th>Cost</th></tr>
+              </thead>
+              <tbody id="observabilityTraceTimelineTable"></tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+      <aside id="observabilityTraceDrawer" class="card observability-trace-drawer" aria-label="Trace detail drawer">
+        <div class="card-head">
+          <h4>Trace Context</h4>
+          <p class="field-help">Side panel with trace summary, cost events, and quick log pivot actions.</p>
+        </div>
+        <div id="observabilityTraceDrawerBody" class="observability-drawer-body">
+          <p class="observability-drawer-empty">Lookup a trace to see span summary, cost events, and quick log pivot actions.</p>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <div data-console-panel="logs" class="runtime-console-panel" hidden>
+    <article id="observabilityLogsCard" class="card observability-panel">
+      <div class="card-head">
+        <div>
+          <h4>Log Explorer</h4>
+          <p class="field-help">Preset filters plus deep attribute filters for log search.</p>
+        </div>
+        <div class="inline-actions">
+          <button id="exportObservabilityLogsCsv" class="ghost" type="button">Export CSV</button>
+          <button id="exportObservabilityLogsJson" class="ghost" type="button">Export JSON</button>
+          <button id="loadObservabilityLogs" class="primary" type="button">Load Logs</button>
+        </div>
+      </div>
+
+      <div class="observability-saved-views">
+        <label class="console-window-label">
+          Saved views
+          <select id="observabilitySavedViewsSelect" aria-label="Saved log filter views">
+            <option value="">— Select saved view —</option>
+          </select>
+        </label>
+        <button id="saveObservabilityView" class="ghost" type="button">Save Current View</button>
+        <button id="deleteObservabilityView" class="ghost" type="button">Delete View</button>
+      </div>
+
+      <div class="observability-log-presets chip-row" aria-label="Log explorer presets">
+        <button type="button" class="chip" data-observability-preset="24h">Last 24h</button>
+        <button type="button" class="chip" data-observability-preset="deny">Deny / Warn</button>
+        <button type="button" class="chip" data-observability-preset="gateway">Gateway</button>
+        <button type="button" class="chip" data-observability-preset="agentic">Agentic</button>
+        <button type="button" class="chip" data-observability-preset="clear">Clear Filters</button>
+      </div>
+
+      <div id="observabilityActiveFilters" class="active-filter-chips" aria-label="Active log filters"></div>
+
+      <details class="observability-advanced-filters" id="observabilityLogsAdvanced">
+        <summary>Advanced filters</summary>
+        <form id="observabilityLogsForm" class="form-grid observability-form">
+          <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="25" /></label>
+          <label>Offset<input name="offset" type="number" min="0" step="1" value="0" /></label>
+          <label>Since (hours)<input name="since_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+          <label>
+            Redact Sensitive
+            <select name="redact_sensitive">
+              <option value="false" selected>false</option>
+              <option value="true">true</option>
+            </select>
+          </label>
+          <label>Actor ID<input name="actor_id" placeholder="ui-operator" /></label>
+          <label>Trace ID<input name="trace_id" placeholder="trace-…" /></label>
+          <label>Action<input name="action_type" placeholder="gateway.responses.create" /></label>
+          <label>Resource Type<input name="resource_type" placeholder="agent" /></label>
+          <label>Resource ID<input name="resource_id" placeholder="agent-id" /></label>
+          <label>Decision Outcome<input name="decision_outcome" placeholder="allow" /></label>
+          <label class="wide-field">Search<input name="search" placeholder="keyword across actor, action, resource, trace, outcome" /></label>
+        </form>
+      </details>
+
+      <article class="card observability-log-volume-card">
+        <div class="card-head">
+          <h4>Log Volume by Action</h4>
+        </div>
+        <div id="observabilityLogVolumeChart" class="observability-bar-chart" aria-live="polite">
+          <p class="observability-chart-empty">Load logs to see action volume breakdown.</p>
+        </div>
+      </article>
+
+      <p id="observabilityLogsResult" class="runtime-feedback mono"></p>
+      <div class="observability-log-pagination">
+        <button id="observabilityLogsPrev" class="ghost" type="button">Previous Page</button>
+        <p id="observabilityLogsPageLabel" class="mono observability-page-label">Page 1 · offset 0</p>
+        <button id="observabilityLogsNext" class="ghost" type="button">Next Page</button>
+      </div>
+      <div class="table-wrap observability-table-wrap observability-logs-table-wrap">
+        <table class="observability-logs-table">
+          <caption class="sr-only">Observability logs</caption>
+          <thead>
+            <tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Resource Type</th><th>Resource ID</th><th>Outcome</th><th>Trace</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="observabilityLogsTable"></tbody>
+        </table>
+      </div>
+      <aside id="observabilityLogDetailDrawer" class="card observability-log-detail-drawer" hidden>
+        <div class="card-head">
+          <h4>Log Entry Detail</h4>
+          <button id="closeObservabilityLogDetail" class="ghost" type="button">Close</button>
+        </div>
+        <pre id="observabilityLogDetailBody" class="observability-log-detail-body mono"></pre>
+      </aside>
+    </article>
+  </div>
+
+  <div data-console-panel="schema" class="runtime-console-panel" hidden>
+    <article id="observabilitySchemaCard" class="card observability-panel">
+      <div class="card-head">
+        <div>
+          <h4>Schema Health</h4>
+          <p class="field-help">Audit log conformance against required observability fields.</p>
+        </div>
+        <button id="loadObservabilitySchema" class="primary" type="button">Check Schema</button>
+      </div>
+      <div class="observability-schema-progress-wrap">
+        <div class="observability-schema-progress-track" aria-hidden="true">
+          <div id="observabilitySchemaProgress" class="observability-schema-progress-fill" style="width: 0%"></div>
+        </div>
+        <p id="observabilitySchemaProgressLabel" class="mono observability-schema-progress-label">Conformance: --</p>
+      </div>
+      <p id="observabilitySchemaResult" class="runtime-feedback mono"></p>
+      <div class="observability-summary" id="observabilitySchemaSummary"></div>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Observability schema missing field counts</caption>
+          <thead>
+            <tr><th>Required Field</th><th>Missing Count</th><th>Severity</th></tr>
+          </thead>
+          <tbody id="observabilitySchemaTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <details class="card observability-api-reference">
+      <summary class="observability-api-summary">API Reference — Observability endpoints</summary>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Observability endpoint request map</caption>
+          <thead>
+            <tr><th>Method</th><th>Endpoint</th><th>Purpose</th><th>Link</th></tr>
+          </thead>
+          <tbody id="observabilityRequestMapTable"></tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+
+  <div data-console-panel="siem" class="runtime-console-panel" hidden>
+    <article id="observabilitySiemCard" class="card observability-panel">
+      <div class="card-head">
+        <div>
+          <h4>SIEM Alert Rules</h4>
+          <p class="field-help">Catalog of audit action matchers for SecOps handoff — load, export bundle, or dry-run evaluate against recent events.</p>
+        </div>
+        <div class="inline-actions">
+          <button id="loadObservabilitySiemRules" class="primary" type="button">Load Rules</button>
+          <button id="exportObservabilitySiemRules" class="ghost" type="button">Export Bundle</button>
+          <button id="evaluateObservabilitySiemRules" class="ghost" type="button">Evaluate</button>
+        </div>
+      </div>
+      <form id="observabilitySiemEvaluateForm" class="form-grid compact observability-form">
+        <label>Since (hours)<input name="since_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="500" step="1" value="100" /></label>
+        <label>Action prefix<input name="action_type_prefix" placeholder="gateway.assistants." /></label>
+        <label>
+          Outcome
+          <select name="decision_outcome">
+            <option value="">Any</option>
+            <option value="allow">allow</option>
+            <option value="deny">deny</option>
+          </select>
+        </label>
+      </form>
+      <p id="observabilitySiemRulesResult" class="runtime-feedback mono" aria-live="polite"></p>
+      <div class="table-wrap observability-table-wrap">
+        <table class="observability-siem-rules-table">
+          <caption class="sr-only">SIEM alert rules catalog</caption>
+          <thead>
+            <tr><th>Rule ID</th><th>Name</th><th>Severity</th><th>Action Pattern</th><th>Outcomes</th><th>Sink Route</th><th>Enabled</th></tr>
+          </thead>
+          <tbody id="observabilitySiemRulesTable"></tbody>
+        </table>
+      </div>
+      <details class="observability-siem-export-details" id="observabilitySiemExportDetails" hidden>
+        <summary>Export bundle (JSON)</summary>
+        <pre id="observabilitySiemExportBody" class="observability-log-detail-body mono"></pre>
+      </details>
+      <div class="table-wrap observability-table-wrap">
+        <table class="observability-siem-eval-table">
+          <caption class="sr-only">SIEM rule evaluation matches</caption>
+          <thead>
+            <tr><th>Audit Event</th><th>Action</th><th>Outcome</th><th>Trace</th><th>Matched Rules</th></tr>
+          </thead>
+          <tbody id="observabilitySiemEvaluateTable"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

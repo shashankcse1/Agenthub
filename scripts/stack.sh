@@ -64,7 +64,26 @@ bootstrap_day0_admin_credentials() {
   bash "$ROOT_DIR/scripts/bootstrap_day0_admin_credentials.sh" >/dev/null
 }
 
+seed_day0_directory_admin() {
+  # Fresh Postgres has no directory users; Keychain-only bootstrap is not enough for /auth/login.
+  if [[ -f "$ROOT_DIR/.runtime/local-dev.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$ROOT_DIR/.runtime/local-dev.env"
+    set +a
+  fi
+  bash "$ROOT_DIR/scripts/seed_day0_directory_admin.sh"
+}
+
 start_backend() {
+  # Keep API session signing + DB URL aligned with local runtime env (UI login depends on this).
+  if [[ -f "$ROOT_DIR/.runtime/local-dev.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$ROOT_DIR/.runtime/local-dev.env"
+    set +a
+  fi
+  export PATH="/opt/homebrew/opt/libpq/bin:${PATH:-}"
   start_infra
 
   local pg_ready="false"
@@ -198,15 +217,18 @@ case "$ACTION" in
         bootstrap_day0_admin_credentials
         echo "Starting infra, backend, and UI..."
         start_backend
+        seed_day0_directory_admin
         start_ui
         wait_for_ui
         wait_for_api
         echo "All three components are up: infra, backend on ${API_PORT}, UI on ${UI_PORT}"
         echo "UI logs: $ROOT_DIR/.runtime/ui.log"
+        echo "Login: Day-0 username from .runtime/day0_admin_credentials_meta.env (password in macOS Keychain)"
         ;;
       backend)
         bootstrap_day0_admin_credentials
         start_backend
+        seed_day0_directory_admin
         wait_for_api
         echo "Backend is up on ${API_PORT}"
         ;;

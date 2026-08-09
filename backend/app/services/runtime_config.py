@@ -43,3 +43,34 @@ def get_runtime_config_float(db: Session, key: str, fallback: float) -> float:
 
 def invalidate_runtime_config_cache(key: str) -> None:
     runtime_config_cache.delete(key)
+
+
+def upsert_runtime_config_value(
+    db: Session,
+    key: str,
+    value: str,
+    *,
+    description: str = "",
+) -> RuntimeConfig:
+    """Upsert a runtime config row, flush (autoflush may be off), and refresh cache."""
+    normalized_key = str(key or "").strip()
+    if not normalized_key:
+        raise ValueError("config_key is required")
+    normalized_value = str(value)
+    row = db.query(RuntimeConfig).filter_by(config_key=normalized_key).first()
+    if row is None:
+        row = RuntimeConfig(
+            config_key=normalized_key,
+            config_value=normalized_value,
+            description=str(description or ""),
+        )
+        db.add(row)
+    else:
+        row.config_value = normalized_value
+        if description:
+            row.description = str(description)
+    # Sessions are created with autoflush=False; without flush, same-request
+    # get_runtime_config() misses the pending row and re-caches the fallback.
+    db.flush()
+    runtime_config_cache.set(normalized_key, normalized_value.strip())
+    return row

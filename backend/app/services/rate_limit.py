@@ -55,6 +55,9 @@ DEFAULT_UI_POLLING_RULES: dict[tuple[str, str], RateLimitRule] = {
     ("POST", "/auth/sessions"): RateLimitRule(max_requests=20, window_seconds=60),
     ("POST", "/auth/login"): RateLimitRule(max_requests=12, window_seconds=60),
     ("POST", "/auth/workload-identity/token-exchange"): RateLimitRule(max_requests=20, window_seconds=60),
+    ("GET", "/gateway/runtime-risk/config"): RateLimitRule(max_requests=60, window_seconds=60),
+    ("PUT", "/gateway/runtime-risk/config"): RateLimitRule(max_requests=10, window_seconds=300),
+    ("POST", "/gateway/runtime-risk/evaluate"): RateLimitRule(max_requests=30, window_seconds=60),
 }
 
 # Prefix rules fallback for endpoints with path parameters.
@@ -62,6 +65,10 @@ DEFAULT_WILDCARD_RULES: dict[tuple[str, str], RateLimitRule] = {
     ("POST", "/auth/basic/config/"): RateLimitRule(max_requests=10, window_seconds=300),
     ("POST", "/keys/"): RateLimitRule(max_requests=20, window_seconds=300),
     ("POST", "/route-drafts/"): RateLimitRule(max_requests=30, window_seconds=300),
+    ("POST", "/orchestration/flows/"): RateLimitRule(max_requests=30, window_seconds=300),
+    ("POST", "/orchestration/flows"): RateLimitRule(max_requests=30, window_seconds=300),
+    ("GET", "/gateway/jit-actions/"): RateLimitRule(max_requests=60, window_seconds=60),
+    ("POST", "/gateway/jit-actions/"): RateLimitRule(max_requests=20, window_seconds=60),
 }
 
 
@@ -97,6 +104,12 @@ class SlidingWindowRateLimiter:
         self._rules_refresh_seconds = 30
         self._last_rules_refresh_monotonic = 0.0
         self._rules_lock = Lock()
+        self._last_degraded_alert_unix = 0.0
+        self._degraded_alert_min_interval_seconds = _safe_positive_int(
+            os.getenv("RATE_LIMIT_REDIS_FALLBACK_WARN_PER_HOUR"),
+            default=1,
+            min_value=1,
+        ) * 3600
 
         if self._backend not in {"memory", "redis"}:
             logger.warning(
@@ -177,7 +190,27 @@ class SlidingWindowRateLimiter:
             "redis_recovery_successes": self._redis_recovery_successes,
             "redis_last_recovery_unix": self._redis_last_recovery_unix,
             "redis_last_error": self._redis_last_error,
+            "degraded_alert_min_interval_seconds": self._degraded_alert_min_interval_seconds,
+            "last_degraded_alert_unix": self._last_degraded_alert_unix,
         }
+
+    def maybe_emit_degraded_alert(self, emit_fn: Callable[[str], None] | None) -> bool:
+        """Emit a throttled security alert while Redis rate-limit backend is degraded (RSK-005)."""
+        if emit_fn is None:
+            return False
+        degraded = self._configured_backend == "redis" and self._backend != "redis"
+        if not degraded:
+            return False
+        now = float(self._wall_clock())
+        if self._last_degraded_alert_unix and (now - self._last_degraded_alert_unix) < self._degraded_alert_min_interval_seconds:
+            return False
+        warning = (
+            "RATE_LIMIT_BACKEND=redis is degraded to in-memory fallback; "
+            f"last_error={self._redis_last_error or 'unknown'} attempts={self._redis_recovery_attempts}"
+        )
+        emit_fn(warning)
+        self._last_degraded_alert_unix = now
+        return True
 
     @staticmethod
     def _stable_id(value: str) -> str:
@@ -288,10 +321,12 @@ class SlidingWindowRateLimiter:
                 return
 
             exact_rules, wildcard_rules, refresh_seconds = self._read_db_rules()
+            # Merge DB overrides over defaults so empty/custom JSON cannot wipe
+            # security-critical prefixes (auth login, JIT action links, etc.).
             if exact_rules is not None:
-                self._exact_rules = exact_rules
+                self._exact_rules = {**DEFAULT_UI_POLLING_RULES, **exact_rules}
             if wildcard_rules is not None:
-                self._wildcard_rules = wildcard_rules
+                self._wildcard_rules = {**DEFAULT_WILDCARD_RULES, **wildcard_rules}
             if refresh_seconds is not None:
                 self._rules_refresh_seconds = max(5, refresh_seconds)
             self._last_rules_refresh_monotonic = monotonic()

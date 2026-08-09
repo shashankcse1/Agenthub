@@ -1,123 +1,272 @@
-<section id="modules" class="view">
-          <article class="card">
-            <div class="card-head">
-              <h3>Module Registry</h3>
-              <button id="loadModules" class="ghost" type="button">Load Modules</button>
-            </div>
-            <form id="moduleRegisterForm" class="form-grid">
-              <label>Module Name<input name="module_name" required placeholder="gateway-policy-optimizer" /></label>
-              <label>
-                Module Type
-                <select name="module_type">
-                  <option value="runtime" selected>runtime</option>
-                  <option value="gateway">gateway</option>
-                  <option value="security">security</option>
-                  <option value="observability">observability</option>
-                  <option value="ai_skill">ai_skill</option>
-                </select>
-              </label>
-              <label>Version<input name="version" required value="1.0.0" /></label>
-              <label>Contract Version<input name="contract_version" required value="v1" /></label>
-              <label>Owner Team<input name="owner_team" required value="platform-security" /></label>
-              <label>Compatibility Range<input name="compatibility_range" value="*" placeholder="* or major:1" /></label>
-              <label class="wide-field">Required Permissions JSON<input name="required_permissions" value='[]' placeholder='["gateway.route.read"]' /></label>
-              <label>Artifact Signature<input name="artifact_signature" required placeholder="sig:sha256:..." /></label>
-              <label>Provenance Ref<input name="provenance_ref" required placeholder="prov://artifact/registry/module" /></label>
-              <label>Security Review Ticket<input name="security_review_ticket" placeholder="SEC-12345" /></label>
-              <label>
-                Integration Provider
-                <select name="integration_provider">
-                  <option value="" selected>none</option>
-                  <option value="cursor">cursor</option>
-                  <option value="github">github</option>
-                  <option value="gitlab">gitlab</option>
-                  <option value="aws">aws</option>
-                  <option value="azure">azure</option>
-                  <option value="gcp">gcp</option>
-                </select>
-              </label>
-              <label>Integration Reference<input name="integration_reference" placeholder="cursor://workspace/team-a/skills" /></label>
-              <button type="submit" class="primary">Register Module</button>
-            </form>
-            <p id="moduleRegisterResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Module catalog</caption>
-                <thead>
-                  <tr><th>Module ID</th><th>Name</th><th>Type</th><th>Version</th><th>Status</th><th>Owner Team</th><th>Integration</th><th>Sync Status</th><th>Last Synced</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="modulesTable"></tbody>
-              </table>
-            </div>
-          </article>
+<section id="modules" class="view modules-view runtime-config-view">
+  <article class="card runtime-config-hero">
+    <div class="card-head">
+      <div>
+        <p class="sig-kicker">Catalog &amp; skills</p>
+        <h3>Lifecycle &amp; skills</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Catalog governed</span></p>
+      </div>
+      <button id="refreshModulesConsole" class="ghost" type="button">Refresh All</button>
+    </div>
+    <p class="card-lead">Module catalog, agent pins, upgrades, and AI skills registry.</p>
+    <p class="help-copy" data-help-label="About lifecycle & skills">Govern the module catalog, agent compatibility checks, upgrade planning, and the AI skills registry. Register modules with provenance, validate agent pins, plan upgrades, and deprecate with migration guidance.</p>
+    <p id="modulesConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading module inventory…</p>
+    <div class="modules-page-search-bar view-page-search-toolbar" data-view-search-toolbar>
+      <div class="view-page-search-row">
+        <label class="view-page-search-label">
+          Search Modules
+          <input id="modulesConsoleSearch" class="view-page-search-input" data-view-search-input type="search" placeholder="Filter module catalog and AI skills tables" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button type="button" class="primary view-page-search-btn">Search</button>
+          <button type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p class="view-page-search-status mono" aria-live="polite"></p>
+    </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Modules</span>
+        <strong>Versioned</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Skills</span>
+        <strong>Registered</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Sync</span>
+        <strong>Attested</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Lifecycle</span>
+        <strong>Deprecatable</strong>
+      </div>
+    </section>
+    <div class="runtime-console-tabs" role="tablist" aria-label="Modules console sections">
+      <button class="ghost active" type="button" role="tab" aria-selected="true" data-modules-console-tab="overview">Overview</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-modules-console-tab="registry">Module Registry</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-modules-console-tab="lifecycle">Lifecycle</button>
+      <button class="ghost" type="button" role="tab" aria-selected="false" data-modules-console-tab="skills">AI Skills</button>
+    </div>
+  </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Module Versions</h3>
-            </div>
-            <form id="moduleVersionsForm" class="form-grid">
-              <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
-              <button type="submit" class="ghost">Load Versions</button>
-            </form>
-            <p id="moduleVersionsResult" class="mono"></p>
-          </article>
+  <div data-modules-console-panel="overview" class="runtime-console-panel active">
+    <article class="card">
+      <div class="card-head">
+        <h4>How Modules Fit Together</h4>
+      </div>
+      <div class="runtime-workflow-steps modules-onboarding-steps" aria-label="Recommended module lifecycle workflow">
+        <div class="runtime-workflow-step">
+          <strong>1. Register modules</strong>
+          <span>Publish module metadata, contract version, provenance, and optional integration provider references.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>2. Validate agent pins</strong>
+          <span>Confirm agent module pins and config hashes before runtime promotion.</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>3. Plan upgrades</strong>
+          <span>Generate upgrade plans and sync integration-backed modules (for example Cursor skills).</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>4. Deprecate safely</strong>
+          <span>Retire modules with migration guidance, replacement IDs, and deprecation timelines.</span>
+        </div>
+      </div>
+      <div class="chip-row modules-quick-nav" aria-label="Jump to module workspaces">
+        <button type="button" class="chip" data-modules-console-tab-jump="registry">Module Catalog</button>
+        <button type="button" class="chip" data-modules-console-tab-jump="lifecycle">Validate &amp; Deprecate</button>
+        <button type="button" class="chip" data-modules-console-tab-jump="skills">AI Skills Registry</button>
+      </div>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Agent Module Validate</h3>
-            </div>
-            <form id="moduleValidateForm" class="form-grid">
-              <label>Agent ID<input name="agent_id" required placeholder="agent-001" /></label>
-              <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
-              <label>Pinned Version<input name="pinned_version" required value="1.0.0" /></label>
-              <label>Config Hash<input name="config_hash" required placeholder="cfg-sha256-..." /></label>
-              <button type="submit" class="primary">Validate Module</button>
-            </form>
-            <p id="moduleValidateResult" class="mono"></p>
-          </article>
+    <article class="card">
+      <div class="card-head">
+        <h4>Operator Guide by Area</h4>
+      </div>
+      <div class="runtime-workflow-steps modules-guide-grid" aria-label="Operator guide by area">
+        <div class="runtime-workflow-step">
+          <strong>Module Registry</strong>
+          <span>List and register secure modules with artifact signatures and required permissions. Use <strong>Use</strong> on a row to populate lifecycle forms. API: POST/GET /modules</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>Lifecycle Operations</strong>
+          <span>Load versions, validate agent pins, plan upgrades, and deprecate modules with audit-friendly guidance. API: /modules/{id}/versions, /agents/{id}/modules/*, /modules/{id}/deprecate</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>Integration Sync</strong>
+          <span>For integration-enabled modules, run <strong>Sync Integration</strong> after setting a valid reference (Cursor modules require <code>cursor://workspace/...</code>). API: POST /modules/{id}/integration/sync</span>
+        </div>
+        <div class="runtime-workflow-step">
+          <strong>AI Skills Registry</strong>
+          <span>Review skill-focused module inventory (<code>ai_skill</code>/<code>skill</code>) separately from the full catalog. API: GET /modules/skills</span>
+        </div>
+      </div>
+      <details class="help-details runtime-help-details">
+        <summary>When should I register vs validate a module?</summary>
+        <p class="profile-note">
+          <strong>Register</strong> when publishing a new module artifact into the platform catalog.
+          <strong>Validate</strong> when an agent already pins a module version and you need to confirm compatibility before rollout.
+          Use upgrade planning when moving agents to a newer catalog version.
+        </p>
+      </details>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Agent Module Upgrade Plan</h3>
-            </div>
-            <form id="moduleUpgradePlanForm" class="form-grid">
-              <label>Agent ID<input name="agent_id" required placeholder="agent-001" /></label>
-              <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
-              <label>Pinned Version<input name="pinned_version" required value="1.0.0" /></label>
-              <label>Config Hash<input name="config_hash" required placeholder="cfg-sha256-..." /></label>
-              <button type="submit" class="ghost">Plan Upgrade</button>
-            </form>
-            <p id="moduleUpgradePlanResult" class="mono"></p>
-          </article>
+  <div data-modules-console-panel="registry" class="runtime-console-panel" hidden>
+    <article class="card modules-form-card">
+      <div class="card-head">
+        <h4>Module Registry</h4>
+        <button id="loadModules" class="ghost" type="button">Refresh Catalog</button>
+      </div>
+      <p class="help-copy" data-help-label="About module catalog">Register modules with provenance and permissions. Row actions populate lifecycle forms or sync integrations.</p>
+      <form id="moduleRegisterForm" class="form-grid modules-register-form">
+        <label>Module Name<input name="module_name" required placeholder="gateway-policy-optimizer" /></label>
+        <label>
+          Module Type
+          <select name="module_type">
+            <option value="runtime" selected>runtime</option>
+            <option value="gateway">gateway</option>
+            <option value="security">security</option>
+            <option value="observability">observability</option>
+            <option value="ai_skill">ai_skill</option>
+          </select>
+        </label>
+        <label>Version<input name="version" required value="1.0.0" /></label>
+        <label>Contract Version<input name="contract_version" required value="v1" /></label>
+        <label>Owner Team<input name="owner_team" required value="platform-security" /></label>
+        <label>Compatibility Range<input name="compatibility_range" value="*" placeholder="* or major:1" /></label>
+        <label class="wide-field">Required Permissions JSON<input name="required_permissions" value='[]' placeholder='["gateway.route.read"]' /></label>
+        <label>Artifact Signature<input name="artifact_signature" required placeholder="sig:sha256:..." /></label>
+        <label>Provenance Ref<input name="provenance_ref" required placeholder="prov://artifact/registry/module" /></label>
+        <label>Security Review Ticket<input name="security_review_ticket" placeholder="SEC-12345" /></label>
+        <label>
+          Integration Provider
+          <select name="integration_provider">
+            <option value="" selected>none</option>
+            <option value="cursor">cursor</option>
+            <option value="github">github</option>
+            <option value="gitlab">gitlab</option>
+            <option value="aws">aws</option>
+            <option value="azure">azure</option>
+            <option value="gcp">gcp</option>
+          </select>
+        </label>
+        <label>Integration Reference<input name="integration_reference" placeholder="cursor://workspace/team-a/skills" /></label>
+        <p class="field-help mono">Metadata URI only — do not store API keys or tokens here. Use Providers → Store Secret Value for credentials.</p>
+        <button type="submit" class="primary">Register Module</button>
+      </form>
+      <p id="moduleRegisterResult" class="runtime-feedback mono"></p>
+      <div class="modules-table-search view-page-search-row">
+        <label class="view-page-search-label">
+          Search Catalog
+          <input id="modulesTableSearch" class="view-page-search-input" type="search" placeholder="Filter by module ID, name, type, owner, or status" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button id="searchModulesTable" type="button" class="primary view-page-search-btn">Search</button>
+          <button id="clearModulesTable" type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p id="modulesTableSearchStatus" class="view-page-search-status mono" aria-live="polite"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Module catalog</caption>
+          <thead>
+            <tr><th>Module ID</th><th>Name</th><th>Type</th><th>Version</th><th>Status</th><th>Owner Team</th><th>Integration</th><th>Sync Status</th><th>Last Synced</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="modulesTable" data-table-search-skip="true"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Deprecate Module</h3>
-            </div>
-            <form id="moduleDeprecateForm" class="form-grid">
-              <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
-              <label>Replacement Module ID<input name="replacement_module_id" placeholder="optional replacement module id" /></label>
-              <label class="wide-field">Migration Guidance<input name="migration_guidance" required placeholder="Move traffic to module XYZ and update config mapping." /></label>
-              <label class="wide-field">Deprecation Timeline<input name="deprecation_timeline" required placeholder="2026-09-30" /></label>
-              <button type="submit" class="primary">Deprecate Module</button>
-            </form>
-            <p id="moduleDeprecateResult" class="mono"></p>
-          </article>
+  <div data-modules-console-panel="lifecycle" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>Module Versions</h4>
+      </div>
+      <p class="help-copy" data-help-label="About versions">Load published versions before planning agent upgrades or validation.</p>
+      <form id="moduleVersionsForm" class="form-grid">
+        <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
+        <button type="submit" class="ghost">Load Versions</button>
+      </form>
+      <p id="moduleVersionsResult" class="runtime-feedback mono"></p>
+    </article>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>AI Skills Registry</h3>
-              <button id="loadAiSkills" class="ghost" type="button">Load AI Skills</button>
-            </div>
-            <p id="aiSkillsResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">AI skills inventory</caption>
-                <thead>
-                  <tr><th>Module ID</th><th>Skill Name</th><th>Type</th><th>Version</th><th>Status</th><th>Owner Team</th><th>Integration</th><th>Sync Status</th></tr>
-                </thead>
-                <tbody id="aiSkillsTable"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+    <article class="card">
+      <div class="card-head">
+        <h4>Agent Module Validate</h4>
+      </div>
+      <p class="help-copy" data-help-label="About compatibility">Confirm an agent pin is compatible with the catalog before promotion.</p>
+      <form id="moduleValidateForm" class="form-grid">
+        <label>Agent ID<input name="agent_id" required placeholder="agent-001" /></label>
+        <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
+        <label>Pinned Version<input name="pinned_version" required value="1.0.0" /></label>
+        <label>Config Hash<input name="config_hash" required placeholder="cfg-sha256-..." /></label>
+        <button type="submit" class="primary">Validate Module</button>
+      </form>
+      <p id="moduleValidateResult" class="runtime-feedback mono"></p>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h4>Agent Module Upgrade Plan</h4>
+      </div>
+      <p class="help-copy" data-help-label="About upgrade plan">Generate an upgrade plan from the pinned version to the catalog target.</p>
+      <form id="moduleUpgradePlanForm" class="form-grid">
+        <label>Agent ID<input name="agent_id" required placeholder="agent-001" /></label>
+        <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
+        <label>Pinned Version<input name="pinned_version" required value="1.0.0" /></label>
+        <label>Config Hash<input name="config_hash" required placeholder="cfg-sha256-..." /></label>
+        <button type="submit" class="ghost">Plan Upgrade</button>
+      </form>
+      <p id="moduleUpgradePlanResult" class="runtime-feedback mono"></p>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h4>Deprecate Module</h4>
+      </div>
+      <p class="help-copy" data-help-label="About retirement">Retire a module with migration guidance and an optional replacement.</p>
+      <form id="moduleDeprecateForm" class="form-grid">
+        <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
+        <label>Replacement Module ID<input name="replacement_module_id" placeholder="optional replacement module id" /></label>
+        <label class="wide-field">Migration Guidance<input name="migration_guidance" required placeholder="Move traffic to module XYZ and update config mapping." /></label>
+        <label class="wide-field">Deprecation Timeline<input name="deprecation_timeline" required placeholder="2026-09-30" /></label>
+        <button type="submit" class="primary">Deprecate Module</button>
+      </form>
+      <p id="moduleDeprecateResult" class="runtime-feedback mono"></p>
+    </article>
+  </div>
+
+  <div data-modules-console-panel="skills" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h4>AI Skills Registry</h4>
+        <button id="loadAiSkills" class="ghost" type="button">Refresh Skills</button>
+      </div>
+      <p class="help-copy" data-help-label="About skills inventory">Skill-focused inventory for ai_skill and skill types. Use the module catalog for lifecycle actions.</p>
+      <p id="aiSkillsResult" class="runtime-feedback mono"></p>
+      <div class="modules-table-search view-page-search-row">
+        <label class="view-page-search-label">
+          Search Skills
+          <input id="aiSkillsTableSearch" class="view-page-search-input" type="search" placeholder="Filter by module ID, skill name, type, owner, or status" autocomplete="off" />
+        </label>
+        <div class="view-page-search-actions">
+          <button id="searchAiSkillsTable" type="button" class="primary view-page-search-btn">Search</button>
+          <button id="clearAiSkillsTable" type="button" class="ghost view-page-search-clear-btn">Clear</button>
+        </div>
+      </div>
+      <p id="aiSkillsTableSearchStatus" class="view-page-search-status mono" aria-live="polite"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">AI skills inventory</caption>
+          <thead>
+            <tr><th>Module ID</th><th>Skill Name</th><th>Type</th><th>Version</th><th>Status</th><th>Owner Team</th><th>Integration</th><th>Sync Status</th></tr>
+          </thead>
+          <tbody id="aiSkillsTable" data-table-search-skip="true"></tbody>
+        </table>
+      </div>
+    </article>
+  </div>
+</section>

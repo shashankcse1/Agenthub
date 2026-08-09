@@ -67,7 +67,7 @@ def test_directory_user_group_team_management_and_memberships():
     )
     assert created_team.status_code == 200
 
-    user_list = client.get("/auth/directory/users?status=active", headers=_headers(actor_id))
+    user_list = client.get("/auth/directory/users?status=active&limit=500", headers=_headers(actor_id))
     assert user_list.status_code == 200
     assert any(row["user_id"] == user_id for row in user_list.json())
 
@@ -324,3 +324,41 @@ def test_password_login_lockout_expires_without_manual_unlock():
         headers=_login_headers(suffix),
     )
     assert recovered.status_code == 200
+
+
+def test_directory_user_disable_and_enable_toggle():
+    suffix = uuid4().hex[:8]
+    actor_id = f"master-enable-{suffix}"
+    user_id = f"enable-toggle-{suffix}"
+
+    created_user = client.post(
+        "/auth/directory/users",
+        json={
+            "user_id": user_id,
+            "display_name": "Enable Toggle User",
+            "email": f"{user_id}@example.com",
+            "role_name": "Platform Admin",
+            "status": "active",
+            "password": "EnableToggle!234",
+        },
+        headers=_headers(actor_id),
+    )
+    assert created_user.status_code == 200
+
+    disabled = client.post(f"/auth/directory/users/{user_id}/disable", headers=_headers(actor_id))
+    assert disabled.status_code == 200
+    assert disabled.json()["disabled"] is True
+
+    listed = client.get("/auth/directory/users?limit=500", headers=_headers(actor_id))
+    assert listed.status_code == 200
+    row = next(item for item in listed.json() if item["user_id"] == user_id)
+    assert row["status"] == "inactive"
+
+    enabled = client.post(f"/auth/directory/users/{user_id}/enable", headers=_headers(actor_id))
+    assert enabled.status_code == 200
+    assert enabled.json()["enabled"] is True
+
+    relisted = client.get("/auth/directory/users?limit=500", headers=_headers(actor_id))
+    assert relisted.status_code == 200
+    row = next(item for item in relisted.json() if item["user_id"] == user_id)
+    assert row["status"] == "active"

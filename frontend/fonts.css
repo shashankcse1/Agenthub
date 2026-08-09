@@ -1,0 +1,240 @@
+/* Self-hosted AgentHub type system — CSP-safe, shared by all pages. */
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("./fonts/source-sans-3-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("./fonts/source-sans-3-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("./fonts/source-sans-3-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("./fonts/source-sans-3-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("./fonts/source-serif-4-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("./fonts/source-serif-4-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./fonts/ibm-plex-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./fonts/ibm-plex-mono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* Stacks — expressive product faces, never Inter/Roboto/Arial/system UI as primary */
+  --font-display: "Source Serif 4", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --font-body: "Source Sans 3", "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  /* Modular scale (rem) — use semantic aliases below in UI rules */
+  --text-3xs: 0.625rem; /* 10px micro badges */
+  --text-2xs: 0.6875rem; /* 11px kickers / seals */
+  --text-xs: 0.75rem; /* 12px captions / table heads */
+  --text-sm: 0.875rem; /* 14px labels / secondary */
+  --text-md: 1rem; /* 16px body — WCAG-friendly default */
+  --text-lg: 1.125rem; /* 18px emphasis */
+  --text-xl: 1.375rem; /* 22px section titles */
+  --text-2xl: 1.75rem; /* 28px page titles */
+  --text-3xl: clamp(2rem, 3.5vw, 2.75rem);
+  --text-hero: clamp(2.75rem, 5.5vw, 4.25rem);
+
+  /* Semantic roles */
+  --type-kicker: var(--text-2xs);
+  --type-caption: var(--text-xs);
+  --type-label: var(--text-sm);
+  --type-body: var(--text-md);
+  --type-emphasis: var(--text-lg);
+  --type-title: var(--text-xl);
+  --type-page: var(--text-2xl);
+  --type-display: var(--text-3xl);
+  --type-hero: var(--text-hero);
+  --type-mono: var(--text-sm);
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight: -0.025em;
+  --tracking-display: -0.02em;
+  --tracking-body: 0.005em;
+  --tracking-label: 0.04em;
+  --tracking-kicker: 0.14em;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --control-height: 2.5rem;
+
+  /* Spacing rhythm (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-7: 2rem;
+  --space-8: 2.5rem;
+  --space-card: 1rem;
+  --space-section: 1.25rem;
+  --space-stack: 0.85rem;
+  --radius-control: var(--radius-md, 10px);
+}
+
+html {
+  font-size: 100%;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--type-body);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--leading-normal);
+  letter-spacing: var(--tracking-body);
+  font-synthesis: none;
+  font-kerning: normal;
+  font-variant-ligatures: common-ligatures;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-display);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-display);
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: var(--type-page);
+}
+
+h2 {
+  font-size: var(--type-title);
+}
+
+h3 {
+  font-size: var(--type-emphasis);
+  letter-spacing: var(--tracking-display);
+}
+
+h4,
+h5,
+h6 {
+  font-family: var(--font-body);
+  font-size: var(--type-label);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-label);
+  line-height: var(--leading-snug);
+}
+
+p {
+  line-height: var(--leading-normal);
+}
+
+small {
+  font-size: var(--type-caption);
+  line-height: var(--leading-snug);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+}
+
+code,
+kbd,
+samp,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--type-mono);
+  font-weight: var(--font-weight-regular);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.sig-kicker,
+.view-domain-kicker,
+.eyebrow,
+.login-hero-kicker,
+.overview-hero-kicker,
+.kicker {
+  font-family: var(--font-body);
+  font-size: var(--type-kicker);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--tracking-kicker);
+  text-transform: uppercase;
+  line-height: var(--leading-tight);
+}
+
+.card-lead,
+.view-subtitle,
+.field-help,
+.profile-note,
+.subtitle {
+  font-family: var(--font-body);
+  font-size: var(--type-label);
+  line-height: var(--leading-relaxed);
+  letter-spacing: var(--tracking-body);
+  font-weight: var(--font-weight-regular);
+}

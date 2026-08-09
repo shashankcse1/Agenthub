@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta
+from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from app.api_errors import conflict_error, not_found_error, validation_error as api_validation_error
 from app.database import get_db
 from app.logging_utils import get_logger, sanitize_fields
 from app.models import AuditEvent, ComplianceControlMapping, ComplianceEvidenceArtifact, LegalHold, RetentionPolicy
@@ -15,6 +17,8 @@ from app.schemas import (
     ComplianceControlResponse,
     ComplianceEvidenceArtifactResponse,
     ComplianceEvidenceBundleResponse,
+    ComplianceEvidenceExportRequest,
+    ComplianceEvidenceExportResponse,
     ComplianceEvidenceFreshnessSummaryResponse,
     ComplianceEvidenceGenerateRequest,
     ComplianceEvidenceResponse,
@@ -80,7 +84,7 @@ def get_control_evidence(
     require_role(ctx, COMPLIANCE_READ_ROLES)
     catalog = get_control_catalog(db)
     if not _control_exists(db, control_id, catalog):
-        raise HTTPException(status_code=404, detail="Control not found")
+        raise not_found_error("compliance_control", control_id, decision_trace_id="compliance-control-not-found")
 
     recent_events = db.query(AuditEvent).order_by(AuditEvent.timestamp.desc()).limit(5).all()
     evidence_items = [
@@ -250,7 +254,7 @@ def generate_control_evidence(
     catalog = get_control_catalog(db)
     if not _control_exists(db, control_id, catalog):
         logger.error("compliance_evidence_generate_control_not_found %s", sanitize_fields({"control_id": control_id}))
-        raise HTTPException(status_code=404, detail="Control not found")
+        raise not_found_error("compliance_control", control_id, decision_trace_id="compliance-control-not-found")
 
     trace_id = f"trace-evidence-{control_id}-{uuid4()}"
     artifact = ComplianceEvidenceArtifact(
@@ -283,35 +287,238 @@ def generate_control_evidence(
     return artifact
 
 
-@router.get("/compliance/evidence/{control_id}/bundle", response_model=ComplianceEvidenceBundleResponse)
-def get_control_evidence_bundle(
+def _build_compliance_evidence_bundle(
+    db: Session,
+    *,
     control_id: str,
-    db: Session = Depends(get_db),
-    ctx: ActorContext = Depends(get_actor_context),
-):
-    require_role(ctx, COMPLIANCE_READ_ROLES)
-    catalog = get_control_catalog(db)
-    if not _control_exists(db, control_id, catalog):
-        raise HTTPException(status_code=404, detail="Control not found")
+    since_hours: int,
+    decision_outcome: Optional[str],
+    action_type_prefix: Optional[str],
+    tenant_id: Optional[str],
+    environment: Optional[str],
+    source_type: Optional[str],
+    source_id_prefix: Optional[str],
+    limit_events: int,
+    limit_artifacts: int,
+) -> dict:
+    normalized_decision_outcome = (decision_outcome or "").strip().lower()
+    if normalized_decision_outcome and normalized_decision_outcome not in {"allow", "deny", "warn"}:
+        raise api_validation_error(
+            "decision_outcome must be one of: allow, deny, warn",
+            decision_trace_id="compliance-decision-outcome-invalid",
+        )
 
-    recent_events = db.query(AuditEvent).order_by(AuditEvent.timestamp.desc()).limit(5).all()
-    artifacts = (
-        db.query(ComplianceEvidenceArtifact)
-        .filter_by(control_id=control_id)
-        .order_by(ComplianceEvidenceArtifact.generated_at.desc())
-        .limit(20)
-        .all()
-    )
+    cutoff = datetime.utcnow() - timedelta(hours=since_hours)
+
+    events_query = db.query(AuditEvent).filter(AuditEvent.timestamp >= cutoff)
+    if normalized_decision_outcome:
+        events_query = events_query.filter(AuditEvent.decision_outcome == normalized_decision_outcome)
+    if action_type_prefix and action_type_prefix.strip():
+        events_query = events_query.filter(AuditEvent.action_type.like(f"{action_type_prefix.strip()}%"))
+    if tenant_id and tenant_id.strip():
+        events_query = events_query.filter(AuditEvent.tenant_id == tenant_id.strip())
+    if environment and environment.strip():
+        events_query = events_query.filter(AuditEvent.environment == environment.strip())
+
+    recent_events = events_query.order_by(AuditEvent.timestamp.desc()).limit(limit_events).all()
+
+    artifacts_query = db.query(ComplianceEvidenceArtifact).filter_by(control_id=control_id)
+    if source_type and source_type.strip():
+        artifacts_query = artifacts_query.filter(ComplianceEvidenceArtifact.source_type == source_type.strip())
+    if source_id_prefix and source_id_prefix.strip():
+        artifacts_query = artifacts_query.filter(ComplianceEvidenceArtifact.source_id.like(f"{source_id_prefix.strip()}%"))
+
+    artifacts = artifacts_query.order_by(ComplianceEvidenceArtifact.generated_at.desc()).limit(limit_artifacts).all()
     evidence_items = [
         f"{e.timestamp.isoformat()} {e.action_type} {e.resource_type}:{e.resource_id}"
         for e in recent_events
     ]
+    artifact_count = len(artifacts)
+    latest_artifact_at = artifacts[0].generated_at if artifacts else None
+    malformed_integrity = any(not str(artifact.integrity_hash or "").startswith("sha256:") for artifact in artifacts)
+    if malformed_integrity:
+        raise conflict_error(
+            "Evidence bundle integrity check failed",
+            decision_trace_id="compliance-evidence-integrity-failed",
+            remediation_hint="Regenerate the evidence bundle and retry export.",
+        )
 
     return {
         "control_id": control_id,
         "generated_at": datetime.utcnow(),
         "evidence_items": evidence_items,
         "artifacts": artifacts,
+        "artifact_count": artifact_count,
+        "latest_artifact_at": latest_artifact_at,
+        "integrity_status": "pass",
+    }
+
+
+@router.get(
+    "/compliance/evidence/{control_id}/bundle",
+    response_model=ComplianceEvidenceBundleResponse,
+    summary="Retrieve compliance evidence bundle",
+    description=(
+        "Retrieves compliance evidence bundle drill-down for a control. "
+        "Bundle retrieval supports scoped filters (time window, decision outcome, action prefix, tenant/environment, and artifact source filters), "
+        "is integrity-guarded, and fails closed when artifact integrity hashes are malformed."
+    ),
+    responses={
+        400: {"description": "Invalid bundle filter input."},
+        404: {"description": "Control not found."},
+        409: {"description": "Evidence bundle integrity check failed."},
+    },
+)
+def get_control_evidence_bundle(
+    control_id: str,
+    since_hours: int = Query(default=24, ge=1, le=720),
+    decision_outcome: Optional[str] = Query(default=None),
+    action_type_prefix: Optional[str] = Query(default=None),
+    tenant_id: Optional[str] = Query(default=None),
+    environment: Optional[str] = Query(default=None),
+    source_type: Optional[str] = Query(default=None),
+    source_id_prefix: Optional[str] = Query(default=None),
+    limit_events: int = Query(default=20, ge=1, le=200),
+    limit_artifacts: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, COMPLIANCE_READ_ROLES)
+    catalog = get_control_catalog(db)
+    if not _control_exists(db, control_id, catalog):
+        raise not_found_error("compliance_control", control_id, decision_trace_id="compliance-control-not-found")
+
+    try:
+        bundle = _build_compliance_evidence_bundle(
+            db,
+            control_id=control_id,
+            since_hours=since_hours,
+            decision_outcome=decision_outcome,
+            action_type_prefix=action_type_prefix,
+            tenant_id=tenant_id,
+            environment=environment,
+            source_type=source_type,
+            source_id_prefix=source_id_prefix,
+            limit_events=limit_events,
+            limit_artifacts=limit_artifacts,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            create_audit_event(
+                db,
+                actor_id=ctx.actor_id,
+                action_type="compliance.evidence.bundle.retrieve",
+                resource_type="control",
+                resource_id=control_id,
+                trace_id=f"trace-evidence-bundle-{control_id}-{uuid4()}",
+                decision_outcome="deny",
+                tenant_id=tenant_id,
+                environment=environment,
+            )
+            db.commit()
+        raise
+
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="compliance.evidence.bundle.retrieve",
+        resource_type="control",
+        resource_id=control_id,
+        trace_id=f"trace-evidence-bundle-{control_id}-{uuid4()}",
+        decision_outcome="allow",
+        tenant_id=tenant_id,
+        environment=environment,
+    )
+    db.commit()
+    return bundle
+
+
+@router.post("/compliance/evidence/export", response_model=ComplianceEvidenceExportResponse)
+def export_compliance_evidence(
+    payload: ComplianceEvidenceExportRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, COMPLIANCE_READ_ROLES)
+    control_id = str(payload.control_id).strip()
+    catalog = get_control_catalog(db)
+    if not _control_exists(db, control_id, catalog):
+        trace_id = f"trace-compliance-export-deny-{uuid4()}"
+        create_audit_event(
+            db,
+            actor_id=ctx.actor_id,
+            action_type="compliance.evidence.export",
+            resource_type="control",
+            resource_id=control_id,
+            trace_id=trace_id,
+            decision_outcome="deny",
+            tenant_id=payload.tenant_id,
+            environment=payload.environment,
+        )
+        db.commit()
+        raise not_found_error("compliance_control", control_id, decision_trace_id="compliance-control-not-found")
+
+    export_id = str(uuid4())
+    trace_id = f"trace-compliance-export-{export_id}"
+    try:
+        bundle = _build_compliance_evidence_bundle(
+            db,
+            control_id=control_id,
+            since_hours=payload.since_hours,
+            decision_outcome=payload.decision_outcome,
+            action_type_prefix=payload.action_type_prefix,
+            tenant_id=payload.tenant_id,
+            environment=payload.environment,
+            source_type=payload.source_type,
+            source_id_prefix=payload.source_id_prefix,
+            limit_events=payload.limit_events,
+            limit_artifacts=payload.limit_artifacts,
+        )
+        if payload.investigation_context:
+            bundle["investigation_context"] = payload.investigation_context
+    except HTTPException as exc:
+        create_audit_event(
+            db,
+            actor_id=ctx.actor_id,
+            action_type="compliance.evidence.export",
+            resource_type="control",
+            resource_id=control_id,
+            trace_id=trace_id,
+            decision_outcome="deny",
+            tenant_id=payload.tenant_id,
+            environment=payload.environment,
+        )
+        db.commit()
+        raise
+
+    audit_event = create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="compliance.evidence.export",
+        resource_type="control",
+        resource_id=control_id,
+        trace_id=trace_id,
+        decision_outcome="allow",
+        tenant_id=payload.tenant_id,
+        environment=payload.environment,
+    )
+    db.commit()
+
+    return {
+        "export_id": export_id,
+        "exported_at": datetime.utcnow(),
+        "control_id": control_id,
+        "bundle": bundle,
+        "audit_event": {
+            "audit_event_id": audit_event.audit_event_id,
+            "action_type": audit_event.action_type,
+            "resource_type": audit_event.resource_type,
+            "resource_id": audit_event.resource_id,
+            "trace_id": audit_event.trace_id,
+            "decision_outcome": audit_event.decision_outcome,
+            "timestamp": audit_event.timestamp,
+        },
+        "investigation_context": payload.investigation_context,
     }
 
 
@@ -379,7 +586,7 @@ def update_retention_policy(
     require_role(ctx, COMPLIANCE_WRITE_ROLES)
     policy = db.query(RetentionPolicy).filter_by(policy_id=policy_id).first()
     if not policy:
-        raise HTTPException(status_code=404, detail="Retention policy not found")
+        raise not_found_error("retention_policy", policy_id, decision_trace_id="compliance-retention-not-found")
 
     if payload.retention_days is not None:
         policy.retention_days = payload.retention_days
@@ -473,9 +680,9 @@ def release_legal_hold(
     hold = db.query(LegalHold).filter_by(hold_id=hold_id).first()
     if not hold:
         logger.error("compliance_legal_hold_not_found %s", sanitize_fields({"hold_id": hold_id}))
-        raise HTTPException(status_code=404, detail="Legal hold not found")
+        raise not_found_error("legal_hold", hold_id, decision_trace_id="compliance-legal-hold-not-found")
     if hold.status != "active":
-        raise HTTPException(status_code=400, detail="Legal hold is not active")
+        raise api_validation_error("Legal hold is not active", decision_trace_id="compliance-legal-hold-inactive")
 
     hold.status = "released"
     hold.released_by = ctx.actor_id

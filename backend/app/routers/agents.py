@@ -9,6 +9,7 @@ from app.models import Agent, OwnershipEvent, SecretProviderConfig, WorkloadIden
 from app.policy_constants import ROLE_AGENT_OWNER
 from app.router_constants import OWNER_READ_ROLES, OWNER_WRITE_ROLES
 from app.schemas import (
+    AgentRegisterOptionsResponse,
     AgentRegisterRequest,
     AgentResponse,
     OwnershipEventResponse,
@@ -20,11 +21,41 @@ from app.services.audit import create_audit_event
 router = APIRouter()
 logger = get_logger(__name__)
 
+# Full agent-type catalog — not limited to the four cloud deployment labels.
+# Includes deployment planes and functional roles used by discovery/governance.
+KNOWN_AGENT_TYPES: frozenset[str] = frozenset(
+    {
+        "aws",
+        "azure",
+        "gcp",
+        "onprem",
+        "hybrid",
+        "other",
+        "assistant",
+        "automation",
+        "orchestrator",
+        "chatbot",
+    }
+)
+
+# Preferred display order for register-options (rest sorted alphabetically).
+AGENT_TYPE_DISPLAY_ORDER: tuple[str, ...] = (
+    "assistant",
+    "chatbot",
+    "automation",
+    "orchestrator",
+    "aws",
+    "azure",
+    "gcp",
+    "onprem",
+    "hybrid",
+    "other",
+)
+
 
 def _normalize_agent_type(value: str) -> str:
     normalized = str(value or "").strip().lower()
-    allowed = {"aws", "azure", "gcp", "onprem", "hybrid", "other"}
-    if normalized in allowed:
+    if normalized in KNOWN_AGENT_TYPES:
         return normalized
     return "other"
 
@@ -39,10 +70,18 @@ def _provider_type_to_agent_type(provider_type: str) -> str:
         return "gcp"
     if normalized in {"onprem", "self-hosted", "vmware", "kubernetes"}:
         return "onprem"
+    if normalized in {"openai", "anthropic", "cursor"}:
+        return "assistant"
     return "other"
 
 
-def _allowed_agent_types_from_enabled_config(db: Session) -> set[str]:
+def _sort_agent_types(types: set[str]) -> list[str]:
+    order = {name: index for index, name in enumerate(AGENT_TYPE_DISPLAY_ORDER)}
+    return sorted(types, key=lambda name: (order.get(name, len(order)), name))
+
+
+def _provider_backed_agent_types(db: Session) -> set[str]:
+    """Cloud/deployment types implied by active secret or workload providers (informational)."""
     workload_rows = (
         db.query(WorkloadIdentityFederationProfile.provider_type)
         .filter(WorkloadIdentityFederationProfile.status == "active")
@@ -54,13 +93,23 @@ def _allowed_agent_types_from_enabled_config(db: Session) -> set[str]:
         for row in [*workload_rows, *secret_rows]
         if row and str(row[0] or "").strip()
     }
-    core = {item for item in mapped if item in {"aws", "azure", "gcp", "onprem"}}
-    allowed = set(core)
-    if len(core) >= 2:
-        allowed.add("hybrid")
-    if "other" in mapped or not allowed:
-        allowed.add("other")
-    return allowed
+    core = {item for item in mapped if item in {"aws", "azure", "gcp", "onprem", "assistant"}}
+    backed = set(core)
+    if len({item for item in core if item in {"aws", "azure", "gcp", "onprem"}}) >= 2:
+        backed.add("hybrid")
+    if "other" in mapped or not backed:
+        backed.add("other")
+    return backed
+
+
+def _allowed_agent_types_from_enabled_config(_db: Session) -> set[str]:
+    """Return the full agent-type catalog for registration and configuration.
+
+    Provider configuration no longer gates the dropdown to ~4 cloud types.
+    Operators can register any known type; provider-backed types remain available
+    for UI hints via register-options consumers.
+    """
+    return set(KNOWN_AGENT_TYPES)
 
 
 def _create_agent_record(
@@ -136,6 +185,21 @@ def _create_agent_record(
         sanitize_fields({"actor_id": ctx.actor_id, "agent_id": agent.agent_id}),
     )
     return agent
+
+
+@router.get("/agents/register-options", response_model=AgentRegisterOptionsResponse)
+def get_agent_register_options(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, OWNER_READ_ROLES)
+    allowed_types = _sort_agent_types(_allowed_agent_types_from_enabled_config(db))
+    provider_backed = _sort_agent_types(_provider_backed_agent_types(db))
+    return {
+        "allowed_agent_types": allowed_types,
+        "provider_backed_agent_types": provider_backed,
+        "default_environment": "dev",
+    }
 
 
 @router.post("/agents", response_model=AgentResponse)

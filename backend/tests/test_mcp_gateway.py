@@ -45,6 +45,52 @@ def test_runtime_config_validate_rejects_invalid_mcp_servers_json():
     assert "JSON array" in payload["error"]
 
 
+def test_mcp_call_tool_default_denies_empty_allowlist_outside_local(monkeypatch):
+    from app.services import mcp_gateway as mcp_mod
+
+    monkeypatch.setattr(mcp_mod, "_is_localish_environment", lambda: False)
+    server = {
+        "server_id": "empty-allow-mcp",
+        "base_url": "https://mcp.example.com",
+        "allowed_tools": [],
+        "tool_name_prefix": "",
+        "enabled": True,
+        "headers": {},
+        "auth_header": "Authorization",
+        "auth_token": "",
+        "transport": "streamable_http",
+    }
+    from fastapi import HTTPException
+
+    try:
+        mcp_mod.call_tool(db=None, server=server, tool_name="any.tool", arguments={})
+        assert False, "expected default-deny"
+    except HTTPException as exc:
+        assert exc.status_code == 403
+        assert "default-deny" in str(exc.detail)
+
+
+def test_mcp_validate_rejects_empty_allowlist_outside_local(monkeypatch):
+    from app.services import mcp_gateway as mcp_mod
+
+    monkeypatch.setattr(mcp_mod, "_is_localish_environment", lambda: False)
+    error = mcp_mod.validate_mcp_servers_json(
+        json.dumps(
+            [
+                {
+                    "server_id": "empty-tools",
+                    "base_url": "https://mcp.example.com",
+                    "transport": "streamable_http",
+                    "enabled": True,
+                    "allowed_tools": [],
+                }
+            ]
+        )
+    )
+    assert error is not None
+    assert "default-deny" in error
+
+
 def test_gateway_mcp_servers_and_tools_flow(monkeypatch):
     _upsert_mcp_servers(
         json.dumps(

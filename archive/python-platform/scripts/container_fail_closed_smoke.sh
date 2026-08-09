@@ -19,6 +19,16 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 pushd "${ROOT_DIR}" >/dev/null
 
+if [[ ! -f "${ROOT_DIR}/.env" ]]; then
+  if [[ ! -f "${ROOT_DIR}/.env.example" ]]; then
+    echo "[smoke] .env.example is required when .env is missing"
+    exit 1
+  fi
+  cp "${ROOT_DIR}/.env.example" "${ROOT_DIR}/.env"
+  echo "[smoke] created .env from .env.example for compose env_file"
+fi
+
+
 echo "[smoke] building python-platform-api image"
 docker compose build python-platform-api >/dev/null
 
