@@ -1777,6 +1777,7 @@ def test_orchestration_template_resolves_array_paths_and_full_output():
         "llm-1": {
             "choices": [{"message": {"content": "hello world"}}],
             "message": "hello world",
+            "content": "hello world",
         }
     }
     nested = resolve_orchestration_template(
@@ -1786,12 +1787,108 @@ def test_orchestration_template_resolves_array_paths_and_full_output():
     )
     assert nested == "hello world"
 
+    native = resolve_orchestration_template(
+        "{{steps['llm-1'].output.message}}",
+        step_outputs=step_outputs,
+        run_input="",
+    )
+    assert native == "hello world"
+
+    alias = resolve_orchestration_template(
+        "{{steps['llm-1'].output.content}}",
+        step_outputs=step_outputs,
+        run_input="",
+    )
+    assert alias == "hello world"
+
     full = resolve_orchestration_template(
         "{{steps['llm-1'].output}}",
         step_outputs=step_outputs,
         run_input="",
     )
     assert "hello world" in full
+
+
+def test_orchestration_llm_chat_stub_and_live_output_expose_gateway_io_paths():
+    """Gateway LLM outputs must expose message/content and choices[0].message.content."""
+    from app.services.orchestration_flows import _stub_node_output
+
+    stub = _stub_node_output("llm_chat", {"model_id": "gpt-4o-mini"}, dry_run=True)
+    assert stub["message"]
+    assert stub["content"] == stub["message"]
+    assert stub["choices"][0]["message"]["content"] == stub["message"]
+
+    from app.services.orchestration_executor import resolve_orchestration_template
+
+    mapped = resolve_orchestration_template(
+        "Prior={{steps['llm'].output.choices[0].message.content}}|{{steps['llm'].output.message}}|run={{input}}",
+        step_outputs={"llm": stub},
+        run_input="ticket-42",
+    )
+    assert stub["message"] in mapped
+    assert "ticket-42" in mapped
+
+
+def test_orchestration_llm_chat_accepts_agent_key_without_model_id():
+    from app.services.orchestration_flows import _validate_node_config
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    errors = _validate_node_config(
+        db,
+        "llm_chat",
+        {"prompt_template": "Hello {{input}}", "agent_key": "support-copilot"},
+    )
+    assert not any("model_id or config.agent_key" in err for err in errors)
+
+
+def test_orchestration_continue_on_error_keeps_flow_running():
+    from app.services.orchestration_flows import _execute_flow_graph
+
+    graph = json.dumps(
+        {
+            "nodes": [
+                {
+                    "id": "llm-fail",
+                    "type": "llm_chat",
+                    "config": {
+                        "model_id": "gpt-4o-mini",
+                        "prompt_template": "x",
+                        "continue_on_error": "true",
+                    },
+                },
+                {"id": "wait-1", "type": "wait_delay", "config": {"delay_seconds": 1}},
+            ],
+            "edges": [{"source": "llm-fail", "target": "wait-1"}],
+        }
+    )
+
+    def executor(node, _outputs):
+        if node["id"] == "llm-fail":
+            return {
+                "node_id": "llm-fail",
+                "node_type": "llm_chat",
+                "status": "failed",
+                "output": {"error": "upstream timeout"},
+            }
+        return {
+            "node_id": node["id"],
+            "node_type": node["type"],
+            "status": "completed",
+            "output": {"ok": True},
+        }
+
+    status, steps, error = _execute_flow_graph(
+        graph_json=graph,
+        dry_run=False,
+        trace_id="trace-continue",
+        node_executor=executor,
+        fail_on_node_error=True,
+    )
+    assert status == "completed"
+    assert error is None
+    assert any(step.get("status") == "completed_with_errors" for step in steps)
+    assert any(step.get("node_id") == "wait-1" for step in steps)
 
 
 def _condition_branch_graph(*, compare_value: str) -> str:

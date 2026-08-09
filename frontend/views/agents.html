@@ -1,10 +1,14 @@
 <section id="agents" class="view runtime-config-view">
   <article class="card runtime-config-hero">
     <div class="card-head">
-      <h3>Agents Console</h3>
+      <div>
+        <p class="sig-kicker">Agent registry</p>
+        <h3>Enrollment &amp; ownership</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Registry live</span></p>
+      </div>
       <button id="refreshAgentsConsole" class="ghost" type="button">Refresh All</button>
     </div>
-    <p class="card-lead">Register agents, manage ownership transfers, and maintain database-backed agent configurations with security review and export/import workflows.</p>
+    <p class="help-copy" data-help-label="About agents">Register agents, manage ownership, and maintain database-backed configurations.</p>
     <p id="agentsConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading agent inventory…</p>
     <div class="view-page-search-toolbar" data-view-search-toolbar>
       <div class="view-page-search-row">
@@ -19,6 +23,24 @@
       </div>
       <p class="view-page-search-status mono" aria-live="polite"></p>
     </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Agents</span>
+        <strong>Enrolled</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Owners</span>
+        <strong>Attributed</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Settings</span>
+        <strong>Governed</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Plane</span>
+        <strong>Bound</strong>
+      </div>
+    </section>
     <div class="runtime-console-tabs" role="tablist" aria-label="Agents console sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="register">Register</button>
@@ -65,7 +87,7 @@
           <button id="submitRegisterAgent" type="button" class="primary">Register Agent</button>
         </div>
       </div>
-      <p class="card-lead">Creates an inventory record via <code>POST /agents/register</code>. Optionally bootstrap runtime configuration from the supported model catalog — no local-only stubs.</p>
+      <p class="help-copy" data-help-label="About registration">Creates an inventory record via POST /agents/register. Optional bootstrap from the supported model catalog.</p>
 
       <div class="runtime-workflow-steps agent-register-steps" aria-label="Register agent workflow">
         <div class="runtime-workflow-step">
@@ -78,7 +100,7 @@
         </div>
       </div>
 
-      <p id="registerAgentTypeHint" class="field-help mono" aria-live="polite">Loading enabled agent types from active provider configuration…</p>
+      <p id="registerAgentTypeHint" class="field-help mono" aria-live="polite">Loading agent types (functional roles and cloud deployment planes)…</p>
 
       <form id="registerAgentForm" class="form-grid agent-register-form">
         <p class="runtime-subsection-title wide-field">Agent identity</p>
@@ -125,7 +147,7 @@
         <label>
           Agent type
           <select name="agent_type" required>
-            <option value="" selected disabled>Loading enabled agent types…</option>
+            <option value="" selected disabled>Loading agent types…</option>
           </select>
         </label>
         <label>
@@ -261,7 +283,7 @@
         <h4>Agent Configuration Studio</h4>
         <button id="resetConfigForm" class="ghost" type="button">Reset Form</button>
       </div>
-      <p class="card-lead">Configuration is stored in the backend database and managed through this UI. Provider and model selections require credentials configured in <strong>Providers</strong> (secret values or workload identity).</p>
+      <p class="help-copy" data-help-label="About agent config">Configuration is stored in the backend. Provider/model selections need credentials in Providers.</p>
       <p id="agentCredentialSetupStatus" class="runtime-feedback mono" aria-live="polite">Credential status: checking Providers…</p>
       <details class="help-details runtime-help-details">
         <summary>How credentials relate to provider and model</summary>

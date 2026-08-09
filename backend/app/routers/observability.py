@@ -1,3 +1,4 @@
+import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Literal, Optional
@@ -63,9 +64,11 @@ def _derive_agent_id(resource_type: str, resource_id: str) -> str:
 
 def _to_log_record(event: AuditEvent) -> dict:
     action_context = parse_audit_action_context(event.action_context_json)
+    session_id = str(action_context.get("session_id") or "").strip() or "unknown-session"
+    request_id = str(action_context.get("request_id") or event.trace_id or "").strip() or event.trace_id
     return {
         "timestamp": event.timestamp,
-        "request_id": event.trace_id,
+        "request_id": request_id,
         "actor_id": event.actor_id,
         "actor_login": event.actor_login or "unknown",
         "actor_role": event.actor_role or "unknown",
@@ -75,7 +78,7 @@ def _to_log_record(event: AuditEvent) -> dict:
         "resource_id": event.resource_id,
         "trace_id": event.trace_id,
         "span_id": event.audit_event_id,
-        "session_id": "unknown-session",
+        "session_id": session_id,
         "agent_id": _derive_agent_id(event.resource_type, event.resource_id),
         "owner_scope": f"actor:{event.actor_id}",
         "environment": event.environment or "unknown",
@@ -84,6 +87,27 @@ def _to_log_record(event: AuditEvent) -> dict:
         "user_prompt": action_context.get("user_prompt"),
         "action_context": action_context,
     }
+
+
+def _parse_cost_user_properties(raw: object) -> Optional[dict[str, object]]:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    sanitized: dict[str, object] = {}
+    for key, value in list(parsed.items())[:32]:
+        normalized_key = str(key or "").strip()[:64]
+        if not normalized_key:
+            continue
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            sanitized[normalized_key] = value if not isinstance(value, str) else value[:256]
+        else:
+            sanitized[normalized_key] = str(value)[:256]
+    return sanitized or None
 
 
 def _redact_log_record(log: dict) -> dict:
@@ -205,6 +229,7 @@ def get_trace_events(
 
     timeline: list[ObservabilityTraceEventResponse] = []
     for event in audit_events:
+        action_context = parse_audit_action_context(event.action_context_json)
         timeline.append(
             ObservabilityTraceEventResponse(
                 timestamp=event.timestamp,
@@ -216,7 +241,9 @@ def get_trace_events(
                 resource_type=event.resource_type or "",
                 resource_id=event.resource_id or "",
                 decision_outcome=event.decision_outcome or "allow",
-                environment="unknown",
+                environment=event.environment or "unknown",
+                session_id=str(action_context.get("session_id") or "").strip() or None,
+                request_id=str(action_context.get("request_id") or event.trace_id or "").strip() or None,
             )
         )
     for event in cost_events:
@@ -229,6 +256,10 @@ def get_trace_events(
                 model_name=event.model_name or "",
                 estimated_cost_cents=event.estimated_cost_cents,
                 environment=event.environment or "",
+                cache_hit=bool(getattr(event, "cache_hit", False)),
+                session_id=str(event.session_id or "").strip() or None,
+                request_id=str(event.request_id or "").strip() or None,
+                user_properties=_parse_cost_user_properties(getattr(event, "properties_json", None)),
             )
         )
     timeline.sort(key=lambda item: item.timestamp)

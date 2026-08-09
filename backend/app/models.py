@@ -785,6 +785,8 @@ class GatewayJitAccessRequest(Base):
     owner_scope_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     mint_virtual_key: Mapped[bool] = mapped_column(Boolean, default=True)
     issued_virtual_key_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    last_notify_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notify_history_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

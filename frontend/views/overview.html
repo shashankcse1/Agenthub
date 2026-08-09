@@ -1,53 +1,147 @@
 <section id="overview" class="view active">
-          <article class="card overview-welcome">
-            <div class="card-head">
-              <h3>Operator Workspace</h3>
-              <span id="overviewSessionBadge" class="status-pill idle">Signed in</span>
+          <section class="overview-hero" aria-labelledby="overviewBrand">
+            <div class="overview-hero-copy">
+              <p class="overview-hero-kicker">AI governance control plane</p>
+              <p class="overview-hero-brand" id="overviewBrand">AgentHub</p>
+              <h3 class="overview-hero-headline">Governed flows at institutional scale</h3>
+              <p class="overview-intro">
+                Signed in as <strong id="overviewLoggedInUser">Ui Operator</strong>
+                (<span id="overviewLoggedInContext">Master Admin @ LOCAL</span>).
+                <strong>Flow Studio</strong> is the core workspace — design, approve, and run governed AI workflows on one plane.
+              </p>
+              <div class="overview-hero-actions" aria-label="Primary actions">
+                <button class="primary quick-start-chip" type="button" data-view="orchestration">Open Flow Studio</button>
+                <button class="ghost quick-start-chip" type="button" data-view="routing-gateway">Gateway</button>
+                <button class="ghost quick-start-chip" type="button" data-view="playground">Playground</button>
+              </div>
             </div>
-            <p class="overview-intro">
-              Signed in as <strong id="overviewLoggedInUser">Ui Operator</strong>
-              (<span id="overviewLoggedInContext">Master Admin @ LOCAL</span>).
-              Jump to a priority console below or use search in the header.
-            </p>
-            <div class="quick-start-chips" aria-label="Quick navigation">
-              <button class="chip quick-start-chip" type="button" data-view="playground">Playground</button>
-              <button class="chip quick-start-chip" type="button" data-view="benchmark-scan">Benchmark &amp; Scan</button>
-              <button class="chip quick-start-chip" type="button" data-view="routing-gateway">Routing &amp; Gateway</button>
-              <button class="chip quick-start-chip" type="button" data-view="orchestration">Flow Orchestration</button>
-              <button class="chip quick-start-chip" type="button" data-view="routing-gateway" data-gateway-console-tab="memory" data-scroll-target="gatewayMemoryPlatformConfigCard">Memory &amp; Context</button>
-              <button class="chip quick-start-chip" type="button" data-view="routing-gateway" data-scroll-target="cursorGatewayIntegrationHub">Cursor Gateway</button>
-              <button class="chip quick-start-chip" type="button" data-view="compliance">Compliance</button>
-              <button class="chip quick-start-chip" type="button" data-view="observability">Observability</button>
+            <div class="overview-hero-visual" aria-hidden="true">
+              <div class="sig-instrument">
+                <div class="sig-instrument-ticks"></div>
+                <div class="sig-instrument-ring sig-instrument-ring-a"></div>
+                <div class="sig-instrument-ring sig-instrument-ring-b"></div>
+                <div class="sig-instrument-cross" aria-hidden="true"></div>
+                <div class="sig-instrument-core"></div>
+              </div>
             </div>
-          </article>
-          <div class="card-grid">
-            <article class="card metric">
-              <h3>Live Spend (24h)</h3>
-              <p class="metric-value" id="spendDay">--</p>
-            </article>
-            <article class="card metric">
-              <h3>Live Spend (1h)</h3>
-              <p class="metric-value" id="spendHour">--</p>
-            </article>
-            <article class="card metric">
-              <h3>Discovery Queue</h3>
-              <p class="metric-value" id="discoveryCount">--</p>
-            </article>
-            <article class="card metric">
-              <h3>Audit Events</h3>
-              <p class="metric-value" id="auditCount">--</p>
-            </article>
-          </div>
-          <article class="card">
-            <h3>Platform Status</h3>
-            <p id="healthStatus" class="mono" role="status" aria-live="polite">Checking backend...</p>
-          </article>
+          </section>
 
-          <article class="card">
-            <div class="card-head">
-              <h3>Flow Orchestration</h3>
-              <button type="button" class="chip quick-start-chip" data-view="orchestration">Open Console</button>
+          <section class="overview-section" aria-label="Readiness">
+            <div class="overview-section-head">
+              <h3>Readiness</h3>
+              <div class="overview-section-head-actions">
+                <button
+                  id="overviewRaiseLeadershipScore"
+                  class="ghost"
+                  type="button"
+                  title="POST /gateway/best-practices/leadership-bootstrap (posture + CPLI)"
+                >
+                  Raise Leadership Score
+                </button>
+                <span class="sig-seal" title="Live operator session">Live ledger</span>
+                <span id="overviewSessionBadge" class="status-pill idle">Signed in</span>
+              </div>
             </div>
+            <form id="overviewLeadershipBootstrapOpts" class="form-grid" aria-label="Leadership bootstrap options">
+              <label>
+                Enhance CPLI
+                <select id="overviewEnhanceCpli">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+              <label>
+                Probe peer (plane-split)
+                <select id="overviewProbePeer">
+                  <option value="auto" selected>auto</option>
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+            </form>
+            <p id="overviewLeadershipBootstrapStatus" class="mono runtime-feedback" aria-live="polite"></p>
+            <div class="overview-readiness" aria-label="Platform readiness signals">
+              <div class="overview-readiness-item">
+                <span>Platform</span>
+                <strong id="overviewReadyHealth">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Prod NHI</span>
+                <strong id="overviewReadyNhi">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>RT drills</span>
+                <strong id="overviewReadyRt">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Leader claim</span>
+                <strong id="overviewReadyClaim">blocked</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>LRS</span>
+                <strong id="overviewReadyLrs">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>LRS sustain</span>
+                <strong id="overviewReadyLrsSustain">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Unified</span>
+                <strong id="overviewReadyUnified">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Leadership</span>
+                <strong id="overviewLeadershipPosture">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Lead trend</span>
+                <strong id="overviewLeadershipTrend">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Lead go/no-go</span>
+                <strong id="overviewLeadershipDecision">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Score Δ</span>
+                <strong id="overviewLeadershipDelta">--</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="sig-trust-ledger" aria-label="Trust posture">
+            <div class="sig-trust-item">
+              <span class="sig-trust-label">Core</span>
+              <strong>Flow Studio</strong>
+            </div>
+            <div class="sig-trust-item">
+              <span class="sig-trust-label">Plane</span>
+              <strong>Governed</strong>
+            </div>
+            <div class="sig-trust-item">
+              <span class="sig-trust-label">Evidence</span>
+              <strong>Attestable</strong>
+            </div>
+            <div class="sig-trust-item">
+              <span class="sig-trust-label">Spend</span>
+              <strong>Ledgered</strong>
+            </div>
+          </section>
+
+          <article class="card overview-panel overview-core-panel">
+            <div class="card-head">
+              <div>
+                <p class="sig-kicker">Core capability</p>
+                <h3>Flow Studio</h3>
+              </div>
+              <button type="button" class="primary quick-start-chip" data-view="orchestration">Open Flow Studio</button>
+            </div>
+            <p class="help-copy" data-help-label="About Flow Studio">Design governed multi-step AI workflows on a freeform canvas — validate, dual-approve to prod, and run with an attestable ledger.</p>
+            <ol class="overview-core-sequence" aria-label="Flow Studio operating sequence">
+              <li><strong>Design</strong> wire Start → steps → End on the board</li>
+              <li><strong>Govern</strong> validate, approve, and promote by environment</li>
+              <li><strong>Run</strong> execute with run ledger evidence</li>
+            </ol>
+            <p class="overview-core-jump-hint">Open a tile to jump into Design, Govern, or Run.</p>
             <div id="overviewOrchestrationSummary" class="flow-platform-summary-grid" aria-live="polite">
               <article class="flow-platform-stat"><strong>--</strong><span>Flows</span></article>
               <article class="flow-platform-stat"><strong>--</strong><span>Prod approvals pending</span></article>
@@ -57,7 +151,239 @@
             </div>
           </article>
 
-          <article class="card">
+          <div class="card-grid overview-metrics-grid">
+            <article class="card metric">
+              <h3>Ledgered spend · 24h</h3>
+              <p class="metric-value" id="spendDay">--</p>
+            </article>
+            <article class="card metric">
+              <h3>Ledgered spend · 1h</h3>
+              <p class="metric-value" id="spendHour">--</p>
+            </article>
+            <article class="card metric">
+              <h3>Triage queue</h3>
+              <p class="metric-value" id="discoveryCount">--</p>
+            </article>
+            <article class="card metric">
+              <h3>Evidence events</h3>
+              <p class="metric-value" id="auditCount">--</p>
+            </article>
+          </div>
+
+          <article class="card overview-panel">
+            <div class="card-head">
+              <div>
+                <p class="sig-kicker">Operator routes</p>
+                <h3>Plane shortcuts</h3>
+              </div>
+            </div>
+            <div class="quick-start-chips" aria-label="Quick navigation">
+              <button class="chip quick-start-chip" type="button" data-view="orchestration">Flow Studio</button>
+              <button class="chip quick-start-chip" type="button" data-view="benchmark-scan">Benchmark &amp; Scan</button>
+              <button class="chip quick-start-chip" type="button" data-view="routing-gateway" data-gateway-console-tab="memory" data-scroll-target="gatewayMemoryPlatformConfigCard">Memory &amp; Context</button>
+              <button class="chip quick-start-chip" type="button" data-view="routing-gateway" data-scroll-target="cursorGatewayIntegrationHub">Cursor Gateway</button>
+              <button class="chip quick-start-chip" type="button" data-view="compliance">Compliance</button>
+              <button class="chip quick-start-chip" type="button" data-view="observability">Observability</button>
+              <button class="chip quick-start-chip" type="button" data-view="cost">Cost &amp; QBR</button>
+              <button class="chip quick-start-chip" type="button" data-view="security">Security</button>
+            </div>
+          </article>
+
+          <article class="card overview-panel">
+            <div class="card-head">
+              <div>
+                <p class="sig-kicker">Plane health</p>
+                <h3>Platform Status</h3>
+              </div>
+            </div>
+            <p id="healthStatus" class="mono sig-health-readout" role="status" aria-live="polite">Checking backend...</p>
+          </article>
+
+          <details class="overview-engineering">
+            <summary class="overview-engineering-summary">
+              <span class="sig-kicker">Plane engineering</span>
+              <span class="overview-engineering-title">Attestation, coverage &amp; feedback</span>
+              <span class="overview-engineering-hint">Expand for CPLI, UI coverage, and operator reports</span>
+            </summary>
+            <div class="overview-engineering-body">
+          <article class="card overview-panel" aria-labelledby="overviewControlPlaneTitle">
+            <div class="card-head">
+              <div>
+                <p class="sig-kicker">Plane attestation</p>
+                <h3 id="overviewControlPlaneTitle">Control Plane</h3>
+              </div>
+              <div class="inline-actions">
+                <button id="overviewPlaneReconcile" class="ghost" type="button">Force Reconcile</button>
+                <button id="overviewPlaneAttest" class="ghost" type="button">Attest CPLI</button>
+                <span id="overviewPlaneBadge" class="status-pill idle">--</span>
+              </div>
+            </div>
+            <p class="field-help">
+              Process isolation via <code>APP_PLANE</code>. CPLI is the engineering leadership index
+              (max 20) — it never authorizes marketing claims without program Leader Readiness.
+            </p>
+            <div class="overview-readiness" aria-label="Control plane posture">
+              <div class="overview-readiness-item">
+                <span>CPLI</span>
+                <strong id="overviewPlaneCpli">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Band</span>
+                <strong id="overviewPlaneCpliBand">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>APP_PLANE</span>
+                <strong id="overviewPlaneMode">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Isolation</span>
+                <strong id="overviewPlaneIsolation">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>On-plane %</span>
+                <strong id="overviewPlaneCoverage">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Schedulers</span>
+                <strong id="overviewPlaneSchedulers">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Policy gen</span>
+                <strong id="overviewPlaneGeneration">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Drift</span>
+                <strong id="overviewPlaneDrift">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Gate</span>
+                <strong id="overviewPlaneGate">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Watcher</span>
+                <strong id="overviewPlaneWatcher">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>SLOs</span>
+                <strong id="overviewPlaneSlos">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Published</span>
+                <strong id="overviewPlanePublished">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Release gate</span>
+                <strong id="overviewPlaneReleaseGate">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>CPLI trend</span>
+                <strong id="overviewPlaneTrend">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Attest age</span>
+                <strong id="overviewPlaneAttestAge">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Promotion</span>
+                <strong id="overviewPlanePromotion">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Gate streak</span>
+                <strong id="overviewPlaneGateStreak">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Ready</span>
+                <strong id="overviewPlaneReady">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Alive</span>
+                <strong id="overviewPlaneAlive">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Contract</span>
+                <strong id="overviewPlaneContract">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Desired⇄Observed</span>
+                <strong id="overviewPlaneDesiredObserved">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>LKG</span>
+                <strong id="overviewPlaneLkg">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Peer ack</span>
+                <strong id="overviewPlanePeerAck">--</strong>
+              </div>
+              <div class="overview-readiness-item">
+                <span>Readonly</span>
+                <strong id="overviewPlaneReadonly">--</strong>
+              </div>
+            </div>
+            <p id="overviewPlaneNotes" class="mono" role="status" aria-live="polite"></p>
+            <ul id="overviewPlaneBlockers" class="mono compliance-list" aria-label="CPLI blockers"></ul>
+            <div class="table-wrap">
+              <table class="data-table compact" aria-label="CPLI dimensions">
+                <thead>
+                  <tr><th>Dimension</th><th>Score</th><th>Note</th></tr>
+                </thead>
+                <tbody id="overviewPlaneDimensions"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table compact" aria-label="Release gate checks">
+                <thead>
+                  <tr><th>Check</th><th>Result</th><th>Detail</th></tr>
+                </thead>
+                <tbody id="overviewPlaneGateChecks"></tbody>
+              </table>
+            </div>
+            <div class="inline-actions" style="margin:0.5rem 0">
+              <button id="overviewPlaneVerifyAttest" class="ghost" type="button">Verify Attestation</button>
+              <button id="overviewPlaneEvaluateGate" class="ghost" type="button">Evaluate Release Gate</button>
+              <button id="overviewPlaneExportAttest" class="ghost" type="button">Export Last Attestation</button>
+              <button id="overviewPlaneExportEvidence" class="ghost" type="button">Export Evidence Pack</button>
+              <button id="overviewPlaneMintEvidence" class="ghost" type="button">Mint Evidence Pack</button>
+              <button id="overviewPlaneExportSnapshot" class="ghost" type="button">Export Snapshot</button>
+              <button id="overviewPlaneMintSnapshot" class="ghost" type="button">Mint Snapshot</button>
+              <button id="overviewPlaneApplySnapshot" class="ghost" type="button">Apply Last Snapshot</button>
+              <button id="overviewPlaneFreeze" class="ghost" type="button">Freeze CP</button>
+              <button id="overviewPlaneUnfreeze" class="ghost" type="button">Unfreeze CP</button>
+              <button id="overviewPlaneRollbackLkg" class="ghost" type="button">Rollback to LKG</button>
+              <button id="overviewPlanePeerAck" class="ghost" type="button">Ack Published</button>
+              <span class="mono" id="overviewPlaneAttestMeta">--</span>
+            </div>
+            <label class="field-help" style="display:block;margin:0.35rem 0">
+              <input id="overviewPlaneReconcileCeremony" type="checkbox" />
+              Reconcile ceremony: also Attest CPLI + Evaluate Gate
+            </label>
+            <div class="table-wrap">
+              <table class="data-table compact" aria-label="CPLI attestation history">
+                <thead>
+                  <tr><th>When</th><th>ID</th><th>Score</th><th>Band</th><th>Signed</th></tr>
+                </thead>
+                <tbody id="overviewPlaneAttestHistory"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table compact" aria-label="Release gate history">
+                <thead>
+                  <tr><th>When</th><th>ID</th><th>Result</th><th>Score</th><th>Failed</th></tr>
+                </thead>
+                <tbody id="overviewPlaneGateHistory"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table compact">
+                <thead>
+                  <tr><th>When</th><th>Status</th><th>Source</th><th>Fingerprint</th><th>Peer</th></tr>
+                </thead>
+                <tbody id="overviewPlaneDriftEvents"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card overview-panel">
             <div class="card-head">
               <h3>API UI Coverage Gaps</h3>
               <div class="inline-actions">
@@ -76,7 +402,7 @@
             <ul id="overviewUiCoverageGaps" class="mono compliance-list" aria-label="Backend APIs without full frontend coverage"></ul>
           </article>
 
-          <article class="card">
+          <article class="card overview-panel">
             <div class="card-head">
               <h3>Operator Feedback Reports</h3>
               <div class="inline-actions">
@@ -119,7 +445,10 @@
             </div>
           </article>
 
-          <article class="card">
+            </div>
+          </details>
+
+          <article class="card overview-panel">
             <div class="card-head">
               <h3>Spend vs Hours</h3>
               <div class="inline-actions spend-controls">
@@ -130,6 +459,11 @@
                   <option value="group">Group</option>
                   <option value="team">Team</option>
                   <option value="request_tag">Request Tag</option>
+                  <option value="cache_hit">Cache hit / miss</option>
+                  <option value="session_path">Session path</option>
+                  <option value="has_feedback">Has feedback</option>
+                  <option value="user_id">Helicone user id</option>
+                  <option value="scores">Feedback scores</option>
                 </select>
                 <label class="inline-label" for="spendBreakdownRange">Range</label>
                 <select id="spendBreakdownRange" aria-label="Spend range">

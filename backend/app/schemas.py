@@ -386,6 +386,7 @@ class SessionLoginRequest(BaseModel):
 class SessionLoginResponse(SessionIssueResponse):
     actor_id: str
     actor_role: str
+    csrf_token: Optional[str] = None
 
 
 class SessionResponse(ORMBase):
@@ -1335,6 +1336,399 @@ class GatewayNhiHygieneResponse(BaseModel):
     source_distribution: list[dict[str, object]]
 
 
+class GatewayNhiInsightItem(BaseModel):
+    nhi_record_id: str
+    source_type: str
+    source_id: str
+    identity_type: str
+    tenant_id: str
+    environment: str
+    provider_type: str
+    status: str
+    owner_scope_type: Optional[str] = None
+    owner_scope_id: Optional[str] = None
+    purpose: str = ""
+    approved_intents: list[str] = Field(default_factory=list)
+    risk_score: int
+    risk_tier: str
+    findings: list[str] = Field(default_factory=list)
+    missing_owner: bool = False
+    stale_credential: bool = False
+    credential_age_days: Optional[int] = None
+    business_impact: str = "monitored"
+
+
+class GatewayNhiInsightsResponse(BaseModel):
+    generated_at: str
+    total_identities: int
+    risk_tier_counts: dict[str, int] = Field(default_factory=dict)
+    top_risks: list[GatewayNhiInsightItem] = Field(default_factory=list)
+    intent_mode: str = "off"
+    notes: str = ""
+
+
+class GatewayNhiAccessMapResponse(BaseModel):
+    nhi_record_id: str
+    source_type: str
+    source_id: str
+    identity_type: str
+    plane: str = "inference_gateway"
+    path_count: int = 0
+    paths: list[dict[str, object]] = Field(default_factory=list)
+    notes: str = ""
+
+
+class GatewayNhiTimelineResponse(BaseModel):
+    nhi_record_id: str
+    event_count: int = 0
+    events: list[dict[str, object]] = Field(default_factory=list)
+
+
+class GatewayNhiOwnerUpdateRequest(BaseModel):
+    owner_scope_type: str = Field(min_length=1, max_length=64)
+    owner_scope_id: str = Field(min_length=1, max_length=128)
+    purpose: Optional[str] = Field(default=None, max_length=512)
+
+
+class GatewayNhiLifecycleRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=32)
+    reason: str = Field(default="", max_length=512)
+
+
+class GatewayNhiIntentsUpdateRequest(BaseModel):
+    purpose: str = Field(default="", max_length=512)
+    approved_intents: list[str] = Field(default_factory=list)
+
+
+class GatewayNhiGovernanceConfig(BaseModel):
+    intent_mode: str = Field(default="off", max_length=16)
+    record_count: int = 0
+    correlation_ingest_enabled: bool = False
+    correlation_ingest_hmac_secret: str = Field(default="", max_length=512)
+    correlation_ingest_hmac_secret_configured: bool = False
+    require_correlation_ingest_hmac: bool = True
+    access_mode: str = Field(default="off", max_length=16)
+    policy_count: int = 0
+    access_policies: list[dict[str, object]] = Field(default_factory=list)
+    gate_event_count: int = 0
+
+
+class GatewayNhiAgentsResponse(BaseModel):
+    agent_count: int
+    source_type_counts: dict[str, int] = Field(default_factory=dict)
+    agents: list[dict[str, object]] = Field(default_factory=list)
+    access_mode: str = "off"
+    notes: str = ""
+
+
+class GatewayNhiAccessConfig(BaseModel):
+    access_mode: str = Field(default="off", max_length=16)
+    policy_count: int = 0
+    access_policies: list[dict[str, object]] = Field(default_factory=list)
+    intent_mode: str = "off"
+
+
+class GatewayRuntimeRiskConfig(BaseModel):
+    enabled: bool = False
+    mode: str = Field(default="observe", max_length=16)
+    high_action: str = Field(default="block", max_length=16)
+    medium_action: str = Field(default="warn", max_length=16)
+    low_action: str = Field(default="allow", max_length=16)
+    enforce_environments: list[str] = Field(default_factory=lambda: ["prod", "production"])
+    fail_closed_on_config_error: bool = True
+
+
+class GatewayRuntimeRiskEvaluateRequest(BaseModel):
+    model_name: str = Field(min_length=1, max_length=256)
+    environment: str = Field(default="dev", max_length=64)
+    has_tool_calls: bool = False
+    selected_provider_id: Optional[str] = Field(default=None, max_length=128)
+    endpoint_family: str = Field(default="chat.completions", max_length=64)
+    has_agent_id: bool = False
+    input_chars: int = Field(default=0, ge=0, le=10_000_000)
+
+
+class GatewayRuntimeRiskEvaluateResponse(BaseModel):
+    risk_tier: str
+    risk_reasons: list[str]
+    configured_action: str
+    decision: str
+    mode: str
+    enabled: bool
+    would_block: bool
+    environment: str
+    model_name: str
+    endpoint_family: str = "chat.completions"
+
+
+class GatewayNhiAccessAuthorizeRequest(BaseModel):
+    declared_intent: str = Field(min_length=1, max_length=128)
+    resource: str = Field(default="*", max_length=256)
+    action: str = Field(default="chat.completions", max_length=128)
+    nhi_record_id: Optional[str] = Field(default=None, max_length=64)
+    virtual_key_id: Optional[str] = Field(default=None, max_length=128)
+    owner_scope_id: Optional[str] = Field(default=None, max_length=128)
+    actor_id: Optional[str] = Field(default=None, max_length=128)
+
+
+class GatewayNhiAccessAuthorizeResponse(BaseModel):
+    allowed: bool
+    decision: str
+    mode: str
+    matched_policy_id: Optional[str] = None
+    reason: str
+    declared_intent: str
+    resource: str
+    action: str
+    nhi_record_id: str = ""
+
+
+class GatewayNhiShadowActionRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=32)
+    notes: str = Field(default="", max_length=2000)
+
+
+class GatewayNhiShadowActionResponse(BaseModel):
+    nhi_record_id: str
+    source_id: str
+    shadow_status: str
+    nhi_status: str
+    action: str
+
+
+class GatewayNhiIntentCheckRequest(BaseModel):
+    nhi_record_id: Optional[str] = Field(default=None, max_length=64)
+    virtual_key_id: Optional[str] = Field(default=None, max_length=128)
+    owner_scope_id: Optional[str] = Field(default=None, max_length=128)
+    actor_id: Optional[str] = Field(default=None, max_length=128)
+    declared_intent: str = Field(min_length=1, max_length=128)
+    action: str = Field(default="chat.completions", max_length=128)
+
+
+class GatewayNhiEvidenceExportRequest(BaseModel):
+    tenant_id: Optional[str] = Field(default=None, max_length=128)
+    environment: Optional[str] = Field(default=None, max_length=64)
+    max_credential_age_days: int = Field(default=90, ge=1, le=3650)
+
+
+class GatewayNhiEvidenceExportResponse(BaseModel):
+    evidence_id: str
+    exported_at: str
+    export_uri: str
+    schema_version: str
+    plane: str
+    integration_intent: str
+    exported_by: str
+    filters: dict[str, object] = Field(default_factory=dict)
+    summary: dict[str, object] = Field(default_factory=dict)
+    hygiene_summary: Optional[dict[str, object]] = None
+    insights: dict[str, object] = Field(default_factory=dict)
+    orphans: dict[str, object] = Field(default_factory=dict)
+    iga_deny: dict[str, object] = Field(default_factory=dict)
+    notes: str = ""
+
+
+class GatewayNhiCorrelationIngestRequest(BaseModel):
+    nhi_record_id: Optional[str] = Field(default=None, max_length=64)
+    virtual_key_id: Optional[str] = Field(default=None, max_length=128)
+    source_type: Optional[str] = Field(default=None, max_length=64)
+    source_id: Optional[str] = Field(default=None, max_length=128)
+    external_ref: Optional[str] = Field(default=None, max_length=256)
+    iga_agent_id: Optional[str] = Field(default=None, max_length=256)
+    source_system: Optional[str] = Field(default=None, max_length=64)
+
+
+class GatewayNhiIntentCheckResponse(BaseModel):
+    allowed: bool
+    matched: bool
+    mode: str
+    reason: str
+    nhi_record_id: str
+    declared_intent: str
+    action: str
+    approved_intents: list[str] = Field(default_factory=list)
+    purpose: str = ""
+    decision: str = "allow"
+
+
+class GatewayNhiIgaExportConfig(BaseModel):
+    enabled: bool = False
+    target_system: str = Field(default="generic", max_length=64)
+    webhook_url: str = Field(default="", max_length=2048)
+    hmac_secret: str = Field(default="", max_length=512)
+    hmac_secret_configured: bool = False
+    sign_requests: bool = True
+    include_hygiene_summary: bool = True
+    default_profile: str = Field(default="iga_correlation", max_length=64)
+    max_records: int = Field(default=500, ge=1, le=500)
+
+
+class GatewayNhiExportRequest(BaseModel):
+    tenant_id: Optional[str] = Field(default=None, max_length=128)
+    environment: Optional[str] = Field(default=None, max_length=64)
+    source_type: Optional[str] = Field(default=None, max_length=64)
+    provider_type: Optional[str] = Field(default=None, max_length=64)
+    identity_type: Optional[str] = Field(default=None, max_length=64)
+    status: Optional[str] = Field(default=None, max_length=64)
+    stale_only: bool = False
+    missing_owner_only: bool = False
+    max_credential_age_days: int = Field(default=90, ge=1, le=3650)
+    limit: int = Field(default=100, ge=1, le=500)
+    offset: int = Field(default=0, ge=0)
+    profile: Optional[str] = Field(default=None, max_length=64)
+    target_system: Optional[str] = Field(default=None, max_length=64)
+    include_hygiene_summary: Optional[bool] = None
+    deliver_webhook: bool = False
+    dry_run_delivery: bool = True
+
+
+class GatewayNhiExportDeliveryResult(BaseModel):
+    delivery_id: str
+    delivery_status: str
+    webhook_url: str = ""
+    signed: bool = False
+    record_count: int = 0
+    attempts: int = 0
+    http_status: Optional[int] = None
+    error: Optional[str] = None
+
+
+class GatewayNhiExportResponse(BaseModel):
+    export_id: str
+    exported_at: str
+    export_uri: str
+    schema_version: str
+    profile: str
+    target_system: str
+    plane: str
+    integration_intent: str
+    exported_by: str
+    filters: dict[str, object] = Field(default_factory=dict)
+    record_count: int
+    identities: list[dict[str, object]] = Field(default_factory=list)
+    correlation_guide: dict[str, object] = Field(default_factory=dict)
+    hygiene_summary: Optional[dict[str, object]] = None
+    delivery: Optional[GatewayNhiExportDeliveryResult] = None
+
+
+class GatewayNhiIgaExportTestRequest(BaseModel):
+    dry_run: bool = True
+
+
+class GatewayNhiIgaDenyConfig(BaseModel):
+    enabled: bool = False
+    mode: str = Field(default="off", max_length=16)
+    ingest_hmac_secret: str = Field(default="", max_length=512)
+    ingest_hmac_secret_configured: bool = False
+    require_ingest_hmac: bool = True
+    require_ingest_timestamp: bool = False
+    max_ingest_skew_seconds: int = Field(default=300, ge=30, le=3600)
+    default_ttl_seconds: int = Field(default=86400, ge=60, le=2592000)
+    max_active_denies: int = Field(default=200, ge=1, le=500)
+    allowed_source_systems: list[str] = Field(default_factory=list)
+    active_deny_count: int = 0
+    event_history_count: int = 0
+    active_denies: list[dict[str, object]] = Field(default_factory=list)
+
+
+class GatewayNhiIgaDenyEventsResponse(BaseModel):
+    event_count: int
+    total_events: int
+    events: list[dict[str, object]] = Field(default_factory=list)
+    notes: str = ""
+
+
+class GatewayNhiCorrelationUpdateRequest(BaseModel):
+    external_ref: Optional[str] = Field(default=None, max_length=256)
+    iga_agent_id: Optional[str] = Field(default=None, max_length=256)
+    source_system: Optional[str] = Field(default=None, max_length=64)
+
+
+class GatewayNhiCorrelationResponse(BaseModel):
+    nhi_record_id: str
+    external_ref: Optional[str] = None
+    iga_agent_id: Optional[str] = None
+    correlation_source_system: Optional[str] = None
+
+
+class GatewayNhiOrphanItem(BaseModel):
+    nhi_record_id: str
+    source_type: str
+    source_id: str
+    identity_type: str
+    tenant_id: str
+    environment: str
+    status: str
+    risk_score: int
+    risk_tier: str
+    external_ref: Optional[str] = None
+    iga_agent_id: Optional[str] = None
+    purpose: str = ""
+
+
+class GatewayNhiOrphansResponse(BaseModel):
+    orphan_count: int
+    orphans: list[GatewayNhiOrphanItem] = Field(default_factory=list)
+    notes: str = ""
+
+
+class GatewayNhiOrphansAssignRequest(BaseModel):
+    nhi_record_ids: list[str] = Field(default_factory=list, max_length=50)
+    owner_scope_type: str = Field(min_length=1, max_length=64)
+    owner_scope_id: str = Field(min_length=1, max_length=128)
+    purpose: Optional[str] = Field(default=None, max_length=512)
+
+
+class GatewayNhiOrphansAssignResponse(BaseModel):
+    updated_count: int
+    updated: list[str] = Field(default_factory=list)
+    skipped: list[dict[str, str]] = Field(default_factory=list)
+    owner_scope_type: str
+    owner_scope_id: str
+
+
+class GatewayNhiIgaDenyIngestRequest(BaseModel):
+    subject_type: str = Field(min_length=1, max_length=64)
+    subject_id: str = Field(min_length=1, max_length=256)
+    reason: str = Field(default="", max_length=512)
+    source_system: str = Field(default="generic", max_length=64)
+    tenant_id: Optional[str] = Field(default=None, max_length=128)
+    environment: Optional[str] = Field(default=None, max_length=64)
+    external_ref: Optional[str] = Field(default=None, max_length=256)
+    ttl_seconds: Optional[int] = Field(default=None, ge=60, le=2592000)
+    expires_at: Optional[str] = Field(default=None, max_length=64)
+
+
+class GatewayNhiIgaDenyIngestResponse(BaseModel):
+    deny_id: str
+    status: str
+    subject_type: str
+    subject_id: str
+    source_system: str
+    expires_at: Optional[str] = None
+    mode: Optional[str] = None
+    active_deny_count: int = 0
+
+
+class GatewayNhiIgaDenyRevokeRequest(BaseModel):
+    reason: str = Field(default="operator_revoke", max_length=512)
+
+
+class GatewayNhiIgaDenyEvaluateRequest(BaseModel):
+    actor_id: Optional[str] = Field(default=None, max_length=128)
+    virtual_key_id: Optional[str] = Field(default=None, max_length=128)
+    owner_scope_id: Optional[str] = Field(default=None, max_length=128)
+    tenant_id: Optional[str] = Field(default=None, max_length=128)
+    environment: Optional[str] = Field(default=None, max_length=64)
+
+
+class GatewayNhiIgaDenyEvaluateResponse(BaseModel):
+    matched: bool
+    mode: str
+    enabled: bool
+    deny: Optional[dict[str, object]] = None
+
+
 class GatewayAccessReviewCampaignCreateRequest(BaseModel):
     campaign_name: str = Field(min_length=1, max_length=255)
     tenant_id: Optional[str] = Field(default=None, max_length=128)
@@ -1422,6 +1816,8 @@ class GatewayJitAccessRequestResponse(BaseModel):
         default=None,
         description="One-time bearer token returned only on approve when a VK is minted. Never re-read.",
     )
+    last_notify: Optional[dict[str, object]] = None
+    notify_history: list[dict[str, object]] = Field(default_factory=list)
     created_at: datetime
 
 
@@ -1443,23 +1839,105 @@ class GatewayJitExpireTickResponse(BaseModel):
 class GatewayJitDecisionNotifyConfig(BaseModel):
     enabled: bool = False
     notify_on_create: bool = True
+    notify_on_decide: bool = True
     email_channel_id: str = ""
     reviewer_emails: list[str] = Field(default_factory=list)
+    decision_recipient_emails: list[str] = Field(default_factory=list)
     public_base_url: str = ""
     external_callback_ids: list[str] = Field(default_factory=list)
     external_rest_url: str = ""
     external_rest_credential_binding_id: str = ""
     action_token_ttl_minutes: int = Field(default=1440, ge=15, le=10080)
     allow_prod_email_approve: bool = False
+    expose_virtual_key_on_email_action: bool = False
+    email_virtual_key_to_recipients: bool = True
+    webhook_sign_requests: bool = True
+    include_action_links_in_webhooks: bool = False
+    min_notify_interval_minutes: int = Field(default=15, ge=0, le=1440)
+    webhook_payload_style: str = "standard"
+    auto_reminder_after_minutes: int = Field(default=0, ge=0, le=10080)
+    escalate_after_minutes: int = Field(default=0, ge=0, le=10080)
+    escalation_reviewer_emails: list[str] = Field(default_factory=list)
+    max_auto_reminders: int = Field(default=3, ge=0, le=20)
+    auto_retry_failed_webhooks_on_tick: bool = False
 
 
 class GatewayJitDecisionNotifyResult(BaseModel):
-    notified: bool
+    notified: bool = False
+    tested: Optional[bool] = None
     emails_sent: int = 0
     email_errors: list[str] = Field(default_factory=list)
     webhooks: list[dict[str, object]] = Field(default_factory=list)
     event_type: str = "gateway.jit.request.create"
     reason: Optional[str] = None
+    probe_id: Optional[str] = None
+    delivery_id: Optional[str] = None
+    is_reminder: bool = False
+    is_retry: bool = False
+    is_escalation: bool = False
+
+
+class GatewayJitNotifyTickResponse(BaseModel):
+    scanned: int = 0
+    reminded: int = 0
+    escalated: int = 0
+    retried: int = 0
+    skipped: int = 0
+    items: list[dict[str, object]] = Field(default_factory=list)
+    reason: Optional[str] = None
+
+
+class GatewayJitPendingNotifySummary(BaseModel):
+    enabled: bool = False
+    pending_count: int = 0
+    overdue_reminder_count: int = 0
+    overdue_escalation_count: int = 0
+    failed_webhook_count: int = 0
+    oldest_pending_age_minutes: Optional[int] = None
+    auto_reminder_after_minutes: int = 0
+    escalate_after_minutes: int = 0
+    max_auto_reminders: int = 0
+    auto_retry_failed_webhooks_on_tick: bool = False
+
+
+class GatewayJitNotifyHistoryResponse(BaseModel):
+    request_id: str
+    last_notify: Optional[dict[str, object]] = None
+    history: list[dict[str, object]] = Field(default_factory=list)
+
+
+class GatewayJitActionLinksPreviewResponse(BaseModel):
+    request_id: str
+    status: str
+    reviewer_email: str
+    public_base_url: str = ""
+    action_token_ttl_minutes: int = 1440
+    approve_url: str = ""
+    deny_url: str = ""
+    links_ready: bool = False
+
+
+class GatewayJitActionConfirmPreviewResponse(BaseModel):
+    pending: bool
+    confirm_required: bool = True
+    request_id: str
+    status: str
+    decision: str
+    reviewer_email: str = ""
+    entitlement_id: str
+    environment: str
+    requester_id: str
+    justification: str = ""
+    requested_duration_minutes: int = 60
+    expires_claim_unix: int
+    confirm_nonce: str
+    message: str
+
+
+class GatewayJitActionDecideRequest(BaseModel):
+    confirm: bool = True
+    confirm_nonce: str = Field(..., min_length=8, max_length=256)
+    decision_reason: Optional[str] = Field(default=None, max_length=512)
 
 
 class GatewayJitActionDecideResponse(BaseModel):
@@ -1469,8 +1947,10 @@ class GatewayJitActionDecideResponse(BaseModel):
     decided_by: str
     message: str
     issued_virtual_key_id: Optional[str] = None
-    # One-time token only when approve mints a key via email action.
+    # One-time token only when expose_virtual_key_on_email_action is enabled.
     issued_virtual_key_token: Optional[str] = None
+    virtual_key_emailed: bool = False
+    key_email_recipients: int = 0
 
 
 class GatewayLeastPrivilegeRecommendationResponse(BaseModel):
@@ -1529,6 +2009,9 @@ class RouteSimulateFallbackResponse(BaseModel):
     attempted_providers: str
     selected_group_id: Optional[str] = None
     selected_provider_id: Optional[str] = None
+    intended_model: Optional[str] = None
+    actual_model: Optional[str] = None
+    model_switched: Optional[bool] = None
     fallback_hops_used: int
     provider_attempts: int
     final_outcome: str
@@ -1566,6 +2049,9 @@ class RouteExecuteFallbackResponse(BaseModel):
     attempted_providers: str
     selected_group_id: Optional[str] = None
     selected_provider_id: Optional[str] = None
+    intended_model: Optional[str] = None
+    actual_model: Optional[str] = None
+    model_switched: Optional[bool] = None
     fallback_hops_used: int
     provider_attempts: int
     total_latency_ms: int
@@ -1701,6 +2187,10 @@ class GatewayLeadershipQbrSnapshotResponse(BaseModel):
     control_plane_leadership: dict[str, object] = Field(
         default_factory=dict,
         description="Control Plane Leadership Index (CPLI) engineering scorecard summary.",
+    )
+    program_leadership: dict[str, object] = Field(
+        default_factory=dict,
+        description="Unified LRS + CPLI posture (program gate + engineering leader band).",
     )
     on_plane_coverage: Optional[dict[str, object]] = None
     transport: dict[str, object] = Field(default_factory=dict)
@@ -1854,6 +2344,25 @@ class GatewayOpenAIChatCompletionsRequest(BaseModel):
         pattern="^(inherit|bypass|force)$",
         description="Portkey-style cache control: inherit (policy), bypass (skip read/write), force (skip hit, still store)",
     )
+    auto_route: bool = Field(
+        default=False,
+        description="When true (or model is auto/gateway/auto), classify prompt complexity and select a tier model",
+    )
+    auto_route_strategy: str = Field(
+        default="balanced",
+        pattern="^(balanced|cost|quality)$",
+        description="Auto-router selection strategy within the classified tier",
+    )
+    declared_intent: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Gateway-plane intent label for NHI intent-check / IARA-lite; enforced when intent_mode or access_mode is warn/block",
+    )
+    access_resource: Optional[str] = Field(
+        default=None,
+        max_length=256,
+        description="IARA-lite resource label (e.g. model:gpt-4o, mcp:server/tool); used with access policies",
+    )
 
 
 class GatewayOpenAIChatChoiceMessage(BaseModel):
@@ -1898,6 +2407,12 @@ class GatewayOpenAIChatCompletionsResponse(BaseModel):
     cost_hierarchy_limits: Optional[dict[str, object]] = None
     content_guard_decision: Optional[str] = None
     content_guard_reasons: Optional[list[str]] = None
+    intended_model: Optional[str] = None
+    actual_model: Optional[str] = None
+    model_switched: Optional[bool] = None
+    auto_route_tier: Optional[str] = None
+    auto_route_score: Optional[int] = None
+    auto_route_rationale: Optional[str] = None
 
 
 class GatewayOpenAIEmbeddingsRequest(BaseModel):
@@ -2267,6 +2782,25 @@ class GatewayOpenAIResponsesRequest(BaseModel):
         pattern="^(inherit|bypass|force)$",
         description="Portkey-style cache control: inherit (policy), bypass (skip read/write), force (skip hit, still store)",
     )
+    auto_route: bool = Field(
+        default=False,
+        description="When true (or model=auto), classify prompt complexity and select a catalog model",
+    )
+    auto_route_strategy: str = Field(
+        default="balanced",
+        pattern="^(balanced|cost|quality)$",
+        description="Auto-route strategy used when auto_route is enabled",
+    )
+    declared_intent: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Gateway-plane intent label for NHI intent-check / IARA-lite; enforced when intent_mode or access_mode is warn/block",
+    )
+    access_resource: Optional[str] = Field(
+        default=None,
+        max_length=256,
+        description="IARA-lite resource label (e.g. model:gpt-4o, mcp:server/tool); used with access policies",
+    )
 
 
 class GatewayOpenAIResponsesOutputContent(BaseModel):
@@ -2315,6 +2849,9 @@ class GatewayOpenAIResponsesResponse(BaseModel):
     mirror_events_count: Optional[int] = None
     prompt_registry_id: Optional[str] = None
     cost_hierarchy_limits: Optional[dict[str, object]] = None
+    auto_route_tier: Optional[str] = None
+    auto_route_score: Optional[int] = None
+    auto_route_rationale: Optional[str] = None
 
 
 class GatewayOpenAIResponsesListResponse(BaseModel):
@@ -2924,6 +3461,582 @@ class SupportedModelSeedTrendingResponse(BaseModel):
     overwrite: bool
     auto_approve: bool
     packs: list[str] = Field(default_factory=list)
+
+
+class SupportedModelCloudDiscoverRequest(BaseModel):
+    targets: list[str] = Field(
+        default_factory=lambda: ["all"],
+        description="Discover targets: bedrock, azure, google, vertex, or all.",
+    )
+    region: Optional[str] = Field(default=None, max_length=64)
+    limit: int = Field(default=200, ge=1, le=1000)
+
+
+class SupportedModelCloudDiscoverModel(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    provider_type: str
+    model_name: str
+    display_name: str
+    context_window_tokens: int = 128000
+    description: str = ""
+    recommendation_rationale: str = ""
+    status: str = "active"
+
+
+class SupportedModelCloudDiscoverResponse(BaseModel):
+    targets: list[str]
+    total: int
+    models: list[SupportedModelCloudDiscoverModel]
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    errors: list[dict[str, str]] = Field(default_factory=list)
+
+
+class SupportedModelCloudSyncRequest(BaseModel):
+    targets: list[str] = Field(
+        default_factory=lambda: ["all"],
+        description="Sync targets: bedrock, azure, google, vertex, or all.",
+    )
+    region: Optional[str] = Field(default=None, max_length=64)
+    overwrite: bool = False
+    auto_approve: bool = True
+
+
+class SupportedModelCloudSyncResponse(BaseModel):
+    targets: list[str]
+    discovered: int
+    created: int
+    updated: int
+    skipped: int
+    pack_size: int
+    overwrite: bool
+    auto_approve: bool
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    errors: list[dict[str, str]] = Field(default_factory=list)
+
+
+class InferenceReadinessProvider(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    provider_type: str
+    label: str
+    catalog_models: int = 0
+    invoke_supported: bool = False
+    env_credential_configured: bool = False
+    endpoint_configured: bool = True
+    live_ready: bool = False
+    status: str
+    setup_hint: str = ""
+
+
+class InferenceReadinessResponse(BaseModel):
+    simulation_enabled: bool
+    ready_providers: int
+    total_providers: int
+    catalog_models_total: int
+    providers: list[InferenceReadinessProvider]
+
+
+class GatewayBestPracticesCheck(BaseModel):
+    id: str
+    label: str
+    status: str
+    passed: bool
+    weight: int
+    detail: str
+    recommendation: str
+    market_refs: list[str] = Field(default_factory=list)
+
+
+class GatewayBestPracticesMarketTrend(BaseModel):
+    id: str
+    title: str
+    summary: str
+
+
+class GatewayBestPracticesNextAction(BaseModel):
+    action: str
+    check_id: str
+    weight: int
+
+
+class GatewayBestPracticesPostureResponse(BaseModel):
+    score: int
+    max_score: int = 100
+    band: str
+    earned_weight: int
+    possible_weight: int
+    checks: list[GatewayBestPracticesCheck]
+    top_gaps: list[GatewayBestPracticesCheck] = Field(default_factory=list)
+    readiness: dict
+    market_trends: list[GatewayBestPracticesMarketTrend] = Field(default_factory=list)
+    next_actions: list[GatewayBestPracticesNextAction] = Field(default_factory=list)
+
+
+class GatewayFallbackSuggestRequest(BaseModel):
+    max_hops: int = Field(default=3, ge=1, le=8)
+    prefer_live_only: bool = True
+
+
+class GatewayFallbackSuggestTarget(BaseModel):
+    provider_id: str
+    provider_type: str
+    model_name: str
+    priority: int
+    live_ready: bool = False
+
+
+class GatewayFallbackSuggestResponse(BaseModel):
+    priority_order: list[dict]
+    targets: list[GatewayFallbackSuggestTarget]
+    skipped: list[dict] = Field(default_factory=list)
+    recommended: dict
+    rationale: str
+    live_ready_count: int = 0
+
+
+class GatewayLeadershipBootstrapRequest(BaseModel):
+    tenant_id: str = Field(default="tenant-leadership-bootstrap", min_length=1, max_length=128)
+    environment: str = Field(default="dev", min_length=1, max_length=32)
+    max_hops: int = Field(default=3, ge=2, le=8)
+    enhance_cpli: bool = True
+    probe_peer: Optional[bool] = Field(
+        default=None,
+        description=(
+            "When null, auto-enables peer probe for CPLI enhance on production APP_ENV "
+            "or APP_PLANE=control|data. Explicit true/false overrides."
+        ),
+    )
+
+
+class GatewayLeadershipBootstrapResponse(BaseModel):
+    bootstrapped: bool = True
+    route_policy_id: str
+    route_name: str
+    cache_policy_id: Optional[str] = None
+    budget_policy_id: Optional[str] = None
+    virtual_key_id: Optional[str] = None
+    tenant_id: str
+    environment: str
+    before: dict
+    after: dict
+    delta: int
+    actions: list[dict] = Field(default_factory=list)
+    remaining_gaps: list[dict] = Field(default_factory=list)
+    suggestion_rationale: Optional[str] = None
+    note: str = ""
+    virtual_key_count: int = 0
+    budget_policy_count: int = 0
+    cpli: Optional[dict] = None
+
+
+class GatewayAutoRouteRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=20000)
+    prefer_live_only: bool = True
+    max_candidates_per_tier: int = Field(default=3, ge=1, le=8)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+    has_tools: bool = False
+    json_response_format: bool = False
+    message_count: int = Field(default=0, ge=0, le=500)
+    refine_with_judge: bool = True
+    use_telemetry_ranking: bool = True
+    route_policy_id: Optional[str] = Field(default=None, max_length=128)
+    request_tag: Optional[str] = Field(default=None, max_length=64)
+    use_cache: Optional[bool] = None
+
+
+class GatewayAutoRouteSelected(BaseModel):
+    tier: str
+    provider_type: str
+    model_name: str
+    live_ready: bool = False
+    source: str = "preferred_catalog"
+    strategy: Optional[str] = None
+
+
+class GatewayAutoRouteResponse(BaseModel):
+    complexity: dict
+    selected: Optional[GatewayAutoRouteSelected] = None
+    selected_model: Optional[str] = None
+    selected_provider_type: Optional[str] = None
+    tier_candidates: dict
+    prefer_live_only: bool = True
+    strategy: str = "balanced"
+    refine_with_judge: bool = True
+    telemetry_ranking: dict = Field(default_factory=dict)
+    rationale: str
+    readiness: dict = Field(default_factory=dict)
+
+
+class GatewayModelRankingsResponse(BaseModel):
+    hours: int
+    environment: Optional[str] = None
+    models: list[dict]
+    score_by_model: dict
+    sample_events: int
+    leader_signal: str
+
+
+class GatewayLeadershipWarmupRequest(BaseModel):
+    samples: int = Field(default=6, ge=1, le=12)
+    environment: str = Field(default="dev", min_length=1, max_length=32)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+
+
+class GatewayLeadershipWarmupResponse(BaseModel):
+    created_events: int
+    environment: str
+    strategy: str
+    events: list[dict]
+    message: str
+
+
+class GatewayAttributionAnalyticsResponse(BaseModel):
+    hours: int
+    environment: Optional[str] = None
+    exclude_warmup: bool = False
+    warmup_events_skipped: int = 0
+    total_events: int
+    attributed_events: int
+    attribution_coverage_percent: float
+    switched_events: int
+    switch_rate_percent: float
+    auto_routed_events: int
+    cost_cents_switched: int
+    cost_cents_same_model: int
+    top_switch_pairs: list[dict]
+    auto_route_tiers: list[dict]
+    endpoint_families: list[dict]
+    leader_signal: str
+
+
+class GatewayLeadershipIndexResponse(BaseModel):
+    score: float
+    max_score: int = 100
+    band: str
+    components: dict
+    attribution: dict
+    model_rankings: Optional[dict] = None
+    posture_band: Optional[str] = None
+    next_actions: list[dict] = Field(default_factory=list)
+    market_claim: str
+    exclude_warmup: bool = False
+
+
+class GatewayAutoRouteCompareRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=20000)
+    prefer_live_only: bool = True
+    refine_with_judge: bool = True
+
+
+class GatewayAutoRouteBatchRequest(BaseModel):
+    prompts: list[str] = Field(min_length=1, max_length=25)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+    prefer_live_only: bool = True
+
+
+class GatewayLeadershipFloorQuery(BaseModel):
+    floor_score: float = Field(default=70.0, ge=0, le=100)
+
+
+class GatewayLiveJudgeRefineRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=20000)
+    force_live: bool = False
+
+
+class GatewayOpenRouterLiquidityImportRequest(BaseModel):
+    use_seed: bool = True
+    models: Optional[list[dict]] = None
+
+
+class GatewayAutoRouteExperimentCreateRequest(BaseModel):
+    name: str = Field(default="auto-route-ab", min_length=1, max_length=128)
+    strategies: list[str] = Field(default_factory=lambda: ["balanced", "cost"], min_length=1, max_length=3)
+    traffic_split: Optional[dict[str, float]] = None
+
+
+class GatewayFallbackQualityGateRequest(BaseModel):
+    min_live_ready: int = Field(default=2, ge=1, le=8)
+    min_leadership_score: float = Field(default=60.0, ge=0, le=100)
+
+
+class GatewayAutoRouteStreamFramesRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=20000)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+
+
+class GatewayAutoRouteExplainRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=20000)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+    max_budget_tier: Optional[str] = Field(default=None, pattern="^(simple|standard|complex)$")
+    latency_slo_ms: Optional[int] = Field(default=None, ge=50, le=120000)
+    allowed_regions: Optional[list[str]] = None
+    tools_json: Optional[list[dict]] = None
+    attachment_types: Optional[list[str]] = None
+
+
+class GatewayPromptAutoRouteBindRequest(BaseModel):
+    prompt_registry_id: str = Field(min_length=1, max_length=128)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+    prefer_live_only: bool = True
+    max_budget_tier: Optional[str] = Field(default=None, pattern="^(simple|standard|complex)$")
+
+
+class GatewayVirtualKeyAutoRoutePolicyRequest(BaseModel):
+    virtual_key_id: str = Field(min_length=1, max_length=128)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+    prefer_live_only: bool = True
+    max_budget_tier: Optional[str] = Field(default=None, pattern="^(simple|standard|complex)$")
+    enabled: bool = True
+
+
+class GatewayAlertChannelsRequest(BaseModel):
+    webhook_url: Optional[str] = Field(default=None, max_length=512)
+    slack_webhook_url: Optional[str] = Field(default=None, max_length=512)
+    email_to: Optional[str] = Field(default=None, max_length=256)
+    enabled: bool = True
+
+
+class GatewayAlertDispatchRequest(BaseModel):
+    hours: int = Field(default=24, ge=1, le=168)
+    floor_score: float = Field(default=70.0, ge=0, le=100)
+    dry_run: bool = True
+
+
+class GatewayOtelAttributesRequest(BaseModel):
+    intended_model: str = Field(min_length=1, max_length=255)
+    actual_model: str = Field(min_length=1, max_length=255)
+    auto_route_tier: Optional[str] = None
+    strategy: Optional[str] = None
+    trace_id: Optional[str] = None
+
+
+class GatewayCanaryAutoRouteExplainRequest(BaseModel):
+    route_policy_id: str = Field(min_length=1, max_length=128)
+    prompt_text: str = Field(default="Canary auto-route interaction sample", min_length=1, max_length=20000)
+
+
+class GatewayResidencyFilterRequest(BaseModel):
+    allowed_regions: list[str] = Field(default_factory=list, max_length=32)
+
+
+class GatewayReplayStrategyRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=20000)
+    strategies: Optional[list[str]] = None
+
+
+class GatewayCsvClassifyRequest(BaseModel):
+    csv_text: str = Field(min_length=1, max_length=200000)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+
+
+class GatewayWarmupRetentionRequest(BaseModel):
+    retain_hours: int = Field(default=168, ge=1, le=720)
+    max_events: int = Field(default=500, ge=10, le=5000)
+
+
+class GatewayWarmupPurgeRequest(BaseModel):
+    dry_run: bool = True
+
+
+class GatewayRankingWeightsRequest(BaseModel):
+    volume: float = Field(default=0.35, ge=0, le=1)
+    stability: float = Field(default=0.30, ge=0, le=1)
+    cost: float = Field(default=0.20, ge=0, le=1)
+    latency: float = Field(default=0.15, ge=0, le=1)
+
+
+class GatewayJudgeThresholdsRequest(BaseModel):
+    near_standard: list[int] = Field(default_factory=lambda: [20, 30], min_length=2, max_length=2)
+    near_complex: list[int] = Field(default_factory=lambda: [50, 60], min_length=2, max_length=2)
+
+
+class GatewayRouteStrategyPolicyRequest(BaseModel):
+    route_policy_id: str = Field(min_length=1, max_length=128)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+    prefer_live_only: bool = True
+
+
+class GatewayRequestTagStrategyPolicyRequest(BaseModel):
+    request_tag: str = Field(min_length=1, max_length=64)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+
+
+class GatewayWhyModelCardRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=20000)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+
+
+class GatewayCiFloorRequest(BaseModel):
+    floor_score: float = Field(default=70.0, ge=0, le=100)
+
+
+class GatewayChaosDrillRequest(BaseModel):
+    provider_id: str = Field(default="chaos-provider", min_length=1, max_length=128)
+
+
+class GatewayShareLinkRequest(BaseModel):
+    hours: int = Field(default=24, ge=1, le=168)
+    ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+
+
+class GatewayAlertDeliverRequest(BaseModel):
+    hours: int = Field(default=24, ge=1, le=168)
+    floor_score: float = Field(default=70.0, ge=0, le=100)
+    dry_run: bool = True
+
+
+class GatewayAlertAllowlistRequest(BaseModel):
+    hosts: list[str] = Field(default_factory=list, max_length=50)
+
+
+class GatewayApplyRankedFallbackRequest(BaseModel):
+    route_policy_id: str = Field(min_length=1, max_length=128)
+    max_hops: int = Field(default=3, ge=1, le=8)
+    environment: str = Field(default="dev", min_length=1, max_length=32)
+
+
+class GatewayResolveStrategyRequest(BaseModel):
+    route_policy_id: Optional[str] = Field(default=None, max_length=128)
+    request_tag: Optional[str] = Field(default=None, max_length=64)
+    default_strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+
+
+class GatewaySimulationJudgeRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=20000)
+
+
+class GatewayEvidenceDiffRequest(BaseModel):
+    hours_a: int = Field(default=24, ge=1, le=168)
+    hours_b: int = Field(default=168, ge=1, le=168)
+
+
+class GatewayEnforcementFlagsRequest(BaseModel):
+    enforce_pii_bias: Optional[bool] = None
+    enforce_adversarial_boost: Optional[bool] = None
+    use_decision_cache: Optional[bool] = None
+    resolve_strategy_policies: Optional[bool] = None
+    enforce_model_denylist: Optional[bool] = None
+    decision_cache_ttl_seconds: Optional[int] = Field(default=None, ge=15, le=300)
+
+
+class GatewayModelRoutePolicyRequest(BaseModel):
+    allowlist: Optional[list[str]] = None
+    denylist: Optional[list[str]] = None
+
+
+class GatewayCanaryPromoteGateRequest(BaseModel):
+    route_policy_id: str = Field(min_length=1, max_length=128)
+    floor_score: float = Field(default=70.0, ge=0, le=100)
+
+
+class GatewayCircuitAnnotateRequest(BaseModel):
+    route_policy_id: str = Field(min_length=1, max_length=128)
+    environment: str = Field(default="dev", min_length=1, max_length=32)
+
+
+class GatewayCanaryAnnotateComboRequest(BaseModel):
+    route_policy_id: str = Field(min_length=1, max_length=128)
+    floor_score: float = Field(default=70.0, ge=0, le=100)
+    annotate_if_passed: bool = True
+    environment: str = Field(default="dev", min_length=1, max_length=32)
+
+
+class GatewayAutoRouteExplainRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=20000)
+    strategy: str = Field(default="balanced", pattern="^(balanced|cost|quality)$")
+    prefer_live_only: bool = True
+    route_policy_id: Optional[str] = Field(default=None, max_length=128)
+    request_tag: Optional[str] = Field(default=None, max_length=64)
+
+
+class GatewayShadowCompareRequest(BaseModel):
+    prompt_text: str = Field(min_length=1, max_length=20000)
+    prefer_live_only: bool = True
+
+
+class GatewayOperatorChecklistRequest(BaseModel):
+    completed: dict[str, bool] = Field(default_factory=dict)
+
+
+class GatewayRouteHealthRequest(BaseModel):
+    route_policy_id: str = Field(min_length=1, max_length=128)
+
+
+class GatewayLeadershipIncidentRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    severity: str = Field(default="warning", max_length=32)
+    detail: Optional[str] = Field(default=None, max_length=500)
+
+
+class GatewayLeadershipIncidentCloseRequest(BaseModel):
+    incident_id: str = Field(min_length=1, max_length=64)
+
+
+class GatewayScoreTrendMuteRequest(BaseModel):
+    minutes: int = Field(default=60, ge=5, le=1440)
+    reason: str = Field(default="", max_length=200)
+
+
+class GatewayLeadershipFloorGateRequest(BaseModel):
+    floor_score: float = Field(default=70.0, ge=0, le=100)
+    hours: int = Field(default=24, ge=1, le=168)
+
+
+class GatewayCompositeGateRequest(BaseModel):
+    floor_score: float = Field(default=70.0, ge=0, le=100)
+    checklist_min_percent: float = Field(default=50.0, ge=0, le=100)
+    hours: int = Field(default=24, ge=1, le=168)
+
+
+class GatewayPreferredModelRequest(BaseModel):
+    model_name: str = Field(min_length=1, max_length=128)
+    provider_type: Optional[str] = Field(default=None, max_length=64)
+    enabled: bool = True
+
+
+class GatewayIncidentEscalateRequest(BaseModel):
+    incident_id: str = Field(min_length=1, max_length=64)
+    severity: str = Field(default="critical", max_length=32)
+
+
+class GatewayDeleteTagStrategyRequest(BaseModel):
+    request_tag: str = Field(min_length=1, max_length=64)
+
+
+class GatewayDeleteRouteStrategyRequest(BaseModel):
+    route_policy_id: str = Field(min_length=1, max_length=128)
+
+
+class GatewayFloorGateAutoIncidentRequest(BaseModel):
+    floor_score: float = Field(default=70.0, ge=0, le=100)
+    hours: int = Field(default=24, ge=1, le=168)
+    open_incident_on_fail: bool = True
+
+
+class GatewayShadowTrafficRequest(BaseModel):
+    percent: float = Field(default=0.0, ge=0, le=100)
+    enabled: bool = True
+
+
+class GatewayCanaryAutoRollbackRequest(BaseModel):
+    enabled: bool = True
+    on_red_light: bool = True
+    on_floor_fail: bool = True
+
+
+class GatewayLatencyBudgetRequest(BaseModel):
+    observed_ms: Optional[float] = Field(default=None, ge=0, le=600000)
+    budget_ms: Optional[float] = Field(default=None, ge=1, le=600000)
+
+
+class GatewayFailoverSimulationRequest(BaseModel):
+    primary_provider: str = Field(default="openai", min_length=1, max_length=64)
+
+
+class GatewayCrossEnvSyncDryRunRequest(BaseModel):
+    source_env: str = Field(default="staging", min_length=1, max_length=32)
+    target_env: str = Field(default="prod", min_length=1, max_length=32)
 
 
 class SupportedModelApprovalRequest(BaseModel):

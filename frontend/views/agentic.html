@@ -1,13 +1,15 @@
 <section id="agentic" class="view runtime-config-view">
   <article class="card runtime-config-hero">
     <div class="card-head">
-      <h3>Agentic Console</h3>
+      <div>
+        <p class="sig-kicker">Readiness plane</p>
+        <h3>Certification plane</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Readiness attested</span></p>
+      </div>
       <button id="refreshAgenticConsole" class="ghost" type="button">Refresh All</button>
     </div>
-    <p class="card-lead">
-      Operate <strong>readiness certification</strong>, <strong>contract validation</strong>, <strong>load testing</strong>, and <strong>policy auto-tune schedules</strong> for agentic runtime promotion.
-      Validate contracts, run certifications, exercise load tiers, and govern scheduled policy optimization with audit-friendly overrides.
-    </p>
+    <p class="card-lead">Readiness certification, contracts, load tests, and policy auto-tune.</p>
+    <p class="help-copy" data-help-label="About certification plane">Operate readiness certification, contract validation, load testing, and policy auto-tune schedules. Validate contracts, run certifications, exercise load tiers, and govern scheduled optimization with audit-friendly overrides.</p>
     <p id="agenticConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading agentic inventory…</p>
     <div class="view-page-search-toolbar" data-view-search-toolbar>
       <div class="view-page-search-row">
@@ -22,6 +24,24 @@
       </div>
       <p class="view-page-search-status mono" aria-live="polite"></p>
     </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Contracts</span>
+        <strong>Validated</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Certs</span>
+        <strong>Signed</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Load</span>
+        <strong>Proven</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Tune</span>
+        <strong>Scheduled</strong>
+      </div>
+    </section>
     <div class="runtime-console-tabs" role="tablist" aria-label="Agentic console sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="readiness">Readiness</button>
@@ -75,7 +95,7 @@
         <h3>Contract Validation</h3>
         <button id="refreshAgenticContractOptions" type="button" class="ghost">Reload Options</button>
       </div>
-      <p class="card-lead">Use the form (decode) for operator-friendly picks. The encode panel shows API-ready JSON with human-readable names plus IDs. Model-scoped contracts optionally pin a catalog model.</p>
+      <p class="help-copy" data-help-label="About contracts">Use the form for operator picks; encode shows API-ready JSON. Model-scoped contracts can pin a catalog model.</p>
       <form id="agenticContractValidateForm" class="form-grid agentic-contract-layout">
         <div class="agentic-contract-decode wide-field">
           <p class="runtime-subsection-title">Decode — operator form</p>

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 from datetime import datetime
 from typing import Any, Optional
@@ -56,6 +58,22 @@ def cron_matches_now(cron_expression: str, when: Optional[datetime] = None) -> b
     )
 
 
+def _binding_secret(db: Session, binding_id: str) -> str:
+    binding = db.query(ProviderCredentialBinding).filter_by(binding_id=binding_id).first()
+    if binding is None:
+        raise HTTPException(status_code=403, detail="Webhook secret binding not found")
+    resolved = resolve_binding_for_runtime(db, binding)
+    secret = str(
+        getattr(resolved, "secret_value", None)
+        or getattr(resolved, "api_key", None)
+        or getattr(resolved, "access_token", None)
+        or ""
+    ).strip()
+    if not secret:
+        raise HTTPException(status_code=403, detail="Webhook secret binding is empty")
+    return secret
+
+
 def verify_webhook_token(db: Session, trigger_config: dict[str, Any], authorization: Optional[str]) -> None:
     binding_id = str(trigger_config.get("token_binding_id") or "").strip()
     if not binding_id:
@@ -63,13 +81,35 @@ def verify_webhook_token(db: Session, trigger_config: dict[str, Any], authorizat
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Webhook bearer token required")
     provided = authorization.split(" ", 1)[1].strip()
-    binding = db.query(ProviderCredentialBinding).filter_by(binding_id=binding_id).first()
-    if binding is None:
-        raise HTTPException(status_code=403, detail="Webhook token binding not found")
-    resolved = resolve_binding_for_runtime(db, binding)
-    expected = str(getattr(resolved, "api_key", "") or getattr(resolved, "access_token", "") or "").strip()
-    if not expected or provided != expected:
+    expected = _binding_secret(db, binding_id)
+    if not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=403, detail="Invalid webhook token")
+
+
+def verify_webhook_hmac(
+    db: Session,
+    trigger_config: dict[str, Any],
+    *,
+    signature_header: Optional[str],
+    payload_text: str,
+) -> None:
+    """Optional HMAC verification (GitHub-style sha256=<hex>) using a credential binding secret."""
+    binding_id = str(trigger_config.get("hmac_secret_binding_id") or "").strip()
+    if not binding_id:
+        return
+    provided_raw = str(signature_header or "").strip()
+    if not provided_raw:
+        raise HTTPException(status_code=401, detail="Webhook HMAC signature required")
+    secret = _binding_secret(db, binding_id)
+    algorithm = str(trigger_config.get("hmac_algorithm") or "sha256").strip().lower()
+    digestmod = hashlib.sha256 if algorithm != "sha1" else hashlib.sha1
+    digest = hmac.new(secret.encode("utf-8"), str(payload_text or "").encode("utf-8"), digestmod).hexdigest()
+    provided = provided_raw
+    lowered = provided_raw.lower()
+    if lowered.startswith("sha256=") or lowered.startswith("sha1="):
+        provided = provided_raw.split("=", 1)[1].strip()
+    if not hmac.compare_digest(provided, digest):
+        raise HTTPException(status_code=403, detail="Invalid webhook HMAC signature")
 
 
 def find_webhook_flow(db: Session, webhook_token: str) -> OrchestrationFlowDefinition:
@@ -98,10 +138,17 @@ def trigger_webhook_flow(
     authorization: Optional[str],
     run_input: str = "",
     dry_run: bool = False,
+    signature_header: Optional[str] = None,
 ) -> OrchestrationFlowRun:
     flow = find_webhook_flow(db, webhook_token)
     trigger_config = _parse_trigger_config(flow.trigger_config_json)
     verify_webhook_token(db, trigger_config, authorization)
+    verify_webhook_hmac(
+        db,
+        trigger_config,
+        signature_header=signature_header,
+        payload_text=run_input,
+    )
 
     trace_id = f"orch-webhook-{uuid4().hex[:16]}"
     run_id = str(uuid4())

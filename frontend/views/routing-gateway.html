@@ -955,214 +955,259 @@
               <label class="wide-field">Retry Policy<textarea name="retry_policy" rows="2" placeholder='{"max_retries":2,"backoff_ms":250}'>{"max_retries":2,"backoff_ms":250}</textarea></label>
               <p class="mono wide-field">Retry policy optional: set <strong>error_type_policies</strong> (for example <strong>failed_simulated</strong>, <strong>failed_timeout</strong>) with <strong>max_retries</strong> and <strong>cooldown_seconds</strong>.</p>
               <div class="wide-field route-priority-chain">
+                
                 <div class="card-head route-priority-chain-head">
-                  <h4>Initial Fallback Chain</h4>
-                  <div class="inline-actions">
-                    <button id="addRoutePolicyChainTarget" type="button" class="ghost">Add Target</button>
-                    <button id="applyRoutePolicyChainToJson" type="button" class="ghost">Apply to Fallback JSON</button>
-                  </div>
-                </div>
-                <p class="mono">Optional ordered provider+model targets embedded in fallback policy on create. Use Route Priority after creation for ongoing updates.</p>
-                <p id="routePolicyChainValidation" class="mono route-priority-validation" aria-live="polite"></p>
-                <label>Fallback Tenant<select name="fallback_tenant_id" data-tenant-select><option value="" disabled hidden selected>Loading tenants...</option></select></label>
-                <div class="table-wrap">
-                  <table>
-                    <caption class="sr-only">Initial route fallback chain</caption>
-                    <thead>
-                      <tr><th>Priority</th><th>Provider ID</th><th>Model</th><th>Actions</th></tr>
-                    </thead>
-                    <tbody id="routePolicyInitialChainTable"></tbody>
-                  </table>
-                </div>
-              </div>
-              <label class="wide-field">Fallback Policy<textarea name="fallback_policy" rows="2" placeholder='{"provider_priority":{"tenant_id":"tenant-platform","priority_order":[{"provider_id":"aws-primary","priority":1}]}}'>{"provider_priority":{"tenant_id":"tenant-platform","priority_order":[{"provider_id":"aws-primary","priority":1}]}}</textarea></label>
-              <p class="mono wide-field">Routing groups optional: include <strong>routing_groups</strong> with <strong>failover_weight</strong> to model weighted group failover (advanced JSON only).</p>
-              <label class="wide-field">Timeout Policy<textarea name="timeout_policy" rows="2" placeholder='{"request_ms":4500}'>{"request_ms":4500}</textarea></label>
-              <button type="submit" class="primary">Create Route</button>
-            </form>
-            <p id="routePolicyResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Gateway route policies</caption>
-                <thead>
-                  <tr><th>Route Policy ID</th><th>Name</th><th>Strategy</th><th>Groups</th><th>Status</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="routePoliciesTable"></tbody>
-              </table>
-            </div>
-          </article>
-<article class="card">
-            <div class="card-head">
-              <h3>Key Lifecycle</h3>
-              <button id="loadKeys" class="ghost" type="button">Load Keys</button>
-            </div>
-            <p class="mono">Create, update, inspect usage, and rotate gateway keys from the same operator surface.</p>
-            <form id="keyLifecycleForm" class="form-grid">
-              <input type="hidden" name="key_id" />
-              <label>
-                Owner Scope Type
-                <select name="owner_scope_type">
-                  <option value="actor">actor</option>
-                  <option value="owner">owner</option>
-                  <option value="team" selected>team</option>
-                  <option value="group">group</option>
-                </select>
-              </label>
-              <label>Owner Scope ID<input name="owner_scope_id" required placeholder="platform" list="keyOwnerScopeIdList" /></label>
-              <datalist id="keyOwnerScopeIdList"></datalist>
-              <label class="wide-field">Allowed Endpoint Families<textarea name="allowed_endpoint_families" rows="2" placeholder='["responses"]'>["responses"]</textarea></label>
-              <label class="wide-field">Allowed Models<select name="allowed_models" data-gateway-model-select-multi data-default-models="gpt-4o-mini" multiple size="4"><option value="" disabled hidden>Load models first...</option></select></label>
-              <label class="wide-field">Guardrail Policy JSON<textarea name="guardrail_policy" rows="4" placeholder='{"allowed_environments":["dev","prod"],"max_requests_per_minute":60,"max_input_tokens":8000,"max_output_tokens":4000,"require_mfa_for_prod":true}'>{"allowed_environments":["dev"],"max_requests_per_minute":120}</textarea></label>
-              <div class="inline-actions wide-field key-guardrail-templates" role="group" aria-label="Guardrail policy templates">
-                <button id="guardrailTemplateBalanced" class="ghost" type="button">Template: Balanced</button>
-                <button id="guardrailTemplateStrictProd" class="ghost" type="button">Template: Strict Prod</button>
-                <button id="guardrailTemplateDevSandbox" class="ghost" type="button">Template: Dev Sandbox</button>
-              </div>
-              <p id="keyGuardrailPolicySummary" class="mono key-guardrail-summary" aria-live="polite"></p>
-              <label>
-                Status
-                <select name="status">
-                  <option value="active" selected>active</option>
-                  <option value="inactive">inactive</option>
-                  <option value="revoked">revoked</option>
-                </select>
-              </label>
-              <label>
-                Auth Method
-                <select name="authn_method">
-                  <option value="token" selected>token</option>
-                  <option value="oidc">oidc</option>
-                  <option value="workload_identity">workload_identity</option>
-                </select>
-              </label>
-              <label>
-                Expires At (UTC)
-                <input name="expires_at" type="datetime-local" />
-              </label>
-              <label>
-                Rotate Environment
-                <select name="rotate_environment">
-                  <option value="dev" selected>dev</option>
-                  <option value="prod">prod</option>
-                </select>
-              </label>
-              <div class="inline-actions wide-field">
-                <button type="submit" class="primary">Save Key</button>
-                <button id="retrieveKey" type="button" class="ghost" title="GET /keys/{key_id}">Retrieve Key</button>
-              </div>
-            </form>
-            <form id="keyGuardrailEvalForm" class="form-grid">
-              <label>Key ID<input name="key_id" placeholder="key-id" /></label>
-              <label>
-                Environment
-                <select name="environment">
-                  <option value="dev" selected>dev</option>
-                  <option value="stage">stage</option>
-                  <option value="prod">prod</option>
-                </select>
-              </label>
-              <label>
-                Stage
-                <select name="stage">
-                  <option value="input" selected>input</option>
-                  <option value="output">output</option>
-                </select>
-              </label>
-              <label>Requests Last Minute<input name="requests_last_minute" type="number" min="0" step="1" value="0" /></label>
-              <label>Input Tokens<input name="input_tokens" type="number" min="0" step="1" value="0" /></label>
-              <label>Output Tokens<input name="output_tokens" type="number" min="0" step="1" value="0" /></label>
-              <label>Owner Scope ID (optional)<input name="owner_scope_id" placeholder="platform" /></label>
-              <label>
-                MFA Verified
-                <select name="mfa_verified">
-                  <option value="false" selected>false</option>
-                  <option value="true">true</option>
-                </select>
-              </label>
-              <button type="submit" class="ghost">Evaluate Guardrails</button>
-            </form>
-            <form id="keyBudgetIncreaseForm" class="form-grid">
-              <label>Key ID<input name="key_id" placeholder="key-id" /></label>
-              <label>
-                Environment
-                <select name="environment">
-                  <option value="dev" selected>dev</option>
-                  <option value="prod">prod</option>
-                </select>
-              </label>
-              <label>Increase (cents)<input name="increase_cents" type="number" min="1" step="1" value="1000" /></label>
-              <label>Duration (minutes)<input name="duration_minutes" type="number" min="1" max="10080" step="1" value="60" /></label>
-              <label class="wide-field">Reason<input name="reason" value="operator-request" /></label>
-              <button type="submit" class="ghost">Apply Temporary Budget Increase</button>
-            </form>
-            <form id="keyRotationScheduleForm" class="form-grid">
-              <label>Key ID<input name="key_id" placeholder="key-id" /></label>
-              <label>
-                Environment
-                <select name="environment">
-                  <option value="dev" selected>dev</option>
-                  <option value="prod">prod</option>
-                </select>
-              </label>
-              <label>Interval (hours)<input name="interval_hours" type="number" min="1" max="720" step="1" value="24" /></label>
-              <label>
-                Enabled
-                <select name="enabled">
-                  <option value="true" selected>true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="wide-field">Reason<input name="reason" value="scheduled-rotation" /></label>
-              <button type="submit" class="ghost">Save Rotation Schedule</button>
-              <button id="loadKeyRotationSchedules" type="button" class="ghost">Load Rotation Schedules</button>
-              <button id="tickKeyRotationSchedules" type="button" class="ghost" title="POST /keys/rotation-schedules/tick">Run Due Rotations</button>
-            </form>
-            <p id="keyLifecycleResult" class="mono key-feedback"></p>
-            <p id="keyUsageResult" class="mono key-feedback"></p>
-            <p id="keyGuardrailEvalResult" class="mono key-feedback"></p>
-            <p id="keyBudgetIncreaseResult" class="mono key-feedback"></p>
-            <p id="keyRotationScheduleResult" class="mono key-feedback"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Gateway keys</caption>
-                <thead>
-                  <tr><th>Key ID</th><th>Owner Type</th><th>Owner ID</th><th>Endpoint Families</th><th>Models</th><th>Guardrails</th><th>Status</th><th>Expires</th><th>Auth</th><th>JIT</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="keysTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Key rotation schedules</caption>
-                <thead>
-                  <tr><th>Schedule ID</th><th>Environment</th><th>Interval (h)</th><th>Enabled</th><th>Next Run</th><th>Last Run</th><th>Actions</th></tr>
-                </thead>
-                <tbody id="keyRotationSchedulesTable"></tbody>
-              </table>
-            </div>
-          </article>
-<article class="card">
-            <div class="card-head">
-              <h3>Route Priority</h3>
-              <div class="inline-actions">
-                <button id="loadRoutePriority" class="ghost" type="button">Load Priority</button>
-                <button id="loadRouteFallbacks" class="ghost" type="button" title="GET /gateway/routes/{id}/fallbacks">Load Fallbacks</button>
-              </div>
-            </div>
-            <form id="routePriorityForm" class="form-grid">
-              <label>Route Policy ID<input name="route_policy_id" required placeholder="route-policy-id" /></label>
-              <label>Tenant ID<select name="tenant_id" data-tenant-select required><option value="" disabled hidden selected>Loading tenants...</option></select></label>
-              <label>Environment<input name="environment" value="prod" placeholder="prod" /></label>
-              <label>Request Tag<input name="request_tag" placeholder="billing.batch-01" /></label>
-              <div class="wide-field route-priority-chain">
-                <div class="card-head route-priority-chain-head">
-                  <h4>Fallback Chain</h4>
+                  <h4 class="heading-with-info">Fallback Chain<details class="info-tip"><summary aria-label="About fallback chain">i</summary><div class="info-tip-panel" role="tooltip">Targets are tried in order (priority 1 first). Each row needs a provider ID; choose a model from the catalog or leave as provider default.</div></details></h4>
                   <div class="inline-actions">
                     <button id="addRoutePriorityTarget" type="button" class="ghost">Add Target</button>
+                    <button id="suggestLiveReadyFallbackChain" type="button" class="ghost" title="POST /gateway/best-practices/fallback-suggest">Suggest Live-Ready Chain</button>
                     <button id="syncRoutePriorityFromJson" type="button" class="ghost">Load from JSON</button>
                   </div>
                 </div>
-                <p class="mono">Targets are tried in order (priority 1 first, then 2, 3, …). Each row needs a provider ID; choose a model from the catalog dropdown or leave as provider default.</p>
+                <div class="leadership-status-compact" aria-live="polite">
+                  <p id="gatewayLeadershipHealthBanner" class="mono runtime-feedback"></p>
+                  <p id="gatewayLeadershipDashboardStrip" class="mono runtime-feedback"></p>
+                  <p id="gatewayBestPracticesStatus" class="mono runtime-feedback"></p>
+                  <p id="gatewayLeadershipIndexStatus" class="mono runtime-feedback"></p>
+                  <p id="gatewayAttributionAnalyticsStatus" class="mono runtime-feedback"></p>
+                  <p id="gatewayModelRankingsStatus" class="mono runtime-feedback"></p>
+                  <p id="gatewayLeadershipOpsStatus" class="mono runtime-feedback"></p>
+                </div>
+                <details class="ops-pack-drawer" open data-help-text="Refresh posture/index/rankings, warmup attribution, compare strategies, and export evidence." data-help-label="About leadership quick actions">
+                  <summary>Leadership quick actions</summary>
+                  <div class="ops-pack-drawer-body">
+                    <div class="chip-row" style="margin-top:0.35rem;flex-wrap:wrap;gap:0.4rem;">
+                  <button id="refreshGatewayBestPractices" type="button" class="ghost" title="refreshGatewayBestPractices">Best practices</button>
+                  <button id="refreshGatewayLeadershipIndex" type="button" class="ghost" title="refreshGatewayLeadershipIndex">Index</button>
+                  <button id="refreshGatewayAttributionAnalytics" type="button" class="ghost" title="refreshGatewayAttributionAnalytics">Attribution</button>
+                  <button id="refreshGatewayModelRankings" type="button" class="ghost" title="refreshGatewayModelRankings">Rankings</button>
+                  <button id="runGatewayLeadershipWarmup" type="button" class="ghost" title="runGatewayLeadershipWarmup">Warmup</button>
+                  <button id="suggestRankedFallbackChain" type="button" class="ghost" title="suggestRankedFallbackChain">Suggest fallback</button>
+                  <button id="compareGatewayAutoRouteStrategies" type="button" class="ghost" title="compareGatewayAutoRouteStrategies">Compare strategies</button>
+                  <button id="recordGatewayLeadershipSnapshot" type="button" class="ghost" title="recordGatewayLeadershipSnapshot">Snapshot</button>
+                  <button id="loadGatewayLeadershipAlerts" type="button" class="ghost" title="loadGatewayLeadershipAlerts">Alerts</button>
+                  <button id="exportGatewayLeadershipEvidence" type="button" class="ghost" title="exportGatewayLeadershipEvidence">Evidence</button>
+                  <button id="loadGatewayLeadershipHistory" type="button" class="ghost" title="loadGatewayLeadershipHistory">History</button>
+                  <button id="loadGatewaySavingsEstimate" type="button" class="ghost" title="loadGatewaySavingsEstimate">Savings</button>
+                  <button id="loadGatewayCircuitBreakerRecs" type="button" class="ghost" title="loadGatewayCircuitBreakerRecs">Circuit recs</button>
+                  <button id="applySdkPresetToChat" type="button" class="ghost" title="applySdkPresetToChat">SDK → chat</button>
+                  <button id="downloadGatewayModelRankings" type="button" class="ghost" title="downloadGatewayModelRankings">Rankings CSV</button>
+                  <button id="downloadGatewayAttributionJson" type="button" class="ghost" title="downloadGatewayAttributionJson">Attribution JSON</button>
+                  <button id="runGatewayAutoRouteBatch" type="button" class="ghost" title="runGatewayAutoRouteBatch">Batch classify</button>
+                </div>
+                    <label class="checkbox-field" style="margin-top:0.45rem;display:inline-flex;"><input id="gatewayExcludeWarmup" type="checkbox" /> Exclude warmup</label>
+                  </div>
+                </details>
+                <details class="ops-pack-drawer" data-help-text="Advanced packs are nested to keep this console scannable. Open a group only when you need it." data-help-label="About more leadership ops">
+                  <summary>More leadership ops</summary>
+                  <div class="ops-pack-drawer-body">
+                <details class="ops-pack-drawer" data-help-text="Live judge, liquidity, experiments, modality advisors, prompt bindings, QBR/compliance embeds." data-help-label="About Core &amp; telemetry">
+                  <summary>Core &amp; telemetry</summary>
+                  <div class="ops-pack-drawer-body">
+                    <p id="gatewayPack6OpsStatus" class="mono runtime-feedback" aria-live="polite"></p>
+                    <div class="chip-row" style="margin-top:0.35rem;flex-wrap:wrap;gap:0.4rem;">
+                  <button id="runGatewayLiveJudge" type="button" class="ghost" title="runGatewayLiveJudge">Live judge</button>
+                  <button id="importOpenRouterLiquidity" type="button" class="ghost" title="importOpenRouterLiquidity">Open Router Liquidity</button>
+                  <button id="loadBindingReadinessInventory" type="button" class="ghost" title="loadBindingReadinessInventory">Binding Readiness Inventory</button>
+                  <button id="loadAttributionTimeseries" type="button" class="ghost" title="loadAttributionTimeseries">Attribution Timeseries</button>
+                  <button id="createAutoRouteExperiment" type="button" class="ghost" title="createAutoRouteExperiment">Auto Route Experiment</button>
+                  <button id="runFallbackQualityGate" type="button" class="ghost" title="runFallbackQualityGate">Fallback Quality Gate</button>
+                  <button id="loadProviderHealthScores" type="button" class="ghost" title="loadProviderHealthScores">Provider Health Scores</button>
+                  <button id="runAutoRouteStreamFrames" type="button" class="ghost" title="runAutoRouteStreamFrames">Auto Route Stream Frames</button>
+                  <button id="loadModalityAdvisor" type="button" class="ghost" title="loadModalityAdvisor">Modality Advisor</button>
+                  <button id="loadPromptAutoRouteBindings" type="button" class="ghost" title="loadPromptAutoRouteBindings">Prompt Auto Route Bindings</button>
+                  <button id="loadTeamRankingLeaderboards" type="button" class="ghost" title="loadTeamRankingLeaderboards">Team Ranking Leaderboards</button>
+                  <button id="loadEnvironmentDiffLeadership" type="button" class="ghost" title="loadEnvironmentDiffLeadership">Environment Diff Leadership</button>
+                  <button id="loadCacheAutoRouteMetrics" type="button" class="ghost" title="loadCacheAutoRouteMetrics">Cache Auto Route Metrics</button>
+                  <button id="loadMirrorAttributionTags" type="button" class="ghost" title="loadMirrorAttributionTags">Mirror Attribution Tags</button>
+                  <button id="loadQbrLeadershipEmbed" type="button" class="ghost" title="loadQbrLeadershipEmbed">Qbr Leadership Embed</button>
+                  <button id="loadComplianceLeadershipEvidence" type="button" class="ghost" title="loadComplianceLeadershipEvidence">Compliance Leadership Evidence</button>
+                  <button id="dispatchLeadershipAlerts" type="button" class="ghost" title="dispatchLeadershipAlerts">Alerts</button>
+                  <button id="downloadGrafanaDashboard" type="button" class="ghost" title="downloadGrafanaDashboard">Grafana Dashboard</button>
+                  <button id="loadDatadogTileNotes" type="button" class="ghost" title="loadDatadogTileNotes">Datadog Tile Notes</button>
+                  <button id="loadSdkAutoRouteHelpers" type="button" class="ghost" title="loadSdkAutoRouteHelpers">Sdk Auto Route Helpers</button>
+                </div>
+                  </div>
+                </details>
+                <details class="ops-pack-drawer" data-help-text="Deprecation, replay, signed evidence, CI/release gates, traffic light, SLA, chaos cleanup." data-help-label="About Governance &amp; evidence">
+                  <summary>Governance &amp; evidence</summary>
+                  <div class="ops-pack-drawer-body">
+                    <p id="gatewayPack7OpsStatus" class="mono runtime-feedback" aria-live="polite"></p>
+                    <p id="gatewayPack8OpsStatus" class="mono runtime-feedback" aria-live="polite"></p>
+                    <p id="gatewayPack10OpsStatus" class="mono runtime-feedback" aria-live="polite"></p>
+                    <div class="chip-row" style="margin-top:0.35rem;flex-wrap:wrap;gap:0.4rem;">
+                  <button id="loadModelDeprecationAdvisor" type="button" class="ghost" title="loadModelDeprecationAdvisor">Model Deprecation Advisor</button>
+                  <button id="loadShadowRankingValidation" type="button" class="ghost" title="loadShadowRankingValidation">Shadow Ranking Validation</button>
+                  <button id="runWhyThisModelCard" type="button" class="ghost" title="runWhyThisModelCard">Why This Model Card</button>
+                  <button id="loadCostSwitchCorrelation" type="button" class="ghost" title="loadCostSwitchCorrelation">Cost Switch Correlation</button>
+                  <button id="runReplayStrategies" type="button" class="ghost" title="runReplayStrategies">Replay Strategies</button>
+                  <button id="runCsvClassifySample" type="button" class="ghost" title="runCsvClassifySample">Csv Classify Sample</button>
+                  <button id="runNightlyLeadershipSnapshot" type="button" class="ghost" title="runNightlyLeadershipSnapshot">Nightly Leadership Snapshot</button>
+                  <button id="purgeWarmupEventsDryRun" type="button" class="ghost" title="purgeWarmupEventsDryRun">Warmup Events Dry Run</button>
+                  <button id="loadLeadershipSnapshotDiff" type="button" class="ghost" title="loadLeadershipSnapshotDiff">Snapshot Diff</button>
+                  <button id="downloadSignedEvidence" type="button" class="ghost" title="downloadSignedEvidence">Signed Evidence</button>
+                  <button id="createAuditorShareLink" type="button" class="ghost" title="createAuditorShareLink">Auditor Share Link</button>
+                  <button id="runCiLeadershipFloor" type="button" class="ghost" title="runCiLeadershipFloor">Ci Leadership Floor</button>
+                  <button id="runReleaseGateAttestation" type="button" class="ghost" title="runReleaseGateAttestation">Release Gate Attestation</button>
+                  <button id="runChaosProviderFailDrill" type="button" class="ghost" title="runChaosProviderFailDrill">Chaos Provider Fail Drill</button>
+                  <button id="downloadBoardOnePager" type="button" class="ghost" title="downloadBoardOnePager">Board One Pager</button>
+                  <button id="refreshCompetitiveScorecard" type="button" class="ghost" title="refreshCompetitiveScorecard">Competitive Scorecard</button>
+                  <button id="loadLeadershipTrafficLight" type="button" class="ghost" title="loadLeadershipTrafficLight">Traffic Light</button>
+                  <button id="loadLeadershipHealthz" type="button" class="ghost" title="loadLeadershipHealthz">Healthz</button>
+                  <button id="deliverLeadershipAlertsDryRun" type="button" class="ghost" title="deliverLeadershipAlertsDryRun">Alerts Dry Run</button>
+                  <button id="loadSlaBurnRate" type="button" class="ghost" title="loadSlaBurnRate">Sla Burn Rate</button>
+                  <button id="loadCredentialWarnings" type="button" class="ghost" title="loadCredentialWarnings">Credential Warnings</button>
+                  <button id="diffEvidencePacks" type="button" class="ghost" title="diffEvidencePacks">Evidence Packs</button>
+                  <button id="buildScorecardDigest" type="button" class="ghost" title="buildScorecardDigest">Scorecard Digest</button>
+                  <button id="loadOpsActivityTimeline" type="button" class="ghost" title="loadOpsActivityTimeline">Ops Activity Timeline</button>
+                  <button id="runSimulationJudgeTranscript" type="button" class="ghost" title="runSimulationJudgeTranscript">Simulation Judge Transcript</button>
+                  <button id="cleanupChaosEventsDryRun" type="button" class="ghost" title="cleanupChaosEventsDryRun">Chaos Events Dry Run</button>
+                  <button id="downloadLeadershipOpenapi" type="button" class="ghost" title="downloadLeadershipOpenapi">Openapi</button>
+                </div>
+                  </div>
+                </details>
+                <details class="ops-pack-drawer" data-help-text="Dashboard, cache/policy, canary gates, explain/shadow compare, checklist, strategy policies." data-help-label="About Dashboard &amp; explainability">
+                  <summary>Dashboard &amp; explainability</summary>
+                  <div class="ops-pack-drawer-body">
+                    <p id="gatewayPack11OpsStatus" class="mono runtime-feedback" aria-live="polite"></p>
+                    <p id="gatewayPack12OpsStatus" class="mono runtime-feedback" aria-live="polite"></p>
+                    <p id="gatewayPack13OpsStatus" class="mono runtime-feedback" aria-live="polite"></p>
+                    <div class="chip-row" style="margin-top:0.35rem;flex-wrap:wrap;gap:0.4rem;">
+                  <button id="loadLeadershipDashboardSummary" type="button" class="ghost" title="loadLeadershipDashboardSummary">Dashboard Summary</button>
+                  <button id="loadLeadershipSparkline" type="button" class="ghost" title="loadLeadershipSparkline">Sparkline</button>
+                  <button id="downloadOperatorRunbook" type="button" class="ghost" title="downloadOperatorRunbook">Operator Runbook</button>
+                  <button id="loadWeeklyOpsReport" type="button" class="ghost" title="loadWeeklyOpsReport">Weekly Ops Report</button>
+                  <button id="loadLatencyHistogram" type="button" class="ghost" title="loadLatencyHistogram">Latency Histogram</button>
+                  <button id="verifyFailoverDrill" type="button" class="ghost" title="verifyFailoverDrill">Failover Drill</button>
+                  <button id="loadBudgetAutorouteCorrelation" type="button" class="ghost" title="loadBudgetAutorouteCorrelation">Budget Autoroute Correlation</button>
+                  <button id="loadEnforcementFlags" type="button" class="ghost" title="loadEnforcementFlags">Enforcement Flags</button>
+                  <button id="applyRankedFallbackToRoute" type="button" class="ghost" title="applyRankedFallbackToRoute">Ranked Fallback To Route</button>
+                  <button id="runCanaryPromoteGate" type="button" class="ghost" title="runCanaryPromoteGate">Canary Promote Gate</button>
+                  <button id="annotateCircuitBreakerNotes" type="button" class="ghost" title="annotateCircuitBreakerNotes">Circuit Breaker Notes</button>
+                  <button id="invalidateDecisionCache" type="button" class="ghost" title="invalidateDecisionCache">Invalidate cache</button>
+                  <button id="loadDecisionCacheStats" type="button" class="ghost" title="loadDecisionCacheStats">Decision Cache Stats</button>
+                  <button id="loadModelRoutePolicy" type="button" class="ghost" title="loadModelRoutePolicy">Model Route Policy</button>
+                  <button id="saveModelRoutePolicyDenySample" type="button" class="ghost" title="saveModelRoutePolicyDenySample">Model Route Policy Deny Sample</button>
+                  <button id="loadAlertRetries" type="button" class="ghost" title="loadAlertRetries">Alert Retries</button>
+                  <button id="processAlertRetriesDryRun" type="button" class="ghost" title="processAlertRetriesDryRun">Alert Retries Dry Run</button>
+                  <button id="archiveLeadershipHistory" type="button" class="ghost" title="archiveLeadershipHistory">History</button>
+                  <button id="loadTrafficLightFloors" type="button" class="ghost" title="loadTrafficLightFloors">Traffic Light Floors</button>
+                  <button id="loadReadinessLeadershipDelta" type="button" class="ghost" title="loadReadinessLeadershipDelta">Readiness Leadership Delta</button>
+                  <button id="loadBudgetCorrelationWarning" type="button" class="ghost" title="loadBudgetCorrelationWarning">Budget Correlation Warning</button>
+                  <button id="loadLeadershipPostureDigest" type="button" class="ghost" title="loadLeadershipPostureDigest">Posture Digest</button>
+                  <button id="downloadOperatorRunbookMd" type="button" class="ghost" title="downloadOperatorRunbookMd">Runbook MD</button>
+                  <button id="loadRouteCircuitNotes" type="button" class="ghost" title="loadRouteCircuitNotes">Route Circuit Notes</button>
+                  <button id="runCanaryAnnotateCombo" type="button" class="ghost" title="runCanaryAnnotateCombo">Canary Annotate Combo</button>
+                  <button id="runAutoRouteExplain" type="button" class="ghost" title="runAutoRouteExplain">Auto Route Explain</button>
+                  <button id="runShadowCompareStrategies" type="button" class="ghost" title="runShadowCompareStrategies">Shadow Compare Strategies</button>
+                  <button id="loadScoreTrend" type="button" class="ghost" title="loadScoreTrend">Score trend</button>
+                  <button id="resetModelRoutePolicy" type="button" class="ghost" title="resetModelRoutePolicy">Reset route policy</button>
+                  <button id="clearModelDenylist" type="button" class="ghost" title="clearModelDenylist">Clear denylist</button>
+                  <button id="exportPostureDigest" type="button" class="ghost" title="exportPostureDigest">Posture Digest</button>
+                  <button id="loadMultiWindowSummary" type="button" class="ghost" title="loadMultiWindowSummary">Multi Window Summary</button>
+                  <button id="loadRouteHealthScore" type="button" class="ghost" title="loadRouteHealthScore">Route Health Score</button>
+                  <button id="loadOperatorChecklist" type="button" class="ghost" title="loadOperatorChecklist">Operator Checklist</button>
+                  <button id="markChecklistTrafficLight" type="button" class="ghost" title="markChecklistTrafficLight">Checklist Traffic Light</button>
+                  <button id="loadLatencyEstimate" type="button" class="ghost" title="loadLatencyEstimate">Latency Estimate</button>
+                  <button id="loadPackRegistry" type="button" class="ghost" title="loadPackRegistry">Pack Registry</button>
+                  <button id="runOnDemandSnapshot" type="button" class="ghost" title="runOnDemandSnapshot">On Demand Snapshot</button>
+                  <button id="loadEnforcementFlagsDiff" type="button" class="ghost" title="loadEnforcementFlagsDiff">Enforcement Flags Diff</button>
+                  <button id="loadWarmupEligibility" type="button" class="ghost" title="loadWarmupEligibility">Warmup Eligibility</button>
+                  <button id="loadStrategyPolicies" type="button" class="ghost" title="loadStrategyPolicies">Strategy Policies</button>
+                </div>
+                  </div>
+                </details>
+                <details class="ops-pack-drawer" data-help-text="Incidents, floor/composite gates, mute/unmute, preferred model, audit hygiene." data-help-label="About Incidents &amp; gates">
+                  <summary>Incidents &amp; gates</summary>
+                  <div class="ops-pack-drawer-body">
+                    <p id="gatewayPack14OpsStatus" class="mono runtime-feedback" aria-live="polite"></p>
+                    <p id="gatewayPack15OpsStatus" class="mono runtime-feedback" aria-live="polite"></p>
+                    <div class="chip-row" style="margin-top:0.35rem;flex-wrap:wrap;gap:0.4rem;">
+                  <button id="loadAutoRouteAudit" type="button" class="ghost" title="loadAutoRouteAudit">Auto Route Audit</button>
+                  <button id="openLeadershipIncident" type="button" class="ghost" title="openLeadershipIncident">Incident</button>
+                  <button id="loadLeadershipIncidents" type="button" class="ghost" title="loadLeadershipIncidents">Incidents</button>
+                  <button id="closeLatestIncident" type="button" class="ghost" title="closeLatestIncident">Close incident</button>
+                  <button id="runLeadershipFloorGate" type="button" class="ghost" title="runLeadershipFloorGate">Floor Gate</button>
+                  <button id="downloadPackRegistryMd" type="button" class="ghost" title="downloadPackRegistryMd">Pack registry MD</button>
+                  <button id="loadAutoRouteCostEstimate" type="button" class="ghost" title="loadAutoRouteCostEstimate">Auto Route Cost Estimate</button>
+                  <button id="muteScoreTrend" type="button" class="ghost" title="muteScoreTrend">Mute trend</button>
+                  <button id="loadScoreTrendMuted" type="button" class="ghost" title="loadScoreTrendMuted">Score Trend Muted</button>
+                  <button id="rollbackEnforcementFlags" type="button" class="ghost" title="rollbackEnforcementFlags">Enforcement Flags</button>
+                  <button id="loadRouteHealthBatch" type="button" class="ghost" title="loadRouteHealthBatch">Route Health Batch</button>
+                  <button id="loadDayRollup" type="button" class="ghost" title="loadDayRollup">Day Rollup</button>
+                  <button id="loadChecklistGate" type="button" class="ghost" title="loadChecklistGate">Checklist Gate</button>
+                  <button id="loadDecisionCacheInventory" type="button" class="ghost" title="loadDecisionCacheInventory">Decision Cache Inventory</button>
+                  <button id="runNightlyTrendReport" type="button" class="ghost" title="runNightlyTrendReport">Nightly Trend Report</button>
+                  <button id="runCompositeGoNoGo" type="button" class="ghost" title="runCompositeGoNoGo">Composite go/no-go</button>
+                  <button id="unmuteScoreTrend" type="button" class="ghost" title="unmuteScoreTrend">Unmute trend</button>
+                  <button id="loadAutoRouteAuditSummary" type="button" class="ghost" title="loadAutoRouteAuditSummary">Auto Route Audit Summary</button>
+                  <button id="purgeAutoRouteAudit" type="button" class="ghost" title="purgeAutoRouteAudit">Purge audit</button>
+                  <button id="exportAutoRouteAudit" type="button" class="ghost" title="exportAutoRouteAudit">Export audit</button>
+                  <button id="escalateLatestIncident" type="button" class="ghost" title="escalateLatestIncident">Escalate incident</button>
+                  <button id="bulkCloseIncidents" type="button" class="ghost" title="bulkCloseIncidents">Close Incidents</button>
+                  <button id="runFloorGateAutoIncident" type="button" class="ghost" title="runFloorGateAutoIncident">Floor → incident</button>
+                  <button id="runRedLightProbe" type="button" class="ghost" title="runRedLightProbe">RED probe</button>
+                  <button id="loadPreferredModel" type="button" class="ghost" title="loadPreferredModel">Preferred model</button>
+                  <button id="setPreferredModelSample" type="button" class="ghost" title="setPreferredModelSample">Set preferred sample</button>
+                  <button id="clearPreferredModel" type="button" class="ghost" title="clearPreferredModel">Clear preferred</button>
+                  <button id="downloadDayRollupMd" type="button" class="ghost" title="downloadDayRollupMd">Day rollup MD</button>
+                  <button id="runDigestWebhookDryRun" type="button" class="ghost" title="runDigestWebhookDryRun">Digest Webhook Dry Run</button>
+                </div>
+                  </div>
+                </details>
+                  </div>
+                </details>
+
+                <details class="ops-pack-drawer" data-help-text="Executive brief, shadow traffic, canary rollback, anomalies, Pareto, failover drills, and cross-env sync dry-run." data-help-label="About Executive moat">
+                  <summary>Executive moat</summary>
+                  <div class="ops-pack-drawer-body">
+                    <p id="gatewayPack16OpsStatus" class="mono runtime-feedback" aria-live="polite"></p>
+                    <div class="chip-row" style="margin-top:0.35rem;flex-wrap:wrap;gap:0.4rem;">
+                      <button id="loadExecutiveBrief" type="button" class="ghost" title="loadExecutiveBrief">Executive brief</button>
+                      <button id="loadScorecardDelta" type="button" class="ghost" title="loadScorecardDelta">Scorecard Δ</button>
+                      <button id="loadShadowTraffic" type="button" class="ghost" title="loadShadowTraffic">Shadow traffic</button>
+                      <button id="setShadowTrafficSample" type="button" class="ghost" title="setShadowTrafficSample">Shadow 10%</button>
+                      <button id="loadCanaryAutoRollback" type="button" class="ghost" title="loadCanaryAutoRollback">Canary rollback</button>
+                      <button id="enableCanaryAutoRollback" type="button" class="ghost" title="enableCanaryAutoRollback">Enable canary rollback</button>
+                      <button id="evaluateCanaryAutoRollback" type="button" class="ghost" title="evaluateCanaryAutoRollback">Evaluate canary</button>
+                      <button id="loadAttributionAnomalies" type="button" class="ghost" title="loadAttributionAnomalies">Attribution anomalies</button>
+                      <button id="loadWarmupBudget" type="button" class="ghost" title="loadWarmupBudget">Warmup budget</button>
+                      <button id="runLatencyBudgetGuard" type="button" class="ghost" title="runLatencyBudgetGuard">Latency budget</button>
+                      <button id="loadParetoFrontier" type="button" class="ghost" title="loadParetoFrontier">Pareto frontier</button>
+                      <button id="runFailoverSimulation" type="button" class="ghost" title="runFailoverSimulation">Failover sim</button>
+                      <button id="loadModelCardFreshness" type="button" class="ghost" title="loadModelCardFreshness">Model-card freshness</button>
+                      <button id="refreshModelCardFreshness" type="button" class="ghost" title="refreshModelCardFreshness">Refresh cards</button>
+                      <button id="runCompositeWithEvidence" type="button" class="ghost" title="runCompositeWithEvidence">Composite + evidence</button>
+                      <button id="downloadIncidentTimelineMd" type="button" class="ghost" title="downloadIncidentTimelineMd">Incident timeline MD</button>
+                      <button id="exportOpsActivity" type="button" class="ghost" title="exportOpsActivity">Ops activity export</button>
+                      <button id="runCrossEnvSyncDryRun" type="button" class="ghost" title="runCrossEnvSyncDryRun">Cross-env sync dry-run</button>
+                    </div>
+                  </div>
+                </details>
+                <details class="ops-pack-drawer" data-help-text="Classify a sample prompt into simple/standard/complex and preview the selected model." data-help-label="About auto-router preview">
+                  <summary>Auto-router preview</summary>
+                  <div class="ops-pack-drawer-body">
+                  <form id="gatewayAutoRouteForm" class="form-grid">
+                    <label class="wide-field">Prompt sample<textarea name="prompt_text" rows="3" required placeholder="Paste a prompt to classify simple|standard|complex">Explain gateway fallback in one sentence.</textarea></label>
+                    <label>
+                      Strategy
+                      <select name="strategy">
+                        <option value="balanced" selected>balanced</option>
+                        <option value="cost">cost</option>
+                        <option value="quality">quality</option>
+                      </select>
+                    </label>
+                    <label class="checkbox-field"><input type="checkbox" name="prefer_live_only" value="true" checked /> Prefer live-ready providers</label>
+                    <label class="checkbox-field"><input type="checkbox" name="refine_with_judge" value="true" checked /> Judge refine</label>
+                    <label class="checkbox-field"><input type="checkbox" name="use_telemetry_ranking" value="true" checked /> Use telemetry rankings</label>
+                    <label>Request tag<input name="request_tag" placeholder="gateway.ops.chat" /></label>
+                    <label>Route policy ID<input name="route_policy_id" placeholder="optional route-policy-id" /></label>
+                    <button type="submit" class="ghost" title="POST /gateway/best-practices/auto-route">Classify &amp; Suggest Model</button>
+                  </form>
+                  <p id="gatewayAutoRouteResult" class="mono runtime-feedback" aria-live="polite"></p>
+                  </div>
+                </details>
+
                 <p id="routePriorityValidation" class="mono route-priority-validation" aria-live="polite"></p>
                 <div class="table-wrap">
                   <table>
@@ -1323,7 +1368,10 @@
 <article class="card">
             <div class="card-head">
               <h3>Route Draft Browser</h3>
-              <button id="loadRouteDrafts" class="ghost" type="button">Load Drafts</button>
+              <div class="inline-actions">
+                <button id="loadRouteDrafts" class="ghost" type="button">Load Drafts</button>
+                <button id="recommendRouteDraftAutoRoute" class="ghost" type="button" title="GET /gateway/best-practices/route-draft-auto-route-recommend">Recommend Auto-Route</button>
+              </div>
             </div>
             <form id="routeDraftFilters" class="form-grid">
               <label>Draft ID<input name="draft_id" placeholder="Optional draft id" /></label>
@@ -1335,7 +1383,7 @@
               <label>Draft ID<input name="draft_id" required placeholder="route-draft-id" /></label>
               <label>
                 Action
-                <select name="action" required>
+                <select name="action" required id="routeDraftActionSelect">
                   <option value="submit">submit</option>
                   <option value="approve">approve</option>
                   <option value="reject">reject</option>
@@ -1356,7 +1404,9 @@
               <label class="wide-field">Evidence Refs JSON<input name="evidence_refs" value='[]' placeholder='["evidence://change/123"]' /></label>
               <button type="submit" class="primary">Run Draft Action</button>
             </form>
+            <p id="routeDraftActionHint" class="mono">Select a draft (Use) to enable status-aware actions.</p>
             <p id="routeDraftsResult" class="mono"></p>
+            <pre id="routeDraftAutoRoutePreview" class="mono" hidden></pre>
             <div class="table-wrap">
               <table>
                 <caption class="sr-only">Route drafts</caption>
@@ -1381,6 +1431,82 @@
           </article>
 </div>
 <div data-gateway-console-panel="policies" class="gateway-console-panel" hidden>
+<article class="card">
+            <div class="card-head">
+              <h3>Runtime Risk Policy</h3>
+              <div class="inline-actions">
+                <button id="loadGatewayRuntimeRiskConfig" class="ghost" type="button">Load</button>
+              </div>
+            </div>
+            <p class="mono">Score inference requests (environment, tools, endpoint family, agent scope, payload size) and optionally warn or block before upstream calls across chat, responses, embeddings, audio, images, rerank, messages, a2a, and realtime. Default is disabled. Config changes require dual-approval + MFA.</p>
+            <form id="gatewayRuntimeRiskConfigForm" class="form-grid">
+              <label>Enabled
+                <select name="enabled">
+                  <option value="false" selected>false</option>
+                  <option value="true">true</option>
+                </select>
+              </label>
+              <label>Mode
+                <select name="mode">
+                  <option value="observe" selected>observe</option>
+                  <option value="enforce">enforce</option>
+                </select>
+              </label>
+              <label>High action
+                <select name="high_action">
+                  <option value="block" selected>block</option>
+                  <option value="warn">warn</option>
+                  <option value="allow">allow</option>
+                </select>
+              </label>
+              <label>Medium action
+                <select name="medium_action">
+                  <option value="warn" selected>warn</option>
+                  <option value="block">block</option>
+                  <option value="allow">allow</option>
+                </select>
+              </label>
+              <label>Low action
+                <select name="low_action">
+                  <option value="allow" selected>allow</option>
+                  <option value="warn">warn</option>
+                  <option value="block">block</option>
+                </select>
+              </label>
+              <label>Fail closed on corrupt config
+                <select name="fail_closed_on_config_error">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+              <label class="wide-field">Enforce environments (CSV)<input name="enforce_environments" value="prod,production" placeholder="prod,production" /></label>
+              <label>Approver Role<input name="approver_role" placeholder="Security Approver" /></label>
+              <label>Approver ID<input name="approver_id" placeholder="directory user id" /></label>
+              <button type="submit" class="primary">Save Runtime Risk Policy</button>
+            </form>
+            <p id="gatewayRuntimeRiskConfigResult" class="mono"></p>
+            <form id="gatewayRuntimeRiskEvaluateForm" class="form-grid">
+              <label>Model<input name="model_name" value="gpt-4o" required /></label>
+              <label>Environment<input name="environment" value="prod" /></label>
+              <label>Endpoint family<input name="endpoint_family" value="chat.completions" placeholder="embeddings|images|realtime|…" /></label>
+              <label>Has tool calls
+                <select name="has_tool_calls">
+                  <option value="false" selected>false</option>
+                  <option value="true">true</option>
+                </select>
+              </label>
+              <label>Has agent id
+                <select name="has_agent_id">
+                  <option value="false" selected>false</option>
+                  <option value="true">true</option>
+                </select>
+              </label>
+              <label>Input chars<input name="input_chars" type="number" min="0" value="0" /></label>
+              <label>Provider ID<input name="selected_provider_id" placeholder="optional" /></label>
+              <button type="submit" class="ghost">Evaluate Risk</button>
+            </form>
+            <p id="gatewayRuntimeRiskEvaluateResult" class="mono">Dry-run assessment appears here.</p>
+          </article>
 <article class="card">
             <div class="card-head">
               <h3>Pre-Call Filters</h3>
@@ -1513,11 +1639,13 @@
                 <button id="loadRouteCanaryRollout" class="ghost" type="button">Load Canary</button>
                 <button id="stopRouteCanaryRollout" class="ghost" type="button">Stop Canary</button>
                 <button id="promoteRouteCanaryRollout" class="ghost" type="button">Promote Canary</button>
+                <button id="explainCanaryAutoRoute" class="ghost" type="button" title="POST /gateway/best-practices/canary-auto-route-explain">Explain × Auto-Route</button>
               </div>
             </div>
-            <p class="mono">Configure governed weighted canary targets, then stop or promote with explicit lifecycle evidence. Production actions require dual-approval identity headers.</p>
+            <p class="mono">Configure governed weighted canary targets, then stop or promote with explicit lifecycle evidence. Production actions require dual-approval identity headers. Explain × Auto-Route shows how canary weight interacts with model selection.</p>
             <form id="routeCanaryRolloutForm" class="form-grid">
               <label>Route Policy ID<input name="route_policy_id" required placeholder="route-policy-id" /></label>
+              <label class="wide-field">Explain Prompt<input name="explain_prompt" placeholder="Canary auto-route interaction sample" value="Canary auto-route interaction sample" /></label>
               <label>Tenant ID<select name="tenant_id" data-tenant-select required><option value="" disabled hidden selected>Loading tenants...</option></select></label>
               <label>Environment<input name="environment" value="dev" placeholder="dev|prod" /></label>
               <label>Request Tag<input name="request_tag" placeholder="billing.batch-01" /></label>
@@ -1540,6 +1668,7 @@
             </form>
             <p id="routeCanaryRolloutState" class="mono">Status: --</p>
             <p id="routeCanaryRolloutResult" class="mono"></p>
+            <pre id="routeCanaryAutoRouteExplainPreview" class="mono" hidden></pre>
           </article>
 <article class="card">
             <div class="card-head">
@@ -2299,13 +2428,69 @@
           </article>
 <article class="card">
             <div class="card-head">
-              <h3>NHI Inventory & Hygiene</h3>
+              <h3>Virtual Key Auto-Route Policies</h3>
               <div class="inline-actions">
-                <button id="loadGatewayNhiInventory" class="ghost" type="button">Load Inventory</button>
-                <button id="loadGatewayNhiHygiene" class="ghost" type="button">Load Hygiene</button>
+                <button id="loadGatewayVkAutoRoutePolicies" class="ghost" type="button" title="GET /gateway/best-practices/virtual-key-auto-route-policies">Load Policies</button>
+                <button id="saveGatewayVkAutoRoutePolicy" class="ghost" type="button" title="POST /gateway/best-practices/virtual-key-auto-route-policy">Save Policy</button>
               </div>
             </div>
-            <p class="mono">Review machine identities used by gateway integrations and identify stale or ownerless credentials.</p>
+            <p class="mono">Scope auto-route strategy to a virtual key (balanced/cost/quality). Click a row to edit.</p>
+            <form id="gatewayVkAutoRoutePolicyForm" class="form-grid">
+              <label>Virtual Key ID<input name="virtual_key_id" required placeholder="vk-…" /></label>
+              <label>
+                Strategy
+                <select name="strategy">
+                  <option value="balanced" selected>balanced</option>
+                  <option value="cost">cost</option>
+                  <option value="quality">quality</option>
+                </select>
+              </label>
+              <label>
+                Prefer Live Only
+                <select name="prefer_live_only">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+              <label>
+                Max Budget Tier
+                <select name="max_budget_tier">
+                  <option value="" selected>any</option>
+                  <option value="simple">simple</option>
+                  <option value="standard">standard</option>
+                  <option value="complex">complex</option>
+                </select>
+              </label>
+              <label>
+                Enabled
+                <select name="enabled">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+            </form>
+            <p id="gatewayVkAutoRoutePolicyResult" class="mono"></p>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Virtual key auto-route policies</caption>
+                <thead>
+                  <tr><th>VK ID</th><th>Strategy</th><th>Live only</th><th>Budget</th><th>Enabled</th><th>Updated</th></tr>
+                </thead>
+                <tbody id="gatewayVkAutoRoutePolicyTable"></tbody>
+              </table>
+            </div>
+          </article>
+<article class="card">
+            <div class="card-head">
+              <h3>NHI Inventory & Hygiene</h3>
+              <div class="inline-actions" role="tablist" aria-label="NHI panels">
+                <button class="ghost active" type="button" role="tab" aria-selected="true" data-nhi-panel-tab="inventory">Inventory</button>
+                <button class="ghost" type="button" role="tab" aria-selected="false" data-nhi-panel-tab="agents">Agents &amp; Access</button>
+                <button class="ghost" type="button" role="tab" aria-selected="false" data-nhi-panel-tab="iga">IGA Coexistence</button>
+                <button class="ghost" type="button" role="tab" aria-selected="false" data-nhi-panel-tab="insights">Insights &amp; Lifecycle</button>
+              </div>
+            </div>
+            <p class="mono">Gateway NHI panels: Inventory; Agents &amp; Access (Discovery/Shadow/MCP + access policies); IGA coexistence; Insights/lifecycle. Intent Mode ≠ Access Mode ≠ Deny Gate. Gateway-plane only — no enterprise SaaS identity crawler.</p>
             <form id="gatewayNhiFiltersForm" class="form-grid">
               <label>Tenant ID<select name="tenant_id" data-tenant-select data-tenant-optional><option value="">All tenants</option></select></label>
               <label>Environment<input name="environment" placeholder="dev" /></label>
@@ -2329,25 +2514,339 @@
                 </select>
               </label>
             </form>
+
+            <div data-nhi-panel="inventory">
+              <div class="inline-actions">
+                <button id="loadGatewayNhiInventory" class="ghost" type="button">Load Inventory</button>
+                <button id="loadGatewayNhiHygiene" class="ghost" type="button">Load Hygiene</button>
+                <button id="loadGatewayNhiOrphans" class="ghost" type="button">Load Orphans</button>
+                <button id="assignGatewayNhiOrphans" class="ghost" type="button">Bulk Assign Orphans</button>
+              </div>
+              <p class="mono">Orphan queue = missing owner. Bulk assign reuses Assign Owner (same VK/NHI owner plane).</p>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Gateway NHI hygiene summary</caption>
+                  <thead>
+                    <tr><th>Metric</th><th>Value</th></tr>
+                  </thead>
+                  <tbody id="gatewayNhiHygieneTable"></tbody>
+                </table>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Gateway NHI orphans</caption>
+                  <thead>
+                    <tr><th>ID</th><th>Source</th><th>Tenant</th><th>Env</th><th>Risk</th><th>IGA Ref</th></tr>
+                  </thead>
+                  <tbody id="gatewayNhiOrphansTable"></tbody>
+                </table>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Gateway NHI inventory</caption>
+                  <thead>
+                    <tr><th>ID</th><th>Source</th><th>Tenant</th><th>Environment</th><th>Provider</th><th>Owner</th><th>Age (days)</th><th>Findings</th><th>Status</th></tr>
+                  </thead>
+                  <tbody id="gatewayNhiInventoryTable"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div data-nhi-panel="agents" hidden>
+              <div class="inline-actions">
+                <button id="loadGatewayNhiAgents" class="ghost" type="button">Load Agents</button>
+                <button id="loadGatewayNhiAccessConfig" class="ghost" type="button">Load Access Config</button>
+                <button id="saveGatewayNhiAccessConfig" class="ghost" type="button">Save Access Config</button>
+                <button id="runGatewayNhiAccessAuthorize" class="ghost" type="button">Authorize Access</button>
+                <button id="runGatewayNhiShadowAction" class="ghost" type="button">Shadow Action</button>
+                <button id="loadGatewayNhiGateEvents" class="ghost" type="button">Gate Events</button>
+              </div>
+              <p class="mono">Unified agent inventory (Discovery + Shadow AI + MCP + VK). Access policies match intent + resource + action. Hardening: access_mode=block with empty policies denies; unbound NHI fails closed on live inference. Gate Events = intent/access warn/deny ring. Shadow Action: sanction / block / review (dual-approval).</p>
+              <form id="gatewayNhiAccessForm" class="form-grid">
+                <label>
+                  Access Mode
+                  <select name="access_mode">
+                    <option value="off" selected>off</option>
+                    <option value="warn">warn</option>
+                    <option value="block">block</option>
+                  </select>
+                </label>
+                <label>Policies JSON<textarea name="access_policies_json" rows="4" placeholder='[{"name":"allow-summarize","intent":"summarize","resource":"model:*","action":"chat.completions","effect":"allow","enabled":true}]'></textarea></label>
+                <label>Declared Intent<input name="declared_intent" placeholder="summarize" /></label>
+                <label>Resource<input name="resource" placeholder="model:gpt-4o-mini" value="model:*" /></label>
+                <label>Action<input name="action" placeholder="chat.completions" value="chat.completions" /></label>
+                <label>NHI Record ID (shadow)<input name="nhi_record_id" placeholder="nhi-…" /></label>
+                <label>
+                  Shadow Action
+                  <select name="shadow_action">
+                    <option value="sanction" selected>sanction</option>
+                    <option value="block">block</option>
+                    <option value="review">review</option>
+                  </select>
+                </label>
+                <label>Shadow Notes<input name="shadow_notes" placeholder="approved for playground" /></label>
+                <label>Approver Role<input name="approver_role" placeholder="Security Approver" /></label>
+                <label>Approver ID<input name="approver_id" placeholder="sec-approver-1" /></label>
+              </form>
+              <pre id="gatewayNhiAgentsPreview" class="mono" hidden></pre>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Native gate events</caption>
+                  <thead>
+                    <tr><th>At</th><th>Gate</th><th>Decision</th><th>NHI ID</th><th>Reason</th></tr>
+                  </thead>
+                  <tbody id="gatewayNhiGateEventsTable"></tbody>
+                </table>
+              </div>
+              <pre id="gatewayNhiGateEventsPreview" class="mono" hidden></pre>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Unified NHI agents</caption>
+                  <thead>
+                    <tr><th>ID</th><th>Source</th><th>Type</th><th>Provider</th><th>Owner</th><th>Risk</th><th>Status</th></tr>
+                  </thead>
+                  <tbody id="gatewayNhiAgentsTable"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div data-nhi-panel="iga" hidden>
+              <div class="inline-actions">
+                <button id="exportGatewayNhiIga" class="ghost" type="button">Export for IGA</button>
+                <button id="loadGatewayNhiIgaExportConfig" class="ghost" type="button">Load Export Config</button>
+                <button id="saveGatewayNhiIgaExportConfig" class="ghost" type="button">Save Export Config</button>
+                <button id="testGatewayNhiIgaExport" class="ghost" type="button">Test Export Delivery</button>
+                <button id="loadGatewayNhiIgaDenyConfig" class="ghost" type="button">Load Deny Config</button>
+                <button id="saveGatewayNhiIgaDenyConfig" class="ghost" type="button">Save Deny Config</button>
+                <button id="ingestGatewayNhiIgaDenyManual" class="ghost" type="button">Ingest Deny</button>
+                <button id="probeGatewayNhiIgaDenyHmac" class="ghost" type="button" title="POST /gateway/nhi/iga-deny/ingest (HMAC)">Probe HMAC Deny Ingest</button>
+                <button id="revokeGatewayNhiIgaDeny" class="ghost" type="button" title="POST /gateway/nhi/iga-deny/{deny_id}/revoke">Revoke Deny</button>
+                <button id="evaluateGatewayNhiIgaDeny" class="ghost" type="button">Evaluate Deny</button>
+                <button id="loadGatewayNhiIgaDenyEvents" class="ghost" type="button">Deny Event History</button>
+                <button id="exportGatewayNhiEvidence" class="ghost" type="button">Export Evidence Pack</button>
+              </div>
+              <p class="mono">Deny Gate Mode (inbound IGA subject deny) is independent of Intent Mode / Access Mode. Click a deny/event row to fill Deny ID for revoke. HMAC probe signs with the ingest secret field (not stored after save). Event history is a capped ring buffer—not SIEM.</p>
+              <form id="gatewayNhiIgaExportConfigForm" class="form-grid">
+                <label>
+                  Export Enabled
+                  <select name="enabled">
+                    <option value="false" selected>false</option>
+                    <option value="true">true</option>
+                  </select>
+                </label>
+                <label>
+                  Target System
+                  <select name="target_system">
+                    <option value="generic" selected>generic</option>
+                    <option value="external_iga">external_iga</option>
+                    <option value="astrix">astrix</option>
+                    <option value="oasis">oasis</option>
+                    <option value="aembit">aembit</option>
+                  </select>
+                </label>
+                <label>
+                  Profile
+                  <select name="default_profile">
+                    <option value="iga_correlation" selected>iga_correlation</option>
+                    <option value="native">native</option>
+                  </select>
+                </label>
+                <label>Webhook URL<input name="webhook_url" type="url" placeholder="https://iga.example/hooks/nhi" /></label>
+                <label>HMAC Secret<input name="hmac_secret" type="password" placeholder="leave blank to keep" autocomplete="new-password" /></label>
+                <label>
+                  Sign Requests
+                  <select name="sign_requests">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                  </select>
+                </label>
+                <label>
+                  Include Hygiene
+                  <select name="include_hygiene_summary">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                  </select>
+                </label>
+                <label>Max Records<input name="max_records" type="number" min="1" max="500" step="1" value="500" /></label>
+                <label>
+                  Deliver on Export
+                  <select name="deliver_webhook">
+                    <option value="false" selected>false (bundle only)</option>
+                    <option value="true">true (webhook)</option>
+                  </select>
+                </label>
+                <label>
+                  Dry-Run Delivery
+                  <select name="dry_run_delivery">
+                    <option value="true" selected>true</option>
+                    <option value="false">false (live)</option>
+                  </select>
+                </label>
+                <label>Approver Role<input name="approver_role" placeholder="Security Approver (config / live deliver)" /></label>
+                <label>Approver ID<input name="approver_id" placeholder="sec-approver-1" /></label>
+              </form>
+              <form id="gatewayNhiIgaDenyConfigForm" class="form-grid">
+                <label>
+                  Deny Gate Enabled
+                  <select name="enabled">
+                    <option value="false" selected>false</option>
+                    <option value="true">true</option>
+                  </select>
+                </label>
+                <label>
+                  Mode
+                  <select name="mode">
+                    <option value="off" selected>off</option>
+                    <option value="warn">warn</option>
+                    <option value="block">block</option>
+                  </select>
+                </label>
+                <label>Ingest HMAC Secret<input name="ingest_hmac_secret" type="password" placeholder="leave blank to keep" autocomplete="new-password" /></label>
+                <label>
+                  Require HMAC
+                  <select name="require_ingest_hmac">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                  </select>
+                </label>
+                <label>
+                  Require Ingest Timestamp
+                  <select name="require_ingest_timestamp">
+                    <option value="false" selected>false</option>
+                    <option value="true">true</option>
+                  </select>
+                </label>
+                <label>Max Ingest Skew (sec)<input name="max_ingest_skew_seconds" type="number" min="30" max="3600" value="300" /></label>
+                <label>Default TTL Seconds<input name="default_ttl_seconds" type="number" min="60" max="2592000" value="86400" /></label>
+                <label>
+                  Subject Type
+                  <select name="subject_type">
+                    <option value="actor_id" selected>actor_id</option>
+                    <option value="virtual_key_id">virtual_key_id</option>
+                    <option value="owner_scope_id">owner_scope_id</option>
+                    <option value="source_id">source_id</option>
+                    <option value="nhi_record_id">nhi_record_id</option>
+                    <option value="tenant_id">tenant_id</option>
+                  </select>
+                </label>
+                <label>Subject ID<input name="subject_id" placeholder="actor or VK id" /></label>
+                <label>Reason<input name="reason" placeholder="IGA access denied…" /></label>
+                <label>
+                  Source System
+                  <select name="source_system">
+                    <option value="generic" selected>generic</option>
+                    <option value="astrix">astrix</option>
+                    <option value="oasis">oasis</option>
+                    <option value="aembit">aembit</option>
+                    <option value="external_iga">external_iga</option>
+                  </select>
+                </label>
+                <label>Deny ID (revoke)<input name="deny_id" placeholder="iga-deny-…" /></label>
+                <label>Approver Role<input name="approver_role" placeholder="Security Approver" /></label>
+                <label>Approver ID<input name="approver_id" placeholder="sec-approver-1" /></label>
+              </form>
+              <pre id="gatewayNhiExportPreview" class="mono" hidden></pre>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">Active IGA denies</caption>
+                  <thead>
+                    <tr><th>Deny ID</th><th>Subject</th><th>Source</th><th>Expires</th><th>Reason</th></tr>
+                  </thead>
+                  <tbody id="gatewayNhiActiveDeniesTable"></tbody>
+                </table>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">IGA deny event history</caption>
+                  <thead>
+                    <tr><th>Type</th><th>Deny ID</th><th>Subject</th><th>Source</th><th>At</th></tr>
+                  </thead>
+                  <tbody id="gatewayNhiDenyEventsTable"></tbody>
+                </table>
+              </div>
+              <pre id="gatewayNhiDenyEventsPreview" class="mono" hidden></pre>
+            </div>
+
+            <div data-nhi-panel="insights" hidden>
+              <div class="inline-actions">
+                <button id="loadGatewayNhiInsights" class="ghost" type="button">Load Insights</button>
+                <button id="loadGatewayNhiAccessMap" class="ghost" type="button">Access Map</button>
+                <button id="loadGatewayNhiTimeline" class="ghost" type="button">Timeline</button>
+                <button id="saveGatewayNhiOwner" class="ghost" type="button">Assign Owner</button>
+                <button id="runGatewayNhiLifecycle" class="ghost" type="button">Lifecycle</button>
+                <button id="saveGatewayNhiCorrelation" class="ghost" type="button">Save IGA Correlation</button>
+                <button id="testGatewayNhiCorrelationIngest" class="ghost" type="button" title="POST /gateway/nhi/correlation/ingest">Test Correlation Ingest</button>
+                <button id="saveGatewayNhiIntents" class="ghost" type="button">Save Intents</button>
+                <button id="loadGatewayNhiGovernance" class="ghost" type="button" title="GET /gateway/nhi/governance/config">Load Intent Mode</button>
+                <button id="saveGatewayNhiGovernance" class="ghost" type="button">Save Intent Mode</button>
+                <button id="runGatewayNhiIntentCheck" class="ghost" type="button">Intent Check</button>
+              </div>
+              <form id="gatewayNhiInsightsForm" class="form-grid">
+                <label>NHI Record ID<input name="nhi_record_id" placeholder="nhi-…" /></label>
+                <label>
+                  Owner Scope Type
+                  <select name="owner_scope_type">
+                    <option value="user" selected>user</option>
+                    <option value="team">team</option>
+                    <option value="group">group</option>
+                    <option value="service">service</option>
+                  </select>
+                </label>
+                <label>Owner Scope ID<input name="owner_scope_id" placeholder="alice / platform-eng" /></label>
+                <label>Purpose<input name="purpose" placeholder="playground agent inference" /></label>
+                <label>Approved Intents (csv)<input name="approved_intents" placeholder="summarize,chat" /></label>
+                <label>External Ref (IGA)<input name="external_ref" placeholder="iga-agent-…" /></label>
+                <label>IGA Agent ID<input name="iga_agent_id" placeholder="agent-…" /></label>
+                <label>
+                  Correlation Source
+                  <select name="correlation_source_system">
+                    <option value="generic" selected>generic</option>
+                    <option value="external_iga">external_iga</option>
+                    <option value="astrix">astrix</option>
+                    <option value="oasis">oasis</option>
+                    <option value="aembit">aembit</option>
+                  </select>
+                </label>
+                <label>
+                  Lifecycle Action
+                  <select name="lifecycle_action">
+                    <option value="suspend" selected>suspend</option>
+                    <option value="reactivate">reactivate</option>
+                    <option value="retire">retire</option>
+                  </select>
+                </label>
+                <label>Lifecycle Reason<input name="lifecycle_reason" placeholder="compromised / EOL" /></label>
+                <label>
+                  Intent Mode
+                  <select name="intent_mode">
+                    <option value="off" selected>off</option>
+                    <option value="warn">warn</option>
+                    <option value="block">block</option>
+                  </select>
+                </label>
+                <label>
+                  Correlation Ingest Enabled
+                  <select name="correlation_ingest_enabled">
+                    <option value="false" selected>false</option>
+                    <option value="true">true</option>
+                  </select>
+                </label>
+                <label>Correlation HMAC Secret<input name="correlation_ingest_hmac_secret" type="password" placeholder="leave blank to keep" autocomplete="new-password" /></label>
+                <label>
+                  Require Correlation HMAC
+                  <select name="require_correlation_ingest_hmac">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                  </select>
+                </label>
+                <label>Declared Intent<input name="declared_intent" placeholder="summarize" /></label>
+                <label>Approver Role<input name="approver_role" placeholder="Security Approver" /></label>
+                <label>Approver ID<input name="approver_id" placeholder="sec-approver-1" /></label>
+              </form>
+              <pre id="gatewayNhiInsightsPreview" class="mono" hidden></pre>
+            </div>
+
             <p id="gatewayNhiResult" class="mono"></p>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Gateway NHI hygiene summary</caption>
-                <thead>
-                  <tr><th>Metric</th><th>Value</th></tr>
-                </thead>
-                <tbody id="gatewayNhiHygieneTable"></tbody>
-              </table>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <caption class="sr-only">Gateway NHI inventory</caption>
-                <thead>
-                  <tr><th>ID</th><th>Source</th><th>Tenant</th><th>Environment</th><th>Provider</th><th>Owner</th><th>Age (days)</th><th>Findings</th><th>Status</th></tr>
-                </thead>
-                <tbody id="gatewayNhiInventoryTable"></tbody>
-              </table>
-            </div>
           </article>
 <article class="card">
             <div class="card-head">

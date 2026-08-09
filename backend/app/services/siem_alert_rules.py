@@ -76,6 +76,52 @@ DEFAULT_SIEM_ALERT_RULES: list[dict[str, Any]] = [
         "sink_route_key": "gateway-deny",
         "enabled": True,
     },
+    {
+        "rule_id": "siem-secret-provider-value-mutations",
+        "name": "Secret provider value mutations",
+        "description": (
+            "Alert on secret_provider.value.* audit events (read/upsert/delete) so SIEM can "
+            "correlate volume spikes (GAP-USP-R05)."
+        ),
+        "action_type_pattern": "secret_provider.value.*",
+        "decision_outcomes": ["allow", "deny"],
+        "severity": "high",
+        "sink_route_key": "secret-provider-values",
+        "enabled": True,
+    },
+    {
+        "rule_id": "siem-directory-user-unlock",
+        "name": "Directory user unlock",
+        "description": "Alert on privileged unlock operations to detect unlock abuse patterns.",
+        "action_type_pattern": "auth.directory.user.unlock*",
+        "decision_outcomes": ["allow", "deny"],
+        "severity": "high",
+        "sink_route_key": "directory-unlock",
+        "enabled": True,
+    },
+    {
+        "rule_id": "siem-least-privilege-apply",
+        "name": "Least-privilege apply actions",
+        "description": "Alert on gateway.least_privilege.apply* volume and denials for over-restrictive apply detection.",
+        "action_type_pattern": "gateway.least_privilege.apply*",
+        "decision_outcomes": ["allow", "deny"],
+        "severity": "medium",
+        "sink_route_key": "least-privilege-apply",
+        "enabled": True,
+    },
+    {
+        "rule_id": "siem-insecure-configuration-audit",
+        "name": "Insecure configuration audit",
+        "description": (
+            "Alert when insecure configuration is audited (complements SECURITY_ALERT_WEBHOOK_URL "
+            "startup/health webhook routing)."
+        ),
+        "action_type_pattern": "security.insecure_configuration*",
+        "decision_outcomes": ["allow", "deny"],
+        "severity": "high",
+        "sink_route_key": "insecure-configuration",
+        "enabled": True,
+    },
 ]
 
 

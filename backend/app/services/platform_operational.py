@@ -19,6 +19,7 @@ from app.runtime_constants import (
     RUNTIME_CONFIG_PLATFORM_MAINTENANCE_MODE,
     RUNTIME_CONFIG_PLATFORM_SLOW_RESPONSE_THRESHOLD_MS,
 )
+from app.services.control_plane_leadership import build_control_plane_ops_summary
 from app.services.config_cache import runtime_config_cache
 from app.services.runtime_config import get_runtime_config, get_runtime_config_int
 
@@ -46,6 +47,14 @@ def build_operational_status(db: Session, rate_limit_status: dict) -> dict:
         overall = "maintenance"
     elif cache_status.get("degraded") or rate_limit_status.get("degraded"):
         overall = "degraded"
+    try:
+        control_plane = build_control_plane_ops_summary(db)
+    except Exception:
+        control_plane = {
+            "advisory": None,
+            "marketing_claim_allowed": False,
+            "error": "unavailable",
+        }
     return {
         "status": overall,
         "maintenance": {
@@ -58,6 +67,7 @@ def build_operational_status(db: Session, rate_limit_status: dict) -> dict:
         "feedback_enabled": feedback_enabled,
         "runtime_config_cache": cache_status,
         "rate_limit": rate_limit_status,
+        "control_plane": control_plane,
     }
 
 

@@ -69,6 +69,15 @@ def _gateway_inference_test_isolation(monkeypatch):
         "GROQ_API_KEY",
         "CURSOR_API_KEY",
         "AZURE_OPENAI_API_KEY",
+        "AWS_BEDROCK_API_KEY",
+        "BEDROCK_API_KEY",
+        "GOOGLE_API_KEY",
+        "VERTEX_API_KEY",
+        "XAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "TOGETHER_API_KEY",
+        "FIREWORKS_API_KEY",
+        "PERPLEXITY_API_KEY",
     ):
         monkeypatch.delenv(env_key, raising=False)
     monkeypatch.setenv("GATEWAY_INFERENCE_SIMULATION", "true")
@@ -76,27 +85,31 @@ def _gateway_inference_test_isolation(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_gateway_cache_short_circuit():
-    from app.database import SessionLocal
-    from app.models import RuntimeConfig
-    from app.runtime_constants import RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED
-    from app.services.runtime_config import invalidate_runtime_config_cache
-
-    db = SessionLocal()
     try:
-        row = db.query(RuntimeConfig).filter_by(
-            config_key=RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED
-        ).first()
-        if row is None:
-            db.add(
-                RuntimeConfig(
-                    config_key=RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED,
-                    config_value="false",
+        from app.database import SessionLocal
+        from app.models import RuntimeConfig
+        from app.runtime_constants import RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED
+        from app.services.runtime_config import invalidate_runtime_config_cache
+
+        db = SessionLocal()
+        try:
+            row = db.query(RuntimeConfig).filter_by(
+                config_key=RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED
+            ).first()
+            if row is None:
+                db.add(
+                    RuntimeConfig(
+                        config_key=RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED,
+                        config_value="false",
+                    )
                 )
-            )
-        else:
-            row.config_value = "false"
-        db.commit()
-        invalidate_runtime_config_cache(RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED)
-    finally:
-        db.close()
+            else:
+                row.config_value = "false"
+            db.commit()
+            invalidate_runtime_config_cache(RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED)
+        finally:
+            db.close()
+    except Exception:
+        # Allow pure unit tests when Postgres is unavailable locally.
+        pass
     yield

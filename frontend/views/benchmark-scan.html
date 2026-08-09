@@ -1,10 +1,14 @@
 <section id="benchmark-scan" class="view runtime-config-view">
   <article class="card runtime-config-hero">
     <div class="card-head">
-      <h3>Benchmark &amp; Scan Console</h3>
-      <button id="refreshBenchmarkScanConsole" class="ghost" type="button">Refresh All</button>
+      <div>
+        <p class="sig-kicker">Quality &amp; posture</p>
+        <h3>Quality & posture exams</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Exam ledger</span></p>
+      </div>
+      <button id="refreshBenchmarkScanConsole" class="ghost" type="button">Refresh ledger</button>
     </div>
-    <p class="card-lead">Run agent benchmarks and security scans using gateway inference and judge scoring. Review historical results, and filter by agent, environment, suite, or scan type.</p>
+    <p class="card-lead">Run exams and scans; review ledgered history.</p>
     <p id="benchmarkScanConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Run or load history to populate inventory.</p>
     <div class="view-page-search-toolbar" data-view-search-toolbar>
       <div class="view-page-search-row">
@@ -19,6 +23,24 @@
       </div>
       <p class="view-page-search-status mono" aria-live="polite"></p>
     </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Benchmarks</span>
+        <strong>Cost-gated</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Scans</span>
+        <strong>Governed</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">History</span>
+        <strong>Ledgered</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Stop</span>
+        <strong>Audited</strong>
+      </div>
+    </section>
     <div class="runtime-console-tabs" role="tablist" aria-label="Benchmark and scan sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="run">Run</button>
@@ -28,7 +50,7 @@
 
   <div data-console-panel="overview" class="runtime-console-panel active">
     <article class="card">
-      <div class="card-head"><h4>Operator Workflow</h4></div>
+      <div class="card-head"><h4>Exam &amp; scan sequence</h4></div>
       <div class="runtime-workflow-steps" aria-label="Benchmark and scan workflow">
         <div class="runtime-workflow-step">
           <strong>1. Pick an agent</strong>
@@ -43,6 +65,17 @@
           <span>Use <strong>Search History</strong> to load results, then filter each table with its own Search button.</span>
         </div>
       </div>
+      <details class="ops-pack-drawer" data-help-text="Optional go/no-go checks against leadership floor and composite posture before heavy exam runs." data-help-label="About leadership gates">
+                  <summary>Leadership gates</summary>
+        <div class="ops-pack-drawer-body">
+          <div class="chip-row" style="flex-wrap:wrap;gap:0.4rem;">
+            <button id="runBenchmarkLeadershipFloorGate" type="button" class="ghost">Floor Gate</button>
+            <button id="runBenchmarkCompositeGate" type="button" class="ghost">Composite Gate</button>
+            <button id="runBenchmarkCompositeWithEvidence" type="button" class="ghost">Composite + Evidence</button>
+          </div>
+          <p id="benchmarkLeadershipGateStatus" class="mono runtime-feedback" aria-live="polite"></p>
+        </div>
+      </details>
       <div class="chip-row" aria-label="Jump to benchmark workspaces">
         <button type="button" class="chip" data-console-tab-jump="run">Run Jobs</button>
         <button type="button" class="chip" data-console-tab-jump="history">Run History</button>
@@ -97,7 +130,7 @@
           <h4>Cost Awareness</h4>
           <button id="refreshBenchmarkScanCostPanel" class="ghost" type="button">Refresh Costs</button>
         </div>
-        <p class="card-lead">Benchmark and security scans invoke multiple gateway inference calls. Review live spend and per-run estimates before confirming.</p>
+        <p class="card-lead">Live spend and per-run estimates before you confirm.</p>
         <div class="card-grid">
           <article class="card metric">
             <h5>Live Spend (24h)</h5>
@@ -132,7 +165,7 @@
           <button id="clearBenchmarkScanHistoryFilters" class="ghost" type="button">Clear Filters</button>
         </div>
       </div>
-      <p class="card-lead">Set filters below, then click <strong>Search History</strong> to load benchmark and scan results. Each section also has its own table search.</p>
+      <p class="card-lead">Filter, then Search History. Tables have their own search.</p>
       <form id="benchmarkScanHistoryFilters" class="form-grid">
         <label>Agent Filter
           <select name="agent_id" id="benchmarkScanHistoryAgentSelect">

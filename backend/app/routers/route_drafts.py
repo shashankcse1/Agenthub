@@ -439,7 +439,9 @@ def promote_route_draft(
             },
         )
 
-    if payload.target_environment.strip().lower() == "prod":
+    from app.services.runtime_env import is_prod_target_environment
+
+    if is_prod_target_environment(payload.target_environment):
         require_dual_approval(ctx)
 
     if not (draft.approved_security and draft.approved_ai_ops and draft.status == "change_window_approved"):

@@ -3,85 +3,292 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self' http: https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" />
     <meta name="referrer" content="no-referrer" />
-    <title>AgentHub Control Center</title>
-    <link rel="stylesheet" href="./styles.css?v=20260612-12" />
-    <link rel="stylesheet" href="./styles/components.css" />
+    <title>AgentHub Governance Plane</title>
+    <meta name="theme-color" content="#0a0e14" />
+    <meta name="description" content="AgentHub institutional AI governance control plane — Flow Studio for governed workflows, plus inference, spend, and trust." />
+    <link rel="icon" href="./logo.svg" type="image/svg+xml" />
+    <link rel="preload" href="./fonts/source-sans-3-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="./fonts/source-sans-3-600.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="./fonts/source-serif-4-600.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="./fonts.css?v=20260804-ui41" />
+    <link rel="stylesheet" href="./styles.css?v=20260806-ui44" />
+    <link rel="stylesheet" href="./styles/components.css?v=20260804-ui41" />
+    <link rel="stylesheet" href="./styles/signature.css?v=20260804-ui41" />
+    <link rel="stylesheet" href="./styles/type-system.css?v=20260804-ui41" />
+    <link rel="stylesheet" href="./styles/nav-tabs.css?v=20260804-ui41" />
+    <link rel="stylesheet" href="./styles/pages.css?v=20260804-ui41" />
   </head>
   <body>
     <a class="skip-link" href="#mainContent">Skip to main content</a>
+    <div id="shellProgress" class="shell-progress" hidden aria-hidden="true">
+      <div class="shell-progress-bar"></div>
+    </div>
+    <div id="connectivityBanner" class="connectivity-banner" hidden role="status" aria-live="polite">
+      Connection lost — working offline until the network returns.
+    </div>
     <div class="bg-orb bg-orb-1" aria-hidden="true"></div>
     <div class="bg-orb bg-orb-2" aria-hidden="true"></div>
 
     <div class="app-shell">
-      <aside id="sidebar" class="sidebar">
+      <aside id="sidebar" class="sidebar" aria-label="AgentHub navigation">
         <div class="brand">
           <img class="brand-logo" src="./logo.svg" alt="" aria-hidden="true" />
-          <div class="brand-mark">AH</div>
-          <div>
+          <div class="brand-copy">
             <h1>AgentHub</h1>
-            <p>Control Center</p>
+            <p>Governance Plane</p>
           </div>
+          <span class="sig-plane-badge" title="Institutional control plane">CPLI</span>
+          <button
+            id="sidebarRailToggle"
+            class="ghost icon-button sidebar-rail-toggle"
+            type="button"
+            aria-pressed="false"
+            aria-label="Minimize sidebar"
+            title="Minimize sidebar"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+              <path d="M14 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
         </div>
 
         <nav id="sidebarNav" class="nav" aria-label="Primary">
-          <button class="nav-item active" data-view="overview">Overview</button>
+          <div class="nav-toolbar" role="search">
+            <label class="nav-filter-label" for="sidebarNavFilter">
+              <span class="sr-only">Filter navigation</span>
+              <input
+                id="sidebarNavFilter"
+                class="nav-filter-input"
+                type="search"
+                placeholder="Filter nav…  \\"
+                autocomplete="off"
+                aria-controls="sidebarNavList"
+              />
+            </label>
+            <div class="nav-toolbar-actions">
+              <button id="navCollapseAll" class="ghost nav-toolbar-btn" type="button" title="Collapse all groups">Collapse</button>
+              <button id="navExpandActive" class="ghost nav-toolbar-btn" type="button" title="Expand active group only">Active</button>
+              <button id="navExpandAll" class="ghost nav-toolbar-btn" type="button" title="Expand all groups">All</button>
+            </div>
+          </div>
+          <div id="sidebarNavPinned" class="nav-quick-strip" hidden>
+            <p class="nav-section-kicker">Pinned</p>
+            <div id="sidebarNavPinnedList" class="nav-quick-list" role="list"></div>
+          </div>
+          <div id="sidebarNavRecent" class="nav-quick-strip" hidden>
+            <p class="nav-section-kicker">Recent</p>
+            <div id="sidebarNavRecentList" class="nav-quick-list" role="list"></div>
+          </div>
+          <div id="sidebarNavList" class="nav-list">
+          <p class="nav-section-kicker">Plane map</p>
+          <button class="nav-item nav-item-home active" type="button" data-view="overview" data-rail-label="OV" aria-current="page" title="Control plane overview">
+            <span class="nav-item-main">
+              <span class="nav-item-label">Overview</span>
+              <span class="nav-item-hint">Control plane</span>
+            </span>
+            <span class="nav-item-code" aria-hidden="true">OV</span>
+          </button>
 
-          <div class="nav-group" data-nav-group>
-            <button class="nav-group-toggle" type="button" aria-expanded="true">Configuration</button>
-            <div class="nav-submenu">
-              <button class="nav-item" data-view="runtime-config">Runtime Config</button>
-              <button class="nav-item" data-view="providers">Providers</button>
-              <button class="nav-item" data-view="modules">Modules</button>
-              <button class="nav-item" data-view="agents">Agents</button>
-              <button class="nav-item" data-view="agentic">Agentic</button>
+          <p class="nav-section-kicker nav-section-kicker-core">Core capability</p>
+          <button class="nav-item nav-item-primary nav-item-core" type="button" data-view="orchestration" data-rail-label="FS" title="Flow Studio — core governed workflow canvas">
+            <span class="nav-item-main">
+              <span class="nav-item-label">Flow Studio</span>
+              <span class="nav-item-hint">Design · Govern · Run</span>
+            </span>
+            <span class="nav-core-badge" aria-hidden="true">CORE</span>
+          </button>
+
+          <div class="nav-group" data-nav-group data-nav-group-id="ops" data-rail-group="IN" title="Inference plane">
+            <button
+              class="nav-group-toggle"
+              type="button"
+              id="navGroupOpsToggle"
+              aria-expanded="false"
+              aria-controls="navGroupOpsMenu"
+            >
+              <span class="nav-group-toggle-copy">
+                <span class="nav-group-toggle-label">Inference plane <span class="nav-group-code" aria-hidden="true">IN</span></span>
+                <span class="nav-group-toggle-meta">Operate</span>
+              </span>
+              <span class="nav-group-count" aria-hidden="true">3</span>
+              <span class="nav-group-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="nav-submenu" id="navGroupOpsMenu" role="group" aria-label="Inference plane" hidden>
+              <button class="nav-item" type="button" data-view="playground" data-rail-label="PG" title="Prompt laboratory">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Playground</span>
+                  <span class="nav-item-hint">Laboratory</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">PG</span>
+              </button>
+              <button class="nav-item" type="button" data-view="benchmark-scan" data-rail-label="BS" title="Quality &amp; posture exams">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Benchmark &amp; Scan</span>
+                  <span class="nav-item-hint">Posture exams</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">BS</span>
+              </button>
+              <button class="nav-item" type="button" data-view="routing-gateway" data-rail-label="RG" title="Inference control plane">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Routing &amp; Gateway</span>
+                  <span class="nav-item-hint">Inference</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">RG</span>
+              </button>
             </div>
           </div>
 
-          <div class="nav-group" data-nav-group>
-            <button class="nav-group-toggle" type="button" aria-expanded="true">Operations</button>
-            <div class="nav-submenu">
-              <button class="nav-item" data-view="playground">Playground</button>
-              <button class="nav-item" data-view="benchmark-scan">Benchmark & Scan</button>
-              <button class="nav-item" data-view="routing-gateway">Routing & Gateway</button>
-              <button class="nav-item" data-view="orchestration">Flow Orchestration</button>
+          <div class="nav-group" data-nav-group data-nav-group-id="config" data-rail-group="TF" title="Trust fabric">
+            <button
+              class="nav-group-toggle"
+              type="button"
+              id="navGroupConfigToggle"
+              aria-expanded="false"
+              aria-controls="navGroupConfigMenu"
+            >
+              <span class="nav-group-toggle-copy">
+                <span class="nav-group-toggle-label">Trust fabric <span class="nav-group-code" aria-hidden="true">TF</span></span>
+                <span class="nav-group-toggle-meta">Configure</span>
+              </span>
+              <span class="nav-group-count" aria-hidden="true">5</span>
+              <span class="nav-group-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="nav-submenu" id="navGroupConfigMenu" role="group" aria-label="Trust fabric" hidden>
+              <button class="nav-item" type="button" data-view="runtime-config" data-rail-label="RC" title="Plane defaults">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Runtime Config</span>
+                  <span class="nav-item-hint">Defaults</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">RC</span>
+              </button>
+              <button class="nav-item" type="button" data-view="providers" data-rail-label="PR" title="Provider trust fabric">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Providers</span>
+                  <span class="nav-item-hint">Secrets</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">PR</span>
+              </button>
+              <button class="nav-item" type="button" data-view="modules" data-rail-label="MD" title="Artifact catalog">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Modules</span>
+                  <span class="nav-item-hint">Catalog</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">MD</span>
+              </button>
+              <button class="nav-item" type="button" data-view="agents" data-rail-label="AG" title="Agent registry">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Agents</span>
+                  <span class="nav-item-hint">Registry</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">AG</span>
+              </button>
+              <button class="nav-item" type="button" data-view="agentic" data-rail-label="AC" title="Readiness certification">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Agentic</span>
+                  <span class="nav-item-hint">Readiness</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">AC</span>
+              </button>
             </div>
           </div>
 
-          <div class="nav-group" data-nav-group>
-            <button class="nav-group-toggle" type="button" aria-expanded="false">Governance</button>
-            <div class="nav-submenu" hidden>
-              <button class="nav-item" data-view="discovery">Discovery</button>
-              <button class="nav-item" data-view="cost">Cost</button>
-              <button class="nav-item" data-view="audit">Audit</button>
-              <button class="nav-item" data-view="compliance">Compliance</button>
-              <button class="nav-item" data-view="observability">Observability</button>
-              <button class="nav-item" data-view="security">Security</button>
-              <button class="nav-item" data-view="browser-security">GuardBridge</button>
+          <div class="nav-group" data-nav-group data-nav-group-id="gov" data-rail-group="EV" title="Evidence &amp; spend">
+            <button
+              class="nav-group-toggle"
+              type="button"
+              id="navGroupGovToggle"
+              aria-expanded="false"
+              aria-controls="navGroupGovMenu"
+            >
+              <span class="nav-group-toggle-copy">
+                <span class="nav-group-toggle-label">Evidence &amp; spend <span class="nav-group-code" aria-hidden="true">EV</span></span>
+                <span class="nav-group-toggle-meta">Govern</span>
+              </span>
+              <span class="nav-group-count" aria-hidden="true">7</span>
+              <span class="nav-group-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="nav-submenu" id="navGroupGovMenu" role="group" aria-label="Evidence and spend" hidden>
+              <button class="nav-item" type="button" data-view="compliance" data-rail-label="CM" title="Control attestation">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Compliance</span>
+                  <span class="nav-item-hint">Attestation</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">CM</span>
+              </button>
+              <button class="nav-item" type="button" data-view="cost" data-rail-label="CT" title="Spend ledger">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Cost</span>
+                  <span class="nav-item-hint">Spend ledger</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">CT</span>
+              </button>
+              <button class="nav-item" type="button" data-view="observability" data-rail-label="OB" title="Signal lineage">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Observability</span>
+                  <span class="nav-item-hint">Lineage</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">OB</span>
+              </button>
+              <button class="nav-item" type="button" data-view="security" data-rail-label="SC" title="Identity &amp; access">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Security</span>
+                  <span class="nav-item-hint">Access</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">SC</span>
+              </button>
+              <button class="nav-item" type="button" data-view="browser-security" data-rail-label="GB" title="Endpoint governance">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">GuardBridge</span>
+                  <span class="nav-item-hint">Endpoint</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">GB</span>
+              </button>
+              <button class="nav-item" type="button" data-view="audit" data-rail-label="AU" title="Evidence ledger">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Audit</span>
+                  <span class="nav-item-hint">Evidence</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">AU</span>
+              </button>
+              <button class="nav-item" type="button" data-view="discovery" data-rail-label="DI" title="Inventory plane">
+                <span class="nav-item-main">
+                  <span class="nav-item-label">Discovery</span>
+                  <span class="nav-item-hint">Inventory</span>
+                </span>
+                <span class="nav-item-code" aria-hidden="true">DI</span>
+              </button>
             </div>
           </div>
+          </div>
+          <p id="sidebarNavFilterEmpty" class="nav-filter-empty mono" hidden>No matching consoles.</p>
         </nav>
 
-        <section class="panel quick-search-panel" aria-label="Global search section">
-          <h2>Quick Find</h2>
-          <label>
-            Search views and workflows
-            <div class="global-search-inline">
-              <input id="sidebarGlobalSearchInput" type="search" placeholder="e.g. playground, routing, compliance" autocomplete="off" />
-              <button id="sidebarGlobalSearchButton" class="ghost global-search-btn" type="button">Search</button>
-            </div>
-          </label>
-          <div id="sidebarGlobalSearchResults" class="global-search-results sidebar-global-results" hidden></div>
-        </section>
+        <details class="panel quick-search-panel sidebar-collapsible-panel">
+          <summary>Plane find</summary>
+          <div class="sidebar-collapsible-body">
+            <label>
+              Search ledgers and workflows
+              <div class="global-search-inline">
+                <input id="sidebarGlobalSearchInput" type="search" placeholder="e.g. spend, routes, audit" autocomplete="off" />
+                <button id="sidebarGlobalSearchButton" class="ghost global-search-btn" type="button">Go</button>
+              </div>
+            </label>
+            <div id="sidebarGlobalSearchResults" class="global-search-results sidebar-global-results" hidden></div>
+          </div>
+        </details>
 
-        <details class="panel settings-panel">
-          <summary>Session Context</summary>
-          <div class="settings-panel-body session-compact">
+        <details class="panel settings-panel sidebar-collapsible-panel">
+          <summary>Session context</summary>
+          <div class="settings-panel-body session-compact sidebar-collapsible-body">
             <label>
               Environment Profile
               <select id="environmentProfile">
                 <option value="local">Local</option>
+                <option value="plane-split">Plane Split</option>
                 <option value="stage">Stage</option>
                 <option value="prod">Prod</option>
                 <option value="custom">Custom</option>
@@ -91,6 +298,14 @@
               API Base URL
               <input id="apiBase" type="text" value="http://127.0.0.1:8000" />
             </label>
+            <label>
+              Gateway API Base (optional)
+              <input id="gatewayApiBase" type="text" placeholder="e.g. http://127.0.0.1:8002" value="" />
+            </label>
+            <p class="field-help">
+              When set, inference paths (<code>/v1/chat</code>, <code>/rag</code>, …) use the gateway base;
+              admin stays on API Base. Use with compose profile <code>plane-split</code>.
+            </p>
             <label>
               Actor Role
               <select id="actorRole">
@@ -111,7 +326,7 @@
             <div id="loginControls">
               <label>
                 Login Username
-                <input id="loginUsername" type="text" value="master-admin" placeholder="master-admin" />
+                <input id="loginUsername" type="text" value="admin" placeholder="admin" />
               </label>
               <label>
                 Login Password
@@ -140,6 +355,7 @@
               </div>
               <ul id="profileHealthList" class="profile-health-list mono">
                 <li data-profile="local" data-status="--">Local: --</li>
+                <li data-profile="plane-split" data-status="--">Plane-split: --</li>
                 <li data-profile="stage" data-status="--">Stage: --</li>
                 <li data-profile="prod" data-status="--">Prod: --</li>
               </ul>
@@ -159,48 +375,77 @@
           </div>
         </details>
 
-        <footer class="sidebar-footer">
-          <p class="sidebar-footer-title">Platform Access</p>
-          <div class="sidebar-footer-links">
-            <a href="./index.html">Dashboard</a>
-            <a href="./login.html">Login</a>
-            <a href="./500.html">Incident Guide</a>
-            <a href="./404.html">Route Guide</a>
+        <details class="panel sidebar-footer sidebar-collapsible-panel" id="sidebarPlanePanel">
+          <summary class="sidebar-footer-summary" id="sidebarPlaneSummary" title="Plane status — expand for edition links">
+            <span class="sidebar-footer-summary-copy">
+              <span class="sidebar-footer-summary-title">Governance Plane</span>
+              <span class="sig-plane-status is-ok" id="sidebarPlaneStatus" aria-live="polite" title="Plane online">
+                <span class="sig-plane-status-dot" aria-hidden="true"></span>
+                <span id="sidebarPlaneStatusText">Plane online</span>
+              </span>
+            </span>
+          </summary>
+          <div class="sidebar-collapsible-body sidebar-footer-body">
+            <p class="sidebar-footer-title">AgentHub Governance Plane</p>
+            <p class="sig-edition">Institutional edition · CPLI-aware</p>
+            <div class="sidebar-footer-links">
+              <a href="./">Dashboard</a>
+              <a href="./500.html">Incident Guide</a>
+              <a href="./404.html">Route Guide</a>
+            </div>
           </div>
-          <p class="mono sidebar-footer-note">Local-first console with backend-backed data views.</p>
-        </footer>
+        </details>
       </aside>
 
       <main id="mainContent" class="content" tabindex="-1">
         <header class="topbar app-header">
           <div class="app-header-title-wrap">
-            <button id="sidebarToggle" class="ghost icon-button sidebar-toggle" type="button" aria-label="Open navigation menu" aria-expanded="false" aria-controls="sidebarNav" title="Menu">
+            <button id="sidebarToggle" class="ghost icon-button sidebar-toggle" type="button" aria-label="Open navigation menu" aria-expanded="false" aria-controls="sidebar" title="Menu">
               <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
                 <path d="M4 7h16v2H4V7zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor"></path>
               </svg>
             </button>
             <div class="app-header-title">
-              <img class="app-header-logo" src="./logo.svg" alt="AgentHub logo" />
               <div>
-                <p class="header-topline">Live Operations Workspace</p>
-                <p class="eyebrow">Enterprise Multi-Agent Platform</p>
+                <nav id="viewBreadcrumb" class="view-breadcrumb" aria-label="Console location">
+                  <span id="viewBreadcrumbGroup">Control plane</span>
+                  <span class="view-breadcrumb-sep" aria-hidden="true">/</span>
+                  <span id="viewBreadcrumbPage">Overview</span>
+                </nav>
+                <p id="viewCoreSeal" class="view-core-seal" hidden aria-hidden="true">
+                  <span class="view-core-seal-mark">CORE</span>
+                  <span class="view-core-seal-label">Flow Studio · Canvas</span>
+                </p>
+                <p id="viewKicker" class="sig-kicker view-domain-kicker">Control plane</p>
                 <h2 id="viewTitle">Overview</h2>
-                <p id="viewSubtitle" class="view-subtitle">Platform health, spend, and operator shortcuts.</p>
+                <p id="viewSubtitle" class="view-subtitle">Governed posture, spend ledger, and plane shortcuts.</p>
+                <p id="viewMetaLine" class="view-meta-line" aria-live="polite">
+                  <span id="viewLastRefreshed">Ready</span>
+                </p>
               </div>
             </div>
           </div>
           <div class="header-right-rail">
             <div class="global-search" role="search">
               <div class="global-search-inline">
-                <input id="globalSearchInput" type="search" placeholder="Search views, cards, and forms" aria-label="Global search" autocomplete="off" />
+                <input id="globalSearchInput" type="search" placeholder="Search views…  /  · recent on focus" aria-label="Global search. Press slash to focus. Empty focus shows recent consoles." autocomplete="off" />
                 <button id="globalSearchButton" class="ghost global-search-btn" type="button">Search</button>
               </div>
               <div id="globalSearchResults" class="global-search-results" hidden></div>
             </div>
             <div class="header-actions header-control-box">
+              <span class="keyboard-hint" title="Press / to focus search" aria-hidden="true">/</span>
+              <button id="shortcutsHelpButton" class="ghost icon-button" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+                <span aria-hidden="true">?</span>
+              </button>
               <button id="headerSignOut" class="ghost icon-button header-signout" type="button" aria-label="Sign out" title="Sign out">
                 <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
                   <path d="M10 17v-2h4v-2h-4v-2l-4 3 4 3zm9-14h-8a2 2 0 0 0-2 2v4h2V5h8v14h-8v-4H9v4a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z" fill="currentColor"></path>
+                </svg>
+              </button>
+              <button id="densityToggle" class="ghost icon-button" type="button" aria-label="Toggle compact density" title="Compact density" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                  <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h10v2H4v-2z" fill="currentColor"></path>
                 </svg>
               </button>
               <button id="themeToggle" class="ghost icon-button" type="button" aria-label="Toggle theme" title="Toggle theme"></button>
@@ -211,38 +456,28 @@
               </button>
             </div>
             <div class="header-user-boxes">
+              <span class="sig-seal header-plane-seal" title="Operator session on governance plane">Session governed</span>
               <div class="header-identity-chip" role="status" aria-live="polite">
-                <span id="headerLoggedInAvatar" class="header-identity-avatar" aria-hidden="true"></span>
+                <span id="headerLoggedInAvatar" class="header-identity-avatar" aria-hidden="true">AD</span>
                 <div class="header-identity-meta">
-                  <strong id="headerLoggedInUser">--</strong>
-                  <span id="headerLoggedInRole" class="mono">--</span>
-                  <span id="headerLoggedInEnv" class="mono">--</span>
+                  <strong id="headerLoggedInUser">Admin User</strong>
+                  <span class="header-identity-subline">
+                    <span id="headerLoggedInRole" class="mono">--</span>
+                    <span class="header-identity-sep" aria-hidden="true">·</span>
+                    <span id="headerLoggedInEnv" class="mono">--</span>
+                  </span>
                 </div>
               </div>
             </div>
           </div>
         </header>
 
-        <section class="trust-ribbon" aria-label="Trust and compliance">
-          <p class="trust-title">Operational Trust</p>
-          <div class="trust-badges">
-            <span class="badge">SOC 2 Controls</span>
-            <span class="badge">PCI-DSS Aligned</span>
-            <span class="badge">24x7 Monitoring</span>
-            <span class="badge status-ok" id="statusBadge" role="status" aria-live="polite">Status: Monitoring</span>
-          </div>
-          <p id="statusAction" class="status-action" aria-live="polite">Expected action: Monitor only. No intervention required.</p>
-        </section>
-
         <div id="prodGuardBanner" class="guard-banner" hidden>
           Production profile is active. Write actions require explicit confirmation.
         </div>
         <div id="platformMaintenanceBanner" class="guard-banner platform-maintenance-banner" role="alert" aria-live="assertive" hidden></div>
         <div id="platformDowntimeBanner" class="error-banner platform-downtime-banner" role="alert" aria-live="assertive" hidden></div>
-        <div id="platformSlowPerformanceBanner" class="guard-banner platform-perf-banner" role="status" aria-live="polite" hidden>
-          <span class="platform-perf-banner-text"></span>
-          <button type="button" class="ghost platform-perf-feedback-btn" id="operatorFeedbackCapturePerf">Report slowness</button>
-        </div>
+        <div id="platformControlPlaneBanner" class="guard-banner platform-control-plane-banner" role="status" aria-live="polite" hidden></div>
         <div id="globalErrorBanner" class="error-banner" role="alert" aria-live="assertive" hidden>
           <p id="globalErrorMessage">Service incident detected.</p>
           <a id="incidentGuidanceLink" href="./500.html">Open Incident Guidance</a>
@@ -252,7 +487,10 @@
 
         <aside id="operatorFeedbackPanel" class="operator-feedback-panel card" hidden aria-label="Operator feedback">
           <div class="card-head">
-            <h3>Send Feedback</h3>
+            <div>
+              <p class="sig-kicker">Operator signal</p>
+              <h3>Send Feedback</h3>
+            </div>
             <button type="button" class="ghost" id="operatorFeedbackClose">Close</button>
           </div>
           <form id="operatorFeedbackForm" class="form-grid">
@@ -284,26 +522,66 @@
           <p id="operatorFeedbackResult" class="mono" aria-live="polite"></p>
         </aside>
         <button type="button" class="operator-feedback-fab" id="operatorFeedbackFab" aria-label="Open feedback form">Feedback</button>
-
-        <footer class="public-footer">
-          <p>AgentHub Public Console</p>
-          <p class="mono">Get in touch with Platform Ops for onboarding and support.</p>
-          <p class="mono">Copyright © 2026 AgentHub. All rights reserved.</p>
-        </footer>
+        <button type="button" class="scroll-top-fab" id="scrollTopFab" aria-label="Back to top" hidden>↑</button>
       </main>
+    </div>
+
+    <div id="shortcutsOverlay" class="shortcuts-overlay" hidden>
+      <div class="shortcuts-dialog" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
+        <div class="shortcuts-dialog-head">
+          <div>
+            <p class="sig-kicker">Operator aids</p>
+            <h2 id="shortcutsTitle">Keyboard shortcuts</h2>
+          </div>
+          <button type="button" class="ghost" id="shortcutsClose" aria-label="Close shortcuts">Close</button>
+        </div>
+        <ul class="shortcuts-list">
+          <li><kbd>/</kbd> <span>Focus global search</span></li>
+          <li><kbd>?</kbd> <span>Open this shortcuts guide</span></li>
+          <li><kbd>Esc</kbd> <span>Close search, feedback, or this guide</span></li>
+          <li><kbd>←</kbd><kbd>→</kbd> <span>Move between console tabs</span></li>
+          <li><kbd>↑</kbd><kbd>↓</kbd> <span>Navigate sidebar menu items</span></li>
+          <li><kbd>g</kbd> then <kbd>o</kbd> <span>Go to Overview</span></li>
+          <li><kbd>g</kbd> then <kbd>f</kbd> <span>Go to Flow Studio</span></li>
+          <li><kbd>g</kbd> then <kbd>p</kbd> <span>Go to Playground</span></li>
+          <li><kbd>g</kbd> then <kbd>r</kbd> <span>Go to Routing &amp; Gateway</span></li>
+          <li><kbd>g</kbd> then <kbd>b</kbd> <span>Go to Benchmark &amp; Scan</span></li>
+          <li><kbd>g</kbd> then <kbd>c</kbd> <span>Go to Compliance</span></li>
+          <li><kbd>g</kbd> then <kbd>a</kbd> <span>Go to Audit</span></li>
+          <li><kbd>[</kbd> <span>Minimize / expand sidebar (desktop)</span></li>
+          <li><kbd>]</kbd> <span>Collapse nav groups to active only</span></li>
+          <li><kbd>\</kbd> <span>Focus sidebar nav filter</span></li>
+          <li><kbd>dblclick</kbd> <span>Rail code → expand sidebar on that console</span></li>
+          <li><kbd>/</kbd> <span>empty search shows recent consoles</span></li>
+          <li><kbd>.</kbd> <span>Focus this page’s Search field</span></li>
+        </ul>
+        <p class="shortcuts-note">Pin consoles with ☆ for a Pinned strip; Recent updates as you navigate. Filter / Collapse / Active / All shrink the plane map. In rail mode, hover shows full labels; markers are IN · TF · EV; Flow Studio is FS. Density and theme toggles live in the header.</p>
+      </div>
+    </div>
+
+    <div id="confirmOverlay" class="confirm-overlay" hidden>
+      <div class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+        <p class="sig-kicker">Governance gate</p>
+        <h2 id="confirmTitle">Confirm action</h2>
+        <p id="confirmMessage" class="confirm-message">Continue?</p>
+        <div class="confirm-actions">
+          <button type="button" class="ghost" id="confirmCancel">Cancel</button>
+          <button type="button" class="primary" id="confirmOk">Confirm</button>
+        </div>
+      </div>
     </div>
 
     <script src="./js/constants.js"></script>
     <script src="./js/api-cache.js"></script>
-    <script src="./js/api-client.js"></script>
+    <script src="./js/api-client.js?v=20260808-session5"></script>
     <script src="./js/ui-coverage.js"></script>
     <script src="./js/platform-status.js"></script>
     <script src="./js/operator-feedback.js"></script>
-    <script src="./js/view-loader.js"></script>
-    <script src="./js/ui-kit.js"></script>
+    <script src="./js/view-loader.js?v=20260804-ui41"></script>
+    <script src="./js/ui-kit.js?v=20260804-ui41"></script>
     <script src="./js/view-search.js"></script>
     <script src="./js/table-search.js"></script>
-    <script src="./js/orchestration-registry.js?v=20260612-14"></script>
-    <script src="./app.js?v=20260614-02"></script>
+    <script src="./js/orchestration-registry.js?v=20260804-ui41"></script>
+    <script src="./app.js?v=20260808-session7"></script>
   </body>
 </html>

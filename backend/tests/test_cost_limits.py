@@ -527,10 +527,176 @@ def test_team_soft_budget_alert_is_emitted_in_anomalies():
 
     anomalies = client.get("/cost/anomalies", headers=_admin_headers("budget-team-soft-alert-reader"))
     assert anomalies.status_code == 200
-    assert any(
-        row["scope_type"] == "team" and row["scope_id"] == team_id and row["anomaly_type"] == "team_soft_budget_alert"
+    soft_row = next(
+        row
         for row in anomalies.json()
+        if row["scope_type"] == "team" and row["scope_id"] == team_id and row["anomaly_type"] == "team_soft_budget_alert"
     )
+    assert soft_row["severity"] in {"medium", "high"}
+    assert soft_row["effective_budget_cents"] is not None
+    assert soft_row["utilization_percent"] is not None
+    assert soft_row["utilization_percent"] >= soft_row.get("soft_limit_percent") or soft_row["utilization_percent"] > 0
+    assert soft_row["recommended_action"]
+    assert soft_row["window_type"]
+    assert soft_row["budget_policy_id"]
+    assert soft_row["soft_limit_percent"] is not None
+    assert soft_row["hard_limit_percent"] is not None
+
+    filtered = client.get(
+        "/cost/anomalies",
+        headers=_admin_headers("budget-team-soft-alert-reader"),
+        params={"scope_type": "team", "severity": soft_row["severity"], "min_utilization": 1},
+    )
+    assert filtered.status_code == 200
+    assert any(row["scope_id"] == team_id for row in filtered.json())
+    assert all(str(row.get("scope_type")) == "team" for row in filtered.json())
+
+    listed = client.get(
+        f"/cost/budgets?status=active&scope_type=team&scope_id={team_id}&limit=10&offset=0",
+        headers=_admin_headers("budget-team-soft-alert-reader"),
+    )
+    assert listed.status_code == 200
+    budget_row = next(row for row in listed.json() if row["scope_id"] == team_id)
+    assert budget_row["decision"] in {"allow", "warn", "deny"}
+    assert budget_row["recommended_action"]
+    assert budget_row["utilization_percent"] >= 0
+    assert budget_row["decision"] == "warn"
+    assert budget_row.get("soft_alert_active") is True
+    assert "hours_spend_cents" in budget_row
+    assert soft_row["anomaly_id"] == f"{soft_row['budget_policy_id']}:soft"
+
+    again = client.get("/cost/anomalies", headers=_admin_headers("budget-team-soft-alert-reader"))
+    assert again.status_code == 200
+    again_row = next(
+        row
+        for row in again.json()
+        if row["scope_type"] == "team" and row["scope_id"] == team_id and row["anomaly_type"] == "team_soft_budget_alert"
+    )
+    assert again_row["anomaly_id"] == soft_row["anomaly_id"]
+    assert soft_row.get("decision") == "warn"
+    assert "hours_spend_cents" in soft_row
+
+    ack = client.post(
+        f"/cost/budgets/{soft_row['budget_policy_id']}/soft-alert/acknowledge",
+        json={"reason": "triaged"},
+        headers=_admin_headers("budget-team-soft-alert"),
+    )
+    assert ack.status_code == 200
+    assert ack.json().get("last_soft_alert_at") is not None
+
+    after_ack = client.get("/cost/anomalies", headers=_admin_headers("budget-team-soft-alert-reader"))
+    assert after_ack.status_code == 200
+    assert not any(
+        row["scope_id"] == team_id and row["anomaly_type"] == "team_soft_budget_alert"
+        for row in after_ack.json()
+    )
+
+    bumped = client.post(
+        f"/cost/budgets/{soft_row['budget_policy_id']}/increase-temporary",
+        json={"increase_cents": 250, "duration_minutes": 30, "reason": "incident"},
+        headers=_admin_headers("budget-team-soft-alert"),
+    )
+    assert bumped.status_code == 200
+    assert bumped.json()["temporary_increase_cents"] == 250
+    assert bumped.json().get("temporary_increase_active") is True
+
+    cleared = client.post(
+        f"/cost/budgets/{soft_row['budget_policy_id']}/increase-temporary/clear",
+        headers=_admin_headers("budget-team-soft-alert"),
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["temporary_increase_cents"] == 0
+    assert cleared.json().get("temporary_increase_active") is False
+
+
+def test_policy_evaluate_resolves_user_actor_alias_and_environment_filter():
+    actor_id = f"alias-actor-{uuid4().hex[:8]}"
+    admin_id = f"alias-admin-{uuid4().hex[:8]}"
+
+    created = client.post(
+        "/cost/budgets",
+        json={
+            "scope_type": "actor",
+            "scope_id": actor_id,
+            "budget_amount_cents": 1000,
+            "window_type": "daily",
+            "soft_limit_percent": 80,
+            "hard_limit_percent": 100,
+            "soft_alert_enabled": True,
+        },
+        headers=_admin_headers(admin_id),
+    )
+    assert created.status_code == 200
+    policy_id = created.json()["budget_policy_id"]
+
+    db = SessionLocal()
+    try:
+        db.add(
+            CostEvent(
+                cost_event_id=str(uuid4()),
+                request_id=f"req-alias-{actor_id}",
+                trace_id=f"trace-alias-{actor_id}",
+                session_id=f"session-alias-{actor_id}",
+                agent_id=f"agent-alias-{actor_id}",
+                owner_scope=f"user:{actor_id}",
+                environment="prod",
+                model_name="gpt-test",
+                endpoint_family="responses",
+                input_tokens=1,
+                output_tokens=1,
+                estimated_cost_cents=900,
+                currency="USD",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    evaluated = client.post(
+        "/cost/policies/evaluate",
+        json={"scope_type": "user", "scope_id": actor_id, "window_type": "daily", "environment": "prod"},
+        headers=_admin_headers(admin_id),
+    )
+    assert evaluated.status_code == 200
+    body = evaluated.json()
+    assert body["budget_policy_id"] == policy_id
+    assert body["resolved_budget_scope_type"] == "actor"
+    assert body["environment"] == "prod"
+    assert body["spend_cents"] >= 900
+    assert body["hours_spend_cents"] >= 900
+    assert body["decision"] == "warn"
+    assert body["soft_limit_alert"] is True
+
+    filtered_out = client.post(
+        "/cost/policies/evaluate",
+        json={"scope_type": "user", "scope_id": actor_id, "window_type": "daily", "environment": "dev"},
+        headers=_admin_headers(admin_id),
+    )
+    assert filtered_out.status_code == 200
+    assert int(filtered_out.json().get("spend_cents") or 0) == 0
+
+    listed = client.get(
+        f"/cost/budgets?status=active&scope_type=actor&scope_id={actor_id}&environment=prod",
+        headers=_admin_headers(admin_id),
+    )
+    assert listed.status_code == 200
+    listed_row = next(row for row in listed.json() if row["budget_policy_id"] == policy_id)
+    assert listed_row["current_spend_cents"] >= 900
+    assert listed_row["hours_spend_cents"] >= 900
+    assert listed_row["decision"] == "warn"
+
+    limits = client.post(
+        "/cost/limits/evaluate",
+        json={"actor_id": actor_id, "window_type": "daily", "environment": "prod"},
+        headers=_admin_headers(admin_id),
+    )
+    assert limits.status_code == 200
+    limits_body = limits.json()
+    assert limits_body.get("environment") == "prod"
+    assert any(scope.get("scope_id") == actor_id for scope in limits_body.get("scopes_evaluated") or [])
+    user_scope = next(scope for scope in limits_body["scopes_evaluated"] if scope.get("scope_id") == actor_id)
+    assert "hours_spend_cents" in user_scope
+    assert user_scope["hours_spend_cents"] >= 900
 
 
 def test_cost_limit_evaluate_auto_creates_default_budget_for_jwt_team():

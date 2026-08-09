@@ -40,6 +40,91 @@ def test_default_siem_rules_include_assistants_parity_actions():
     assert "gateway.fine_tuning.*" in rule_patterns
     assert "gateway.passthrough.execute" in rule_patterns
     assert "compliance.evidence.export" in rule_patterns
+    assert "secret_provider.value.*" in rule_patterns
+    assert "auth.directory.user.unlock*" in rule_patterns
+    assert "gateway.least_privilege.apply*" in rule_patterns
+    assert "security.insecure_configuration*" in rule_patterns
+
+
+def test_unlock_and_least_privilege_match_default_siem_rules():
+    unlock = AuditEvent(
+        audit_event_id=str(uuid4()),
+        actor_type="user",
+        actor_id="actor-unlock-siem",
+        action_type="auth.directory.user.unlock",
+        resource_type="directory_user",
+        resource_id="user-1",
+        trace_id=f"trace-unlock-siem-{uuid4().hex[:8]}",
+        decision_outcome="allow",
+        policy_version="v1",
+    )
+    abuse = AuditEvent(
+        audit_event_id=str(uuid4()),
+        actor_type="user",
+        actor_id="actor-unlock-siem",
+        action_type="auth.directory.user.unlock.abuse_suspected",
+        resource_type="directory_user",
+        resource_id="user-1",
+        trace_id=f"trace-unlock-abuse-{uuid4().hex[:8]}",
+        decision_outcome="deny",
+        policy_version="v1",
+    )
+    lp = AuditEvent(
+        audit_event_id=str(uuid4()),
+        actor_type="user",
+        actor_id="actor-lp-siem",
+        action_type="gateway.least_privilege.apply",
+        resource_type="gateway_recommendation",
+        resource_id="rec-1",
+        trace_id=f"trace-lp-siem-{uuid4().hex[:8]}",
+        decision_outcome="allow",
+        policy_version="v1",
+    )
+    assert any(row["rule_id"] == "siem-directory-user-unlock" for row in match_siem_rules_for_event(unlock, DEFAULT_SIEM_ALERT_RULES))
+    assert any(row["rule_id"] == "siem-directory-user-unlock" for row in match_siem_rules_for_event(abuse, DEFAULT_SIEM_ALERT_RULES))
+    assert any(row["rule_id"] == "siem-least-privilege-apply" for row in match_siem_rules_for_event(lp, DEFAULT_SIEM_ALERT_RULES))
+
+
+def test_secret_provider_value_audit_matches_default_siem_rule():
+    event = AuditEvent(
+        audit_event_id=str(uuid4()),
+        actor_type="user",
+        actor_id="actor-secret-siem",
+        action_type="secret_provider.value.upsert",
+        resource_type="secret_provider_value",
+        resource_id="prov-1/kv/path",
+        trace_id=f"trace-secret-siem-{uuid4().hex[:8]}",
+        decision_outcome="allow",
+        policy_version="v1",
+    )
+    matched = match_siem_rules_for_event(event, DEFAULT_SIEM_ALERT_RULES)
+    assert any(row["rule_id"] == "siem-secret-provider-value-mutations" for row in matched)
+
+
+def test_audit_create_evaluates_siem_for_secret_provider_value_prefix():
+    """Ensure create_audit_event dispatches SIEM for secret_provider.value.* (not only denies)."""
+    from unittest.mock import MagicMock
+
+    from app.services import audit as audit_mod
+
+    db = MagicMock()
+    db.query.return_value.filter_by.return_value.first.return_value = None
+    dispatched: list[object] = []
+
+    with patch(
+        "app.services.siem_alert_rules.dispatch_siem_alerts_for_event",
+        side_effect=lambda *_a, **_k: dispatched.append(True) or [],
+    ):
+        audit_mod.create_audit_event(
+            db,
+            actor_id="actor-1",
+            action_type="secret_provider.value.read",
+            resource_type="secret_provider_value",
+            resource_id="prov-1/ref",
+            trace_id="trace-secret-prefix",
+            decision_outcome="allow",
+        )
+    assert dispatched, "SIEM dispatch should run for secret_provider.value.* allow events"
 
 
 def test_match_siem_rules_for_deny_outcome():

@@ -4,9 +4,7 @@ import json
 import time
 from datetime import datetime
 from typing import TypedDict
-from urllib import error as url_error
 from urllib import parse as url_parse
-from urllib import request as url_request
 from uuid import uuid4
 
 
@@ -70,26 +68,36 @@ def deliver_escalation_notification(
     last_error: str | None = None
     while attempts < max_attempts:
         attempts += 1
-        req = url_request.Request(
-            normalized_destination,
-            method="POST",
-            data=encoded_payload,
-            headers={"Content-Type": "application/json"},
-        )
         try:
-            with url_request.urlopen(req, timeout=timeout_seconds) as response:
-                status = int(getattr(response, "status", 0) or 0)
-                if 200 <= status < 300:
-                    return DeliveryResult(
-                        delivered=True,
-                        attempts=attempts,
-                        receipt_id=receipt_id,
-                        delivery_status="sent",
-                        error_message=None,
-                    )
-                last_error = f"Webhook returned unexpected status code {status}."
-        except (url_error.URLError, url_error.HTTPError, TimeoutError) as exc:
-            last_error = str(exc)
+            from app.services.pinned_outbound_http import pinned_httpx_compatible_post
+
+            response = pinned_httpx_compatible_post(
+                normalized_destination,
+                content=encoded_payload,
+                headers={"Content-Type": "application/json"},
+                timeout=float(timeout_seconds),
+            )
+            status = int(getattr(response, "status_code", 0) or 0)
+            if 200 <= status < 300:
+                return DeliveryResult(
+                    delivered=True,
+                    attempts=attempts,
+                    receipt_id=receipt_id,
+                    delivery_status="sent",
+                    error_message=None,
+                )
+            last_error = f"Webhook returned unexpected status code {status}."
+        except Exception as exc:
+            detail = getattr(exc, "detail", None) or str(exc)
+            if "blocked" in str(detail).lower() or "ssrf" in str(detail).lower() or "webhook_url" in str(detail).lower():
+                return DeliveryResult(
+                    delivered=False,
+                    attempts=attempts,
+                    receipt_id=receipt_id,
+                    delivery_status="failed",
+                    error_message=f"Destination blocked by SSRF guard: {detail}"[:300],
+                )
+            last_error = str(detail)
 
         if attempts < max_attempts:
             time.sleep(0.2 * attempts)

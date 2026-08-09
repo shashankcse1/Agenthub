@@ -1,0 +1,30 @@
+{
+  "attestation_id": "PROG-LRS-2026-08-06",
+  "attested_on": "2026-08-06",
+  "authority_zeros": 0,
+  "band": "Governed velocity",
+  "clocks_zeros": 0,
+  "dimensions": {
+    "assurance": 8,
+    "authority": 8,
+    "clocks": 8,
+    "gates": 8,
+    "honesty": 8
+  },
+  "evidence": {
+    "board_resolution_id": "2026-08-06-AI-01",
+    "drill_results": "docs/governance/evidence/program-lrs-drill-results-2026-08-08.json",
+    "original_drill_results": "docs/governance/evidence/program-lrs-drill-results-2026-08-06.json",
+    "original_qbr_evidence": "docs/governance/evidence/qbr-snapshot-2026-08-06.json",
+    "policy": "AI-CTRL-001",
+    "qbr_evidence": "docs/governance/evidence/qbr-snapshot-2026-08-08.json",
+    "risk_appetite": "AI-RISK-001"
+  },
+  "formal_signoff_complete": true,
+  "honesty_note": "External claims must not exceed this scorecard; competitor #1 language still refused unless separately approved.",
+  "last_sustain_on": "2026-08-08",
+  "max_score": 40,
+  "program_mode": "single_owner_technology_committee",
+  "score": 40,
+  "scorer": "Program Owner + SecArch (consolidated)"
+}

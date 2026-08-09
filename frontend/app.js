@@ -8,21 +8,54 @@ function normalizeApiBaseAlias(rawBase) {
   return trimmed;
 }
 
+function sameOriginApiBase() {
+  try {
+    return String(window.location.origin || "").replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function defaultConsoleApiBase() {
+  return sameOriginApiBase() || "http://127.0.0.1:8000";
+}
+
+function readStoredApiBase() {
+  let stored = normalizeApiBaseAlias(localStorage.getItem("apiBase")) || defaultConsoleApiBase();
+  // Migrate cross-origin local API to same-origin UI proxy.
+  if (stored === "http://127.0.0.1:8000" || stored === "http://localhost:8000") {
+    stored = defaultConsoleApiBase();
+    localStorage.setItem("apiBase", stored);
+  }
+  return stored;
+}
+
 const state = {
-  apiBase: normalizeApiBaseAlias(localStorage.getItem("apiBase")) || "http://127.0.0.1:8000",
+  apiBase: readStoredApiBase(),
   gatewayApiBase: normalizeApiBaseAlias(localStorage.getItem("gatewayApiBase")) || "",
   actorRole: localStorage.getItem("actorRole") || "Master Admin",
   actorId: localStorage.getItem("actorId") || "ui-operator",
-  accessToken: localStorage.getItem("accessToken") || "",
+  // Session auth prefers httpOnly gb_session cookie; tab-scoped bearer bridges login→index.
+  accessToken: (() => {
+    try {
+      return String(sessionStorage.getItem("sessionBearer") || "").trim();
+    } catch {
+      return "";
+    }
+  })(),
+  sessionActive: localStorage.getItem("sessionActive") === "1",
+  approverAccessToken: "",
+  approverCosignUser: "",
   environmentProfile: localStorage.getItem("environmentProfile") || "local",
   mfaVerified: parseBooleanFlag(localStorage.getItem("mfaVerified"), true),
   theme: localStorage.getItem("theme") || (window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark"),
   density: localStorage.getItem("uiDensity") === "compact" ? "compact" : "comfortable",
+  signOutArmedAt: 0,
 };
 
 const ENVIRONMENT_PROFILES = {
   local: {
-    apiBase: "http://127.0.0.1:8000",
+    apiBase: defaultConsoleApiBase(),
     gatewayApiBase: "",
     actorRole: "Master Admin",
     actorId: "ui-operator",
@@ -34,13 +67,13 @@ const ENVIRONMENT_PROFILES = {
     actorId: "ui-operator",
   },
   stage: {
-    apiBase: "http://127.0.0.1:8000",
+    apiBase: defaultConsoleApiBase(),
     gatewayApiBase: "",
     actorRole: "Release Manager",
     actorId: "stage-operator",
   },
   prod: {
-    apiBase: "http://127.0.0.1:8000",
+    apiBase: defaultConsoleApiBase(),
     gatewayApiBase: "",
     actorRole: "Security Approver",
     actorId: "prod-operator",
@@ -405,6 +438,10 @@ const RUNTIME_SENSITIVE_CONFIG_KEYS = new Set([
   "gateway.mcp.servers_json",
   "gateway.vector_stores_json",
   "gateway.notification_channels_json",
+  "gateway.jit.decision_notify_json",
+  "gateway.nhi.iga_export_json",
+  "gateway.nhi.iga_deny_json",
+  "gateway.nhi.governance_json",
 ]);
 const runtimeRuleValidationState = new Map();
 const RUNTIME_RULE_STATUS_STORAGE_KEY = "runtimeRuleValidationState.v1";
@@ -458,6 +495,10 @@ let gatewayConfiguredModelValues = [];
 let gatewaySupportedModelCatalogRows = [];
 let gatewayModelPriorityRankByName = new Map();
 let platformAvailableModelsCache = { rows: [], policy: null, total: 0 };
+let inferenceReadinessCache = null;
+let playgroundProviderFilter = "";
+let gatewayOpsProviderFilter = "";
+let preferLiveReadyModels = true;
 let routePriorityProviderOptionsList = [];
 let agentModelPriorityRows = [];
 let gatewayCursorTokenConfigured = false;
@@ -3001,12 +3042,32 @@ function setLabeledSelectOptions(
   placeholderOption.hidden = true;
   select.appendChild(placeholderOption);
 
+  const grouped = new Map();
+  const ungrouped = [];
   options.forEach((item) => {
+    const groupName = String(item?.group || "").trim();
+    if (groupName) {
+      if (!grouped.has(groupName)) grouped.set(groupName, []);
+      grouped.get(groupName).push(item);
+      return;
+    }
+    ungrouped.push(item);
+  });
+
+  const appendOption = (parent, item) => {
     const option = document.createElement("option");
     option.value = item.value;
     option.textContent = item.label;
     if (item.title) option.title = item.title;
-    select.appendChild(option);
+    parent.appendChild(option);
+  };
+
+  ungrouped.forEach((item) => appendOption(select, item));
+  grouped.forEach((items, groupName) => {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = groupName;
+    items.forEach((item) => appendOption(optgroup, item));
+    select.appendChild(optgroup);
   });
 
   const values = options.map((item) => item.value);
@@ -3622,8 +3683,12 @@ const AI_PROVIDER_BINDING_NAMES = {
   mistral: "Mistral API Key",
   groq: "Groq API Key",
   azure: "Azure OpenAI Key",
+  "azure-openai": "Azure OpenAI Key",
   aws: "AWS Bedrock Credentials",
-  google: "Google API Key",
+  bedrock: "AWS Bedrock Credentials",
+  google: "Google Gemini API Key",
+  vertex: "Google Vertex Access Token",
+  deepseek: "DeepSeek API Key",
   perplexity: "Perplexity API Key",
   together: "Together API Key",
   fireworks: "Fireworks API Key",
@@ -3802,7 +3867,17 @@ function updateCredentialWizardSummary() {
     storage === "db"
       ? "Register a Platform DB secret backend (if needed), store the API key, then create a credential binding for your agent."
       : "Use your existing Vault/AWS/Azure backend ID from the Secret Providers table when storing the key.";
-  summary.textContent = `${AI_PROVIDER_BINDING_NAMES[aiProvider] || aiProvider}: store at ${secretRef || "custom path"}. ${storageHint}`;
+  const cloudHints = {
+    aws: " Bedrock: store JSON {access_key_id,secret_access_key,region} or enable AWS_BEDROCK_USE_DEFAULT_CHAIN / AWS_PROFILE on the API runtime. Then Seed/Sync Bedrock models.",
+    bedrock: " Bedrock: store JSON credentials or use the AWS default chain, then Seed/Sync Bedrock models.",
+    "azure-openai": " Azure: set AZURE_OPENAI_API_BASE (resource URL) + API key; deployment names are the model IDs. Use Discover/Sync Azure for live deployments.",
+    azure: " Azure: set AZURE_OPENAI_API_BASE (resource URL) + API key; prefer provider id azure-openai.",
+    google: " Gemini API: store GOOGLE_API_KEY-compatible secret, then Seed GCP or Discover live Gemini models.",
+    vertex: " Vertex: set VERTEX_PROJECT + VERTEX_LOCATION and an access token/API key on the API runtime, then Seed/Sync Vertex models.",
+    deepseek: " DeepSeek: store providers/deepseek/api-key and use deepseek-chat / deepseek-reasoner model IDs.",
+    xai: " xAI: store providers/xai/api-key; model IDs look like grok-4.",
+  };
+  summary.textContent = `${AI_PROVIDER_BINDING_NAMES[aiProvider] || aiProvider}: store at ${secretRef || "custom path"}. ${storageHint}${cloudHints[aiProvider] || ""}`;
 }
 
 function initCredentialSetupWizard() {
@@ -7032,16 +7107,26 @@ async function loadPlatformAvailableModels({ tenantId = "", providerType = "", f
   return platformAvailableModelsCache;
 }
 
+function isProviderLiveReady(providerType) {
+  const normalized = String(providerType || "").trim().toLowerCase();
+  if (!normalized || !inferenceReadinessCache) return false;
+  const row = (inferenceReadinessCache.providers || []).find(
+    (item) => String(item.provider_type || "").trim().toLowerCase() === normalized,
+  );
+  return Boolean(row?.live_ready);
+}
+
 function formatGatewayModelOptionLabel(modelName, row = null) {
   const catalogRow = row || findGatewayCatalogRow(modelName);
   const rank = gatewayModelPriorityRankByName.get(String(modelName || "").trim());
   const rankPrefix = rank ? `#${rank} ` : "";
+  const provider = String(catalogRow?.provider_type || "").trim();
+  const liveTag = provider ? (isProviderLiveReady(provider) ? " · live" : " · needs creds") : "";
   if (catalogRow) {
-    const provider = String(catalogRow.provider_type || "").trim();
     const display = String(catalogRow.display_name || modelName).trim();
-    return `${rankPrefix}${display} (${modelName}${provider ? ` · ${provider}` : ""})`;
+    return `${rankPrefix}${display} (${modelName}${provider ? ` · ${provider}` : ""}${liveTag})`;
   }
-  return `${rankPrefix}${modelName}`;
+  return `${rankPrefix}${modelName}${liveTag}`;
 }
 
 function resolveProviderTypeFilter(providerId) {
@@ -7053,6 +7138,30 @@ function resolveProviderTypeFilter(providerId) {
   );
   if (matched?.provider_type) return String(matched.provider_type).trim().toLowerCase();
   return normalized.split("-")[0] || normalized;
+}
+
+function providerGroupLabel(providerType) {
+  const normalized = String(providerType || "").trim().toLowerCase();
+  const labels = {
+    openai: "OpenAI",
+    anthropic: "Anthropic",
+    cursor: "Cursor",
+    "azure-openai": "Azure OpenAI",
+    azure: "Azure OpenAI",
+    aws: "AWS Bedrock",
+    bedrock: "AWS Bedrock",
+    google: "Google Gemini",
+    vertex: "Google Vertex AI",
+    groq: "Groq",
+    mistral: "Mistral",
+    cohere: "Cohere",
+    deepseek: "DeepSeek",
+    xai: "xAI",
+    together: "Together AI",
+    fireworks: "Fireworks AI",
+    perplexity: "Perplexity",
+  };
+  return labels[normalized] || (normalized ? normalized : "Other");
 }
 
 function buildGatewayModelCatalogOptions({ allowEmpty = false, providerFilter = "", orphanValues = [] } = {}) {
@@ -7069,11 +7178,30 @@ function buildGatewayModelCatalogOptions({ allowEmpty = false, providerFilter = 
     rows = rows.filter((row) => {
       const providerType = String(row?.provider_type || "").trim().toLowerCase();
       const modelName = String(row?.model_name || "").trim().toLowerCase();
-      return providerType === filter || modelName.startsWith(`${filter}/`) || modelName.includes(filter);
+      const aliases = {
+        azure: "azure-openai",
+        bedrock: "aws",
+        gcp: "google",
+      };
+      const normalizedFilter = aliases[filter] || filter;
+      return (
+        providerType === normalizedFilter ||
+        providerType === filter ||
+        modelName.startsWith(`${filter}/`) ||
+        modelName.startsWith(`${normalizedFilter}/`)
+      );
     });
   }
 
   rows.sort((left, right) => {
+    if (preferLiveReadyModels) {
+      const leftLive = isProviderLiveReady(left?.provider_type) ? 0 : 1;
+      const rightLive = isProviderLiveReady(right?.provider_type) ? 0 : 1;
+      if (leftLive !== rightLive) return leftLive - rightLive;
+    }
+    const leftProvider = providerGroupLabel(left?.provider_type);
+    const rightProvider = providerGroupLabel(right?.provider_type);
+    if (leftProvider !== rightProvider) return leftProvider.localeCompare(rightProvider);
     const leftName = String(left?.model_name || "").trim();
     const rightName = String(right?.model_name || "").trim();
     const leftRank = gatewayModelPriorityRankByName.get(leftName) ?? 99999;
@@ -7091,6 +7219,7 @@ function buildGatewayModelCatalogOptions({ allowEmpty = false, providerFilter = 
     options.push({
       value: modelName,
       label: formatGatewayModelOptionLabel(modelName, row),
+      group: providerGroupLabel(row?.provider_type),
     });
   });
 
@@ -7098,9 +7227,11 @@ function buildGatewayModelCatalogOptions({ allowEmpty = false, providerFilter = 
     const modelName = String(value || "").trim();
     if (!modelName || seen.has(modelName)) return;
     seen.add(modelName);
+    const catalogRow = findGatewayCatalogRow(modelName);
     options.push({
       value: modelName,
-      label: formatGatewayModelOptionLabel(modelName),
+      label: formatGatewayModelOptionLabel(modelName, catalogRow),
+      group: providerGroupLabel(catalogRow?.provider_type),
     });
   });
 
@@ -7119,8 +7250,16 @@ function populateGatewayModelSelect(select, selectedValue = "", { providerFilter
   const allowEmpty = String(select.dataset.allowEmpty || "").toLowerCase() === "true";
   const defaultModel = String(select.dataset.defaultModel || "").trim();
   const resolvedSelected = String(selectedValue || select.value || defaultModel || "").trim();
+  const scope = String(select.dataset.modelFilterScope || "").trim().toLowerCase();
+  const scopedFilter =
+    scope === "playground"
+      ? playgroundProviderFilter
+      : scope === "gateway-ops"
+        ? gatewayOpsProviderFilter
+        : "";
   const filter =
     providerFilter ||
+    scopedFilter ||
     (select.dataset.providerFilterField
       ? resolveProviderTypeFilter(
           select.closest("tr")?.querySelector(`[data-field="${select.dataset.providerFilterField}"]`)?.value || "",
@@ -7154,7 +7293,17 @@ function populateGatewayModelMultiSelect(select, selectedValues = []) {
   const normalized = (Array.isArray(selectedValues) ? selectedValues : parseListInput(selectedValues))
     .map((item) => String(item || "").trim())
     .filter(Boolean);
-  const options = buildGatewayModelCatalogOptions({ orphanValues: normalized });
+  const scope = String(select.dataset.modelFilterScope || "").trim().toLowerCase();
+  const scopedFilter =
+    scope === "playground"
+      ? playgroundProviderFilter
+      : scope === "gateway-ops"
+        ? gatewayOpsProviderFilter
+        : "";
+  const options = buildGatewayModelCatalogOptions({
+    providerFilter: scopedFilter || String(select.dataset.providerFilter || "").trim(),
+    orphanValues: normalized,
+  });
   setLabeledSelectOptions(select, options, {
     placeholder: options.length ? "Choose one or more models (ranked)" : "Load models first...",
     selectedValue: "",
@@ -9151,6 +9300,150 @@ function renderGatewayNhiHygieneSummary(data) {
   rows.forEach((row) => appendTableRow(tbody, row));
 }
 
+function selectGatewayNhiRecord(nhiRecordId, extras = {}) {
+  const nhiId = String(nhiRecordId || "").trim();
+  if (!nhiId) return;
+  const insights = qs("#gatewayNhiInsightsForm");
+  const access = qs("#gatewayNhiAccessForm");
+  if (insights?.elements?.nhi_record_id) insights.elements.nhi_record_id.value = nhiId;
+  if (access?.elements?.nhi_record_id) access.elements.nhi_record_id.value = nhiId;
+  if (insights?.elements?.external_ref && extras.external_ref) {
+    insights.elements.external_ref.value = String(extras.external_ref);
+  }
+  if (insights?.elements?.iga_agent_id && extras.iga_agent_id) {
+    insights.elements.iga_agent_id.value = String(extras.iga_agent_id);
+  }
+  if (insights?.elements?.owner_scope_id && extras.owner_scope_id) {
+    insights.elements.owner_scope_id.value = String(extras.owner_scope_id);
+  }
+  if (insights?.elements?.owner_scope_type && extras.owner_scope_type) {
+    insights.elements.owner_scope_type.value = String(extras.owner_scope_type);
+  }
+  const result = qs("#gatewayNhiResult");
+  if (result) result.textContent = `Selected NHI ${safeText(nhiId)} for Insights / Access forms.`;
+}
+
+function selectGatewayNhiDenyId(denyId, extras = {}) {
+  const form = qs("#gatewayNhiIgaDenyConfigForm");
+  const id = String(denyId || "").trim();
+  if (!form || !id) return;
+  if (form.elements.deny_id) form.elements.deny_id.value = id;
+  if (form.elements.subject_type && extras.subject_type) {
+    form.elements.subject_type.value = String(extras.subject_type);
+  }
+  if (form.elements.subject_id && extras.subject_id) {
+    form.elements.subject_id.value = String(extras.subject_id);
+  }
+  if (form.elements.reason && extras.reason) {
+    form.elements.reason.value = String(extras.reason);
+  }
+  if (form.elements.source_system && extras.source_system) {
+    form.elements.source_system.value = String(extras.source_system);
+  }
+  const result = qs("#gatewayNhiResult");
+  if (result) result.textContent = `Selected deny ${safeText(id)} for revoke / evaluate.`;
+}
+
+async function hmacSha256Hex(secret, bodyText, { timestamp = "", nonce = "" } = {}) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(String(secret || "")),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  // Canonical material matches backend: `{timestamp}.{nonce}.{body}`
+  const material = `${String(timestamp || "").trim()}.${String(nonce || "").trim()}.${String(bodyText || "")}`;
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(material));
+  return Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function renderGatewayNhiActiveDeniesTable(rows) {
+  const tbody = qs("#gatewayNhiActiveDeniesTable");
+  if (!tbody) return;
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    setTableMessage(tbody, 5, "No active denies.");
+    return;
+  }
+  tbody.textContent = "";
+  list.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Click to fill Deny ID for revoke";
+    tr.addEventListener("click", () =>
+      selectGatewayNhiDenyId(row.deny_id, {
+        subject_type: row.subject_type,
+        subject_id: row.subject_id,
+        reason: row.reason,
+        source_system: row.source_system,
+      })
+    );
+    appendTableCell(tr, row.deny_id);
+    appendTableCell(tr, `${safeText(row.subject_type)}:${safeText(row.subject_id)}`);
+    appendTableCell(tr, row.source_system || "--");
+    appendTableCell(tr, row.expires_at || "--");
+    appendTableCell(tr, row.reason || "--");
+    tbody.appendChild(tr);
+  });
+}
+
+function renderGatewayNhiDenyEventsTable(rows) {
+  const tbody = qs("#gatewayNhiDenyEventsTable");
+  if (!tbody) return;
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    setTableMessage(tbody, 5, "No deny events.");
+    return;
+  }
+  tbody.textContent = "";
+  list.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Click to fill Deny ID";
+    tr.addEventListener("click", () =>
+      selectGatewayNhiDenyId(row.deny_id, {
+        subject_type: row.subject_type,
+        subject_id: row.subject_id,
+        reason: row.reason,
+        source_system: row.source_system,
+      })
+    );
+    appendTableCell(tr, row.event_type || "--");
+    appendTableCell(tr, row.deny_id || "--");
+    appendTableCell(tr, `${safeText(row.subject_type || "")}:${safeText(row.subject_id || "")}`);
+    appendTableCell(tr, row.source_system || "--");
+    appendTableCell(tr, row.at || row.created_at || "--");
+    tbody.appendChild(tr);
+  });
+}
+
+function renderGatewayNhiGateEventsTable(rows) {
+  const tbody = qs("#gatewayNhiGateEventsTable");
+  if (!tbody) return;
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    setTableMessage(tbody, 5, "No gate events.");
+    return;
+  }
+  tbody.textContent = "";
+  list.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Click to fill NHI Record ID";
+    tr.addEventListener("click", () => selectGatewayNhiRecord(row.nhi_record_id));
+    appendTableCell(tr, row.at || "--");
+    appendTableCell(tr, row.gate || row.gate_type || "--");
+    appendTableCell(tr, row.decision || row.action || "--");
+    appendTableCell(tr, row.nhi_record_id || "--");
+    appendTableCell(tr, row.reason || "--");
+    tbody.appendChild(tr);
+  });
+}
+
 function renderGatewayNhiInventoryRows() {
   const tbody = qs("#gatewayNhiInventoryTable");
   if (!tbody) return;
@@ -9161,17 +9454,30 @@ function renderGatewayNhiInventoryRows() {
 
   tbody.textContent = "";
   gatewayNhiInventoryRows.forEach((row) => {
-    appendTableRow(tbody, [
-      row.nhi_record_id,
-      `${safeText(row.source_type)}:${safeText(row.source_id)}`,
-      row.tenant_id,
-      row.environment,
-      row.provider_type,
-      row.owner_scope_id ? `${safeText(row.owner_scope_type || "scope")}:${safeText(row.owner_scope_id)}` : "--",
-      row.credential_age_days ?? "--",
-      row.findings || "[]",
-      row.status,
-    ]);
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Click to select NHI for Insights / Access";
+    tr.addEventListener("click", () =>
+      selectGatewayNhiRecord(row.nhi_record_id, {
+        owner_scope_id: row.owner_scope_id,
+        owner_scope_type: row.owner_scope_type,
+        external_ref: row.external_ref,
+        iga_agent_id: row.iga_agent_id,
+      })
+    );
+    appendTableCell(tr, row.nhi_record_id);
+    appendTableCell(tr, `${safeText(row.source_type)}:${safeText(row.source_id)}`);
+    appendTableCell(tr, row.tenant_id);
+    appendTableCell(tr, row.environment);
+    appendTableCell(tr, row.provider_type);
+    appendTableCell(
+      tr,
+      row.owner_scope_id ? `${safeText(row.owner_scope_type || "scope")}:${safeText(row.owner_scope_id)}` : "--"
+    );
+    appendTableCell(tr, row.credential_age_days ?? "--");
+    appendTableCell(tr, row.findings || "[]");
+    appendTableCell(tr, row.status);
+    tbody.appendChild(tr);
   });
 }
 
@@ -9852,6 +10158,1055 @@ async function loadGatewayNhiHygiene(evt) {
   }
 }
 
+async function loadGatewayNhiIgaExportConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayNhiIgaExportConfigForm");
+  const result = qs("#gatewayNhiResult");
+  if (!form || !result) return;
+  try {
+    const data = await api("/gateway/nhi/iga-export/config");
+    if (form.elements.enabled) form.elements.enabled.value = data.enabled ? "true" : "false";
+    if (form.elements.target_system) form.elements.target_system.value = data.target_system || "generic";
+    if (form.elements.default_profile) form.elements.default_profile.value = data.default_profile || "iga_correlation";
+    if (form.elements.webhook_url) form.elements.webhook_url.value = data.webhook_url || "";
+    if (form.elements.hmac_secret) form.elements.hmac_secret.value = "";
+    if (form.elements.sign_requests) form.elements.sign_requests.value = data.sign_requests === false ? "false" : "true";
+    if (form.elements.include_hygiene_summary) {
+      form.elements.include_hygiene_summary.value = data.include_hygiene_summary === false ? "false" : "true";
+    }
+    if (form.elements.max_records) form.elements.max_records.value = String(data.max_records || 500);
+    result.textContent = `Loaded NHI IGA export config (target=${safeText(data.target_system)}, secret_configured=${safeText(data.hmac_secret_configured)}).`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewayNhiIgaExportConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayNhiIgaExportConfigForm");
+  const result = qs("#gatewayNhiResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const approverRole = String(raw.approver_role || "").trim();
+  const approverId = String(raw.approver_id || "").trim();
+  if (!approverRole || !approverId) {
+    result.textContent = "Approver Role and Approver ID are required to save NHI IGA export config (dual approval).";
+    return;
+  }
+  const body = {
+    enabled: parseBooleanSelect(raw.enabled, false),
+    target_system: String(raw.target_system || "generic").trim(),
+    webhook_url: String(raw.webhook_url || "").trim(),
+    hmac_secret: String(raw.hmac_secret || ""),
+    sign_requests: parseBooleanSelect(raw.sign_requests, true),
+    include_hygiene_summary: parseBooleanSelect(raw.include_hygiene_summary, true),
+    default_profile: String(raw.default_profile || "iga_correlation").trim(),
+    max_records: Math.max(1, Math.min(500, Number(raw.max_records || 500))),
+  };
+  try {
+    const data = await api("/gateway/nhi/iga-export/config", {
+      method: "PUT",
+      headers: {
+        "X-Approver-Role": approverRole,
+        "X-Approver-Id": approverId,
+      },
+      body: JSON.stringify(body),
+    });
+    if (form.elements.hmac_secret) form.elements.hmac_secret.value = "";
+    result.textContent = `Saved NHI IGA export config (enabled=${safeText(data.enabled)}, target=${safeText(data.target_system)}).`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function exportGatewayNhiIga(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const preview = qs("#gatewayNhiExportPreview");
+  const filters = getGatewayNhiFilters();
+  const configForm = qs("#gatewayNhiIgaExportConfigForm");
+  if (!result || !filters) return;
+  const cfg = configForm ? Object.fromEntries(new FormData(configForm).entries()) : {};
+  const deliver = parseBooleanSelect(cfg.deliver_webhook, false);
+  const dryRun = parseBooleanSelect(cfg.dry_run_delivery, true);
+  const body = {
+    tenant_id: filters.tenant_id || null,
+    environment: filters.environment || null,
+    source_type: filters.source_type || null,
+    provider_type: filters.provider_type || null,
+    identity_type: filters.identity_type || null,
+    status: filters.status || null,
+    stale_only: parseBooleanSelect(filters.stale_only, false),
+    missing_owner_only: parseBooleanSelect(filters.missing_owner_only, false),
+    max_credential_age_days: Number(filters.max_credential_age_days || 90),
+    limit: Math.max(1, Math.min(500, Number(cfg.max_records || 100))),
+    offset: 0,
+    profile: String(cfg.default_profile || "iga_correlation").trim(),
+    target_system: String(cfg.target_system || "generic").trim(),
+    include_hygiene_summary: parseBooleanSelect(cfg.include_hygiene_summary, true),
+    deliver_webhook: deliver,
+    dry_run_delivery: dryRun,
+  };
+  const headers = {};
+  if (deliver && !dryRun) {
+    const dual = getGatewayDualApprovalHeaders("#gatewayNhiIgaExportConfigForm") || {};
+    if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+      result.textContent = "Approver Role and Approver ID are required for live webhook delivery.";
+      return;
+    }
+    Object.assign(headers, dual);
+  }
+  try {
+    const data = await api("/gateway/nhi/export", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const delivery = data.delivery ? ` delivery=${safeText(data.delivery.delivery_status)}` : "";
+    result.textContent = `Exported ${safeText(data.record_count)} NHI identities (${safeText(data.profile)} → ${safeText(data.target_system)}).${delivery}`;
+    if (preview) {
+      preview.hidden = false;
+      preview.textContent = JSON.stringify(
+        {
+          export_id: data.export_id,
+          record_count: data.record_count,
+          profile: data.profile,
+          target_system: data.target_system,
+          correlation_guide: data.correlation_guide,
+          sample_identity: Array.isArray(data.identities) ? data.identities[0] || null : null,
+          delivery: data.delivery || null,
+        },
+        null,
+        2
+      );
+    }
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function testGatewayNhiIgaExport(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const configForm = qs("#gatewayNhiIgaExportConfigForm");
+  if (!result) return;
+  const raw = configForm ? Object.fromEntries(new FormData(configForm).entries()) : {};
+  const dryRun = parseBooleanSelect(raw.dry_run_delivery, true);
+  const headers = {};
+  if (!dryRun) {
+    const dual = getGatewayDualApprovalHeaders("#gatewayNhiIgaExportConfigForm") || {};
+    if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+      result.textContent = "Approver Role and Approver ID are required for live test delivery.";
+      return;
+    }
+    Object.assign(headers, dual);
+  }
+  try {
+    const data = await api("/gateway/nhi/iga-export/test-delivery", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ dry_run: dryRun }),
+    });
+    result.textContent = `Test delivery ${safeText(data.delivery?.delivery_status || "unknown")} (export ${safeText(data.export_id)}).`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayNhiIgaDenyConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayNhiIgaDenyConfigForm");
+  const result = qs("#gatewayNhiResult");
+  if (!form || !result) return;
+  try {
+    const data = await api("/gateway/nhi/iga-deny/config");
+    if (form.elements.enabled) form.elements.enabled.value = data.enabled ? "true" : "false";
+    if (form.elements.mode) form.elements.mode.value = data.mode || "off";
+    if (form.elements.ingest_hmac_secret) form.elements.ingest_hmac_secret.value = "";
+    if (form.elements.require_ingest_hmac) {
+      form.elements.require_ingest_hmac.value = data.require_ingest_hmac === false ? "false" : "true";
+    }
+    if (form.elements.require_ingest_timestamp) {
+      form.elements.require_ingest_timestamp.value = data.require_ingest_timestamp ? "true" : "false";
+    }
+    if (form.elements.max_ingest_skew_seconds) {
+      form.elements.max_ingest_skew_seconds.value = String(data.max_ingest_skew_seconds || 300);
+    }
+    if (form.elements.default_ttl_seconds) {
+      form.elements.default_ttl_seconds.value = String(data.default_ttl_seconds || 86400);
+    }
+    const activeDenies = Array.isArray(data.active_denies) ? data.active_denies : [];
+    if (form.elements.deny_id && !String(form.elements.deny_id.value || "").trim() && activeDenies[0]?.deny_id) {
+      form.elements.deny_id.value = String(activeDenies[0].deny_id);
+    }
+    renderGatewayNhiActiveDeniesTable(activeDenies);
+    result.textContent = `Loaded IGA deny config (enabled=${safeText(data.enabled)}, mode=${safeText(data.mode)}, active=${safeText(data.active_deny_count)}, ts=${safeText(data.require_ingest_timestamp)}, hmac=${safeText(data.ingest_hmac_secret_configured)}).`;
+    const preview = qs("#gatewayNhiExportPreview");
+    if (preview) {
+      preview.hidden = false;
+      preview.textContent = JSON.stringify(
+        { active_denies: activeDenies, mode: data.mode, enabled: data.enabled },
+        null,
+        2
+      );
+    }
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewayNhiIgaDenyConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayNhiIgaDenyConfigForm");
+  const result = qs("#gatewayNhiResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const approverRole = String(raw.approver_role || "").trim();
+  const approverId = String(raw.approver_id || "").trim();
+  if (!approverRole || !approverId) {
+    result.textContent = "Approver Role and Approver ID are required to save IGA deny config.";
+    return;
+  }
+  try {
+    const data = await api("/gateway/nhi/iga-deny/config", {
+      method: "PUT",
+      headers: { "X-Approver-Role": approverRole, "X-Approver-Id": approverId },
+      body: JSON.stringify({
+        enabled: parseBooleanSelect(raw.enabled, false),
+        mode: String(raw.mode || "off").trim(),
+        ingest_hmac_secret: String(raw.ingest_hmac_secret || ""),
+        require_ingest_hmac: parseBooleanSelect(raw.require_ingest_hmac, true),
+        require_ingest_timestamp: parseBooleanSelect(raw.require_ingest_timestamp, false),
+        max_ingest_skew_seconds: Number(raw.max_ingest_skew_seconds || 300),
+        default_ttl_seconds: Number(raw.default_ttl_seconds || 86400),
+        max_active_denies: 200,
+        allowed_source_systems: ["generic", "astrix", "oasis", "aembit", "external_iga"],
+      }),
+    });
+    if (form.elements.ingest_hmac_secret) form.elements.ingest_hmac_secret.value = "";
+    result.textContent = `Saved IGA deny config (enabled=${safeText(data.enabled)}, mode=${safeText(data.mode)}, ts=${safeText(data.require_ingest_timestamp)}).`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function ingestGatewayNhiIgaDenyManual(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayNhiIgaDenyConfigForm");
+  const result = qs("#gatewayNhiResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const dual = getGatewayDualApprovalHeaders("#gatewayNhiIgaDenyConfigForm") || {};
+  if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+    result.textContent = "Approver Role and Approver ID are required to ingest a deny.";
+    return;
+  }
+  try {
+    const data = await api("/gateway/nhi/iga-deny", {
+      method: "POST",
+      headers: dual,
+      body: JSON.stringify({
+        subject_type: String(raw.subject_type || "actor_id").trim(),
+        subject_id: String(raw.subject_id || "").trim(),
+        reason: String(raw.reason || "").trim(),
+        source_system: String(raw.source_system || "generic").trim(),
+        ttl_seconds: Number(raw.default_ttl_seconds || 86400),
+      }),
+    });
+    if (form.elements.deny_id) form.elements.deny_id.value = data.deny_id || "";
+    result.textContent = `Ingested deny ${safeText(data.deny_id)} (${safeText(data.subject_type)}=${safeText(data.subject_id)}).`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function evaluateGatewayNhiIgaDeny(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayNhiIgaDenyConfigForm");
+  const result = qs("#gatewayNhiResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const subjectType = String(raw.subject_type || "actor_id").trim();
+  const subjectId = String(raw.subject_id || "").trim();
+  const body = { environment: "dev" };
+  if (subjectType === "actor_id") body.actor_id = subjectId;
+  else if (subjectType === "virtual_key_id") body.virtual_key_id = subjectId;
+  else if (subjectType === "owner_scope_id") body.owner_scope_id = subjectId;
+  else if (subjectType === "tenant_id") body.tenant_id = subjectId;
+  try {
+    const data = await api("/gateway/nhi/iga-deny/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    result.textContent = data.matched
+      ? `Matched deny ${safeText(data.deny?.deny_id)} mode=${safeText(data.mode)}.`
+      : `No active deny match (mode=${safeText(data.mode)}).`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function revokeGatewayNhiIgaDeny(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayNhiIgaDenyConfigForm");
+  const result = qs("#gatewayNhiResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const denyId = String(raw.deny_id || "").trim();
+  if (!denyId) {
+    result.textContent = "Deny ID is required to revoke (Load Deny Config or Ingest Deny first).";
+    return;
+  }
+  const dual = getGatewayDualApprovalHeaders("#gatewayNhiIgaDenyConfigForm") || {};
+  if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+    result.textContent = "Approver Role and Approver ID are required to revoke a deny.";
+    return;
+  }
+  try {
+    const data = await api(`/gateway/nhi/iga-deny/${encodeURIComponent(denyId)}/revoke`, {
+      method: "POST",
+      headers: dual,
+      body: JSON.stringify({
+        reason: String(raw.reason || "").trim() || "operator_revoke",
+      }),
+    });
+    result.textContent = `Revoked deny ${safeText(data.deny_id)} (status=${safeText(data.status)}, active=${safeText(data.active_deny_count)}).`;
+    await loadGatewayNhiIgaDenyConfig();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function probeGatewayNhiIgaDenyHmac(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayNhiIgaDenyConfigForm");
+  const result = qs("#gatewayNhiResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const secret = String(raw.ingest_hmac_secret || "").trim();
+  const subjectId = String(raw.subject_id || "").trim();
+  if (!subjectId) {
+    result.textContent = "Subject ID is required for HMAC deny ingest probe.";
+    return;
+  }
+  if (!secret) {
+    result.textContent =
+      "Enter Ingest HMAC Secret (leave blank after save clears it) to probe POST /gateway/nhi/iga-deny/ingest.";
+    return;
+  }
+  const payload = {
+    subject_type: String(raw.subject_type || "actor_id").trim(),
+    subject_id: subjectId,
+    reason: String(raw.reason || "").trim() || "hmac_probe",
+    source_system: String(raw.source_system || "generic").trim(),
+    ttl_seconds: Number(raw.default_ttl_seconds || 86400),
+  };
+  const bodyText = JSON.stringify(payload);
+  try {
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const nonce =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `nonce-${Date.now()}`;
+    const signature = await hmacSha256Hex(secret, bodyText, { timestamp, nonce });
+    const data = await api("/gateway/nhi/iga-deny/ingest", {
+      method: "POST",
+      headers: {
+        "X-Gateway-Iga-Signature": signature,
+        "X-Gateway-Iga-Timestamp": timestamp,
+        "X-Gateway-Iga-Nonce": nonce,
+      },
+      body: bodyText,
+    });
+    if (form.elements.deny_id) form.elements.deny_id.value = data.deny_id || "";
+    result.textContent = `HMAC ingest ok: deny ${safeText(data.deny_id)} (active=${safeText(data.active_deny_count)}).`;
+    await loadGatewayNhiIgaDenyConfig();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function _nhiInsightsFormRaw() {
+  const form = qs("#gatewayNhiInsightsForm");
+  return form ? Object.fromEntries(new FormData(form).entries()) : {};
+}
+
+function _showNhiPreview(payload, selector = "#gatewayNhiExportPreview") {
+  const preview = qs(selector) || qs("#gatewayNhiExportPreview") || qs("#gatewayNhiInsightsPreview");
+  if (!preview) return;
+  preview.hidden = false;
+  preview.textContent = JSON.stringify(payload, null, 2);
+}
+
+function switchGatewayNhiPanel(panelName) {
+  const target = String(panelName || "inventory").trim() || "inventory";
+  qsa("[data-nhi-panel-tab]").forEach((btn) => {
+    const active = btn.dataset.nhiPanelTab === target;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  qsa("[data-nhi-panel]").forEach((panel) => {
+    panel.hidden = panel.getAttribute("data-nhi-panel") !== target;
+  });
+}
+
+async function loadGatewayNhiInsights(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const filters = getGatewayNhiFilters();
+  if (!result || !filters) return;
+  const query = buildQueryString({
+    tenant_id: filters.tenant_id,
+    environment: filters.environment,
+    max_credential_age_days: filters.max_credential_age_days,
+    limit: 50,
+  });
+  try {
+    const data = await api(`/gateway/nhi/insights${query}`);
+    const top = Array.isArray(data.top_risks) ? data.top_risks[0] : null;
+    if (top?.nhi_record_id) {
+      const form = qs("#gatewayNhiInsightsForm");
+      if (form?.elements?.nhi_record_id) form.elements.nhi_record_id.value = top.nhi_record_id;
+    }
+    result.textContent = `Insights: ${safeText(data.total_identities)} identities; top tier counts ${safeText(JSON.stringify(data.risk_tier_counts))}.`;
+    _showNhiPreview(data, "#gatewayNhiInsightsPreview");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayNhiAccessMap(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiInsightsFormRaw();
+  const nhiId = String(raw.nhi_record_id || "").trim();
+  if (!result) return;
+  if (!nhiId) {
+    result.textContent = "NHI Record ID is required for access map.";
+    return;
+  }
+  try {
+    const data = await api(`/gateway/nhi/${encodeURIComponent(nhiId)}/access-map`);
+    result.textContent = `Access map for ${safeText(nhiId)}: ${safeText(data.path_count)} paths.`;
+    _showNhiPreview(data, "#gatewayNhiInsightsPreview");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayNhiTimeline(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiInsightsFormRaw();
+  const nhiId = String(raw.nhi_record_id || "").trim();
+  if (!result) return;
+  if (!nhiId) {
+    result.textContent = "NHI Record ID is required for timeline.";
+    return;
+  }
+  try {
+    const data = await api(`/gateway/nhi/${encodeURIComponent(nhiId)}/timeline?limit=40`);
+    result.textContent = `Timeline for ${safeText(nhiId)}: ${safeText(data.event_count)} events.`;
+    _showNhiPreview(data, "#gatewayNhiInsightsPreview");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayNhiOrphans(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const tbody = qs("#gatewayNhiOrphansTable");
+  const filters = getGatewayNhiFilters();
+  if (!result || !filters) return;
+  const query = buildQueryString({
+    tenant_id: filters.tenant_id,
+    environment: filters.environment,
+    max_credential_age_days: filters.max_credential_age_days,
+    limit: 100,
+  });
+  if (tbody) setTableMessage(tbody, 6, "Loading...");
+  try {
+    const data = await api(`/gateway/nhi/orphans${query}`);
+    const rows = Array.isArray(data.orphans) ? data.orphans : [];
+    if (tbody) {
+      if (!rows.length) {
+        setTableMessage(tbody, 6, "No orphans (all identities have owners).");
+      } else {
+        tbody.textContent = "";
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.style.cursor = "pointer";
+          tr.title = "Click to select NHI for Insights / Access";
+          tr.addEventListener("click", () =>
+            selectGatewayNhiRecord(row.nhi_record_id, {
+              external_ref: row.external_ref,
+              iga_agent_id: row.iga_agent_id,
+            })
+          );
+          appendTableCell(tr, row.nhi_record_id);
+          appendTableCell(tr, `${safeText(row.source_type)}:${safeText(row.source_id)}`);
+          appendTableCell(tr, row.tenant_id);
+          appendTableCell(tr, row.environment);
+          appendTableCell(tr, `${safeText(row.risk_tier)} (${safeText(row.risk_score)})`);
+          appendTableCell(tr, row.external_ref || row.iga_agent_id || "—");
+          tbody.appendChild(tr);
+        });
+      }
+    }
+    result.textContent = `Orphan queue: ${safeText(data.orphan_count)} missing-owner identities (click row to select).`;
+    if (rows[0]?.nhi_record_id) {
+      selectGatewayNhiRecord(rows[0].nhi_record_id, {
+        external_ref: rows[0].external_ref,
+        iga_agent_id: rows[0].iga_agent_id,
+      });
+    }
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+    if (tbody) setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
+  }
+}
+
+async function assignGatewayNhiOrphans(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const filters = getGatewayNhiFilters();
+  const dual = getGatewayDualApprovalHeaders("#gatewayNhiInsightsForm") || {};
+  const raw = _nhiInsightsFormRaw();
+  if (!result || !filters) return;
+  if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+    result.textContent = "Approver Role and Approver ID (Insights form) are required for bulk orphan assign.";
+    return;
+  }
+  const ownerId = String(raw.owner_scope_id || "").trim();
+  if (!ownerId) {
+    result.textContent = "Owner Scope ID (Insights form) is required for bulk orphan assign.";
+    return;
+  }
+  try {
+    const queue = await api(
+      `/gateway/nhi/orphans${buildQueryString({
+        tenant_id: filters.tenant_id,
+        environment: filters.environment,
+        max_credential_age_days: filters.max_credential_age_days,
+        limit: 50,
+      })}`
+    );
+    const ids = (Array.isArray(queue.orphans) ? queue.orphans : []).map((row) => row.nhi_record_id).filter(Boolean);
+    if (!ids.length) {
+      result.textContent = "No orphans to assign.";
+      return;
+    }
+    const data = await api("/gateway/nhi/orphans/assign", {
+      method: "POST",
+      headers: dual,
+      body: JSON.stringify({
+        nhi_record_ids: ids,
+        owner_scope_type: String(raw.owner_scope_type || "team").trim(),
+        owner_scope_id: ownerId,
+        purpose: String(raw.purpose || "").trim() || null,
+      }),
+    });
+    result.textContent = `Bulk assigned owner on ${safeText(data.updated_count)} orphans → ${safeText(data.owner_scope_type)}:${safeText(data.owner_scope_id)}.`;
+    await loadGatewayNhiOrphans();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewayNhiCorrelation(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiInsightsFormRaw();
+  const nhiId = String(raw.nhi_record_id || "").trim();
+  const dual = getGatewayDualApprovalHeaders("#gatewayNhiInsightsForm") || {};
+  if (!result) return;
+  if (!nhiId) {
+    result.textContent = "NHI Record ID is required for correlation.";
+    return;
+  }
+  if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+    result.textContent = "Approver Role and Approver ID are required to save IGA correlation.";
+    return;
+  }
+  try {
+    const data = await api(`/gateway/nhi/${encodeURIComponent(nhiId)}/correlation`, {
+      method: "PUT",
+      headers: dual,
+      body: JSON.stringify({
+        external_ref: String(raw.external_ref || "").trim() || null,
+        iga_agent_id: String(raw.iga_agent_id || "").trim() || null,
+        source_system: String(raw.correlation_source_system || "").trim() || null,
+      }),
+    });
+    result.textContent = `Correlation saved for ${safeText(data.nhi_record_id)} (ref=${safeText(data.external_ref || "—")}, agent=${safeText(data.iga_agent_id || "—")}).`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function testGatewayNhiCorrelationIngest(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayNhiInsightsForm");
+  const result = qs("#gatewayNhiResult");
+  if (!form || !result) return;
+  const raw = _nhiInsightsFormRaw();
+  const nhiId = String(raw.nhi_record_id || "").trim();
+  if (!nhiId) {
+    result.textContent = "NHI Record ID is required for correlation ingest probe.";
+    return;
+  }
+  const secret = String(raw.correlation_ingest_hmac_secret || "").trim();
+  const payload = {
+    nhi_record_id: nhiId,
+    external_ref: String(raw.external_ref || "").trim() || null,
+    iga_agent_id: String(raw.iga_agent_id || "").trim() || null,
+    source_system: String(raw.correlation_source_system || "generic").trim() || "generic",
+  };
+  const bodyText = JSON.stringify(payload);
+  const headers = {};
+  try {
+    if (secret) {
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const nonce =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `nonce-corr-${Date.now()}`;
+      headers["X-Gateway-Nhi-Correlation-Signature"] = await hmacSha256Hex(secret, bodyText, {
+        timestamp,
+        nonce,
+      });
+      headers["X-Gateway-Nhi-Correlation-Timestamp"] = timestamp;
+      headers["X-Gateway-Nhi-Correlation-Nonce"] = nonce;
+    } else if (parseBooleanSelect(raw.require_correlation_ingest_hmac, true)) {
+      result.textContent =
+        "Correlation HMAC secret required when require_correlation_ingest_hmac=true (re-enter after Load Intent Mode).";
+      return;
+    }
+    const data = await api("/gateway/nhi/correlation/ingest", {
+      method: "POST",
+      headers,
+      body: bodyText,
+    });
+    if (form.elements.correlation_ingest_hmac_secret) form.elements.correlation_ingest_hmac_secret.value = "";
+    result.textContent =
+      `Correlation ingest ok for ${safeText(data.nhi_record_id)} ` +
+      `(ref=${safeText(data.external_ref || "—")}, agent=${safeText(data.iga_agent_id || "—")}).`;
+    _showNhiPreview(data, "#gatewayNhiInsightsPreview");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayNhiIgaDenyEvents(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  if (!result) return;
+  try {
+    const data = await api("/gateway/nhi/iga-deny/events?limit=50");
+    const events = Array.isArray(data.events) ? data.events : [];
+    renderGatewayNhiDenyEventsTable(events);
+    result.textContent = `Deny event history: ${safeText(data.event_count)} of ${safeText(data.total_events)} events (click row to fill Deny ID).`;
+    _showNhiPreview(data, "#gatewayNhiDenyEventsPreview");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayNhiGateEvents(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  if (!result) return;
+  try {
+    const data = await api("/gateway/nhi/gate-events?limit=50");
+    const events = Array.isArray(data.events) ? data.events : [];
+    renderGatewayNhiGateEventsTable(events);
+    result.textContent = `Native gate events: ${safeText(data.event_count)} of ${safeText(data.total_events)} (click row to fill NHI ID).`;
+    _showNhiPreview(data, "#gatewayNhiGateEventsPreview");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewayNhiOwner(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiInsightsFormRaw();
+  const nhiId = String(raw.nhi_record_id || "").trim();
+  const dual = getGatewayDualApprovalHeaders("#gatewayNhiInsightsForm") || {};
+  if (!result) return;
+  if (!nhiId) {
+    result.textContent = "NHI Record ID is required.";
+    return;
+  }
+  if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+    result.textContent = "Approver Role and Approver ID are required to assign owner.";
+    return;
+  }
+  try {
+    const data = await api(`/gateway/nhi/${encodeURIComponent(nhiId)}/owner`, {
+      method: "PUT",
+      headers: dual,
+      body: JSON.stringify({
+        owner_scope_type: String(raw.owner_scope_type || "user").trim(),
+        owner_scope_id: String(raw.owner_scope_id || "").trim(),
+        purpose: String(raw.purpose || "").trim() || null,
+      }),
+    });
+    result.textContent = `Owner assigned on ${safeText(data.nhi_record_id)} → ${safeText(data.owner_scope_type)}:${safeText(data.owner_scope_id)}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayNhiLifecycle(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiInsightsFormRaw();
+  const nhiId = String(raw.nhi_record_id || "").trim();
+  const dual = getGatewayDualApprovalHeaders("#gatewayNhiInsightsForm") || {};
+  if (!result) return;
+  if (!nhiId) {
+    result.textContent = "NHI Record ID is required.";
+    return;
+  }
+  if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+    result.textContent = "Approver Role and Approver ID are required for lifecycle actions.";
+    return;
+  }
+  try {
+    const data = await api(`/gateway/nhi/${encodeURIComponent(nhiId)}/lifecycle`, {
+      method: "POST",
+      headers: dual,
+      body: JSON.stringify({
+        action: String(raw.lifecycle_action || "suspend").trim(),
+        reason: String(raw.lifecycle_reason || "").trim(),
+      }),
+    });
+    result.textContent = `Lifecycle ${safeText(raw.lifecycle_action)} → status=${safeText(data.status)}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewayNhiIntents(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiInsightsFormRaw();
+  const nhiId = String(raw.nhi_record_id || "").trim();
+  const dual = getGatewayDualApprovalHeaders("#gatewayNhiInsightsForm") || {};
+  if (!result) return;
+  if (!nhiId) {
+    result.textContent = "NHI Record ID is required.";
+    return;
+  }
+  if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+    result.textContent = "Approver Role and Approver ID are required to save intents.";
+    return;
+  }
+  const intents = String(raw.approved_intents || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  try {
+    const data = await api(`/gateway/nhi/${encodeURIComponent(nhiId)}/intents`, {
+      method: "PUT",
+      headers: dual,
+      body: JSON.stringify({
+        purpose: String(raw.purpose || "").trim(),
+        approved_intents: intents,
+      }),
+    });
+    result.textContent = `Saved ${safeText((data.approved_intents || []).length)} approved intents for ${safeText(nhiId)}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayNhiGovernance(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayNhiInsightsForm");
+  const result = qs("#gatewayNhiResult");
+  if (!form || !result) return;
+  try {
+    const data = await api("/gateway/nhi/governance/config");
+    if (form.elements.intent_mode) form.elements.intent_mode.value = data.intent_mode || "off";
+    if (form.elements.correlation_ingest_enabled) {
+      form.elements.correlation_ingest_enabled.value = data.correlation_ingest_enabled ? "true" : "false";
+    }
+    if (form.elements.require_correlation_ingest_hmac) {
+      form.elements.require_correlation_ingest_hmac.value =
+        data.require_correlation_ingest_hmac === false ? "false" : "true";
+    }
+    if (form.elements.correlation_ingest_hmac_secret) form.elements.correlation_ingest_hmac_secret.value = "";
+    result.textContent =
+      `Loaded intent mode=${safeText(data.intent_mode)}, correlation_ingest=${safeText(data.correlation_ingest_enabled)}, ` +
+      `hmac_configured=${safeText(data.correlation_ingest_hmac_secret_configured)}, access_mode=${safeText(data.access_mode)}.`;
+    _showNhiPreview(
+      {
+        intent_mode: data.intent_mode,
+        correlation_ingest_enabled: data.correlation_ingest_enabled,
+        require_correlation_ingest_hmac: data.require_correlation_ingest_hmac,
+        correlation_ingest_hmac_secret_configured: data.correlation_ingest_hmac_secret_configured,
+        access_mode: data.access_mode,
+        policy_count: data.policy_count,
+        gate_event_count: data.gate_event_count,
+      },
+      "#gatewayNhiInsightsPreview"
+    );
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewayNhiGovernance(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiInsightsFormRaw();
+  const dual = getGatewayDualApprovalHeaders("#gatewayNhiInsightsForm") || {};
+  if (!result) return;
+  if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+    result.textContent = "Approver Role and Approver ID are required to save intent mode.";
+    return;
+  }
+  try {
+    const data = await api("/gateway/nhi/governance/config", {
+      method: "PUT",
+      headers: dual,
+      body: JSON.stringify({
+        intent_mode: String(raw.intent_mode || "off").trim(),
+        record_count: 0,
+        correlation_ingest_enabled: parseBooleanSelect(raw.correlation_ingest_enabled, false),
+        require_correlation_ingest_hmac: parseBooleanSelect(raw.require_correlation_ingest_hmac, true),
+        correlation_ingest_hmac_secret: String(raw.correlation_ingest_hmac_secret || ""),
+      }),
+    });
+    const form = qs("#gatewayNhiInsightsForm");
+    if (form?.elements?.correlation_ingest_hmac_secret) form.elements.correlation_ingest_hmac_secret.value = "";
+    result.textContent = `Governance saved: intent_mode=${safeText(data.intent_mode)}, correlation_ingest=${safeText(data.correlation_ingest_enabled)}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function exportGatewayNhiEvidence(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const filters = getGatewayNhiFilters();
+  if (!result || !filters) return;
+  try {
+    const data = await api("/gateway/nhi/evidence/export", {
+      method: "POST",
+      body: JSON.stringify({
+        tenant_id: filters.tenant_id || null,
+        environment: filters.environment || null,
+        max_credential_age_days: Number(filters.max_credential_age_days || 90),
+      }),
+    });
+    const summary = data.summary || {};
+    result.textContent = `Evidence ${safeText(data.evidence_id)}: identities=${safeText(summary.total_identities)}, orphans=${safeText(summary.orphan_count)}, correlation=${safeText(summary.correlation_coverage_pct)}%.`;
+    _showNhiPreview(data, "#gatewayNhiDenyEventsPreview");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function _nhiAccessFormRaw() {
+  const form = qs("#gatewayNhiAccessForm");
+  if (!form) return {};
+  return Object.fromEntries(new FormData(form).entries());
+}
+
+async function loadGatewayNhiAgents(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const tbody = qs("#gatewayNhiAgentsTable");
+  const filters = getGatewayNhiFilters();
+  if (!result || !filters) return;
+  const query = buildQueryString({
+    tenant_id: filters.tenant_id,
+    environment: filters.environment,
+    max_credential_age_days: filters.max_credential_age_days,
+    limit: 100,
+  });
+  if (tbody) setTableMessage(tbody, 7, "Loading...");
+  try {
+    const data = await api(`/gateway/nhi/agents${query}`);
+    const rows = Array.isArray(data.agents) ? data.agents : [];
+    if (tbody) {
+      if (!rows.length) setTableMessage(tbody, 7, "No agent identities found.");
+      else {
+        tbody.textContent = "";
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.style.cursor = "pointer";
+          tr.title = "Click to select NHI for Insights / Access";
+          tr.addEventListener("click", () =>
+            selectGatewayNhiRecord(row.nhi_record_id, {
+              owner_scope_id: row.owner_scope_id,
+              owner_scope_type: row.owner_scope_type,
+              external_ref: row.external_ref,
+              iga_agent_id: row.iga_agent_id,
+            })
+          );
+          appendTableCell(tr, row.nhi_record_id);
+          appendTableCell(tr, row.source_type);
+          appendTableCell(tr, row.identity_type);
+          appendTableCell(tr, row.provider_type);
+          appendTableCell(tr, row.owner_scope_id || "—");
+          appendTableCell(tr, `${safeText(row.risk_tier)} (${safeText(row.risk_score)})`);
+          appendTableCell(tr, row.status);
+          tbody.appendChild(tr);
+        });
+      }
+    }
+    result.textContent = `Agents: ${safeText(data.agent_count)} (access_mode=${safeText(data.access_mode)}; click row to select).`;
+    _showNhiPreview(data, "#gatewayNhiAgentsPreview");
+    const shadow = rows.find((row) => row.source_type === "shadow_ai_app");
+    if (shadow?.nhi_record_id) {
+      selectGatewayNhiRecord(shadow.nhi_record_id, {
+        owner_scope_id: shadow.owner_scope_id,
+        owner_scope_type: shadow.owner_scope_type,
+        external_ref: shadow.external_ref,
+        iga_agent_id: shadow.iga_agent_id,
+      });
+    }
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+    if (tbody) setTableMessage(tbody, 7, `Error: ${safeText(err.message)}`);
+  }
+}
+
+async function loadGatewayNhiAccessConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const form = qs("#gatewayNhiAccessForm");
+  if (!result || !form) return;
+  try {
+    const data = await api("/gateway/nhi/access/config");
+    if (form.elements.access_mode) form.elements.access_mode.value = data.access_mode || "off";
+    if (form.elements.access_policies_json) {
+      form.elements.access_policies_json.value = JSON.stringify(data.access_policies || [], null, 2);
+    }
+    result.textContent = `Access config loaded: mode=${safeText(data.access_mode)}, policies=${safeText(data.policy_count)}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewayNhiAccessConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiAccessFormRaw();
+  const dual = getGatewayDualApprovalHeaders("#gatewayNhiAccessForm") || {};
+  if (!result) return;
+  if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+    result.textContent = "Approver Role and Approver ID are required to save access config.";
+    return;
+  }
+  let policies = [];
+  try {
+    policies = JSON.parse(String(raw.access_policies_json || "[]"));
+    if (!Array.isArray(policies)) throw new Error("policies must be an array");
+  } catch (err) {
+    result.textContent = `Invalid Policies JSON: ${safeText(err.message)}`;
+    return;
+  }
+  try {
+    const data = await api("/gateway/nhi/access/config", {
+      method: "PUT",
+      headers: dual,
+      body: JSON.stringify({
+        access_mode: String(raw.access_mode || "off").trim(),
+        access_policies: policies,
+        policy_count: policies.length,
+        intent_mode: "off",
+      }),
+    });
+    result.textContent = `Access config saved: mode=${safeText(data.access_mode)}, policies=${safeText(data.policy_count)}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayNhiAccessAuthorize(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiAccessFormRaw();
+  if (!result) return;
+  try {
+    const data = await api("/gateway/nhi/access/authorize", {
+      method: "POST",
+      body: JSON.stringify({
+        declared_intent: String(raw.declared_intent || "").trim(),
+        resource: String(raw.resource || "*").trim(),
+        action: String(raw.action || "chat.completions").trim(),
+        nhi_record_id: String(raw.nhi_record_id || "").trim() || null,
+      }),
+    });
+    result.textContent = `Access authorize decision=${safeText(data.decision)} reason=${safeText(data.reason)}.`;
+    _showNhiPreview(data, "#gatewayNhiAgentsPreview");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayNhiShadowAction(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiAccessFormRaw();
+  const dual = getGatewayDualApprovalHeaders("#gatewayNhiAccessForm") || {};
+  const nhiId = String(raw.nhi_record_id || "").trim();
+  if (!result) return;
+  if (!nhiId) {
+    result.textContent = "NHI Record ID is required for shadow action.";
+    return;
+  }
+  if (!dual["X-Approver-Role"] || !dual["X-Approver-Id"]) {
+    result.textContent = "Approver Role and Approver ID are required for shadow action.";
+    return;
+  }
+  try {
+    const data = await api(`/gateway/nhi/${encodeURIComponent(nhiId)}/shadow-action`, {
+      method: "POST",
+      headers: dual,
+      body: JSON.stringify({
+        action: String(raw.shadow_action || "sanction").trim(),
+        notes: String(raw.shadow_notes || "").trim(),
+      }),
+    });
+    result.textContent = `Shadow ${safeText(data.action)} → shadow_status=${safeText(data.shadow_status)}, nhi_status=${safeText(data.nhi_status)}.`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayNhiIntentCheck(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayNhiResult");
+  const raw = _nhiInsightsFormRaw();
+  const nhiId = String(raw.nhi_record_id || "").trim();
+  if (!result) return;
+  if (!nhiId) {
+    result.textContent = "NHI Record ID is required for intent check.";
+    return;
+  }
+  try {
+    const data = await api("/gateway/nhi/intent-check", {
+      method: "POST",
+      body: JSON.stringify({
+        nhi_record_id: nhiId,
+        declared_intent: String(raw.declared_intent || "").trim(),
+        action: "chat.completions",
+      }),
+    });
+    result.textContent = `Intent check decision=${safeText(data.decision)} allowed=${safeText(data.allowed)} (${safeText(data.reason)}).`;
+    _showNhiPreview(data, "#gatewayNhiInsightsPreview");
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function createGatewayAccessReviewCampaign(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#gatewayAccessReviewCampaignForm");
@@ -9998,7 +11353,7 @@ function renderGatewayJitQueueTable() {
   const summary = qs("#gatewayJitQueueSummary");
   if (!tbody) return;
   if (!gatewayJitRows.length) {
-    setTableMessage(tbody, 8, "No JIT requests for current filters.");
+    setTableMessage(tbody, 9, "No JIT requests for current filters.");
     if (summary) summary.textContent = "0 JIT requests loaded.";
     return;
   }
@@ -10014,6 +11369,15 @@ function renderGatewayJitQueueTable() {
     appendTableCell(tr, row.requester_id);
     appendTableCell(tr, `${row.owner_scope_type || "user"}:${row.owner_scope_id || row.requester_id || "—"}`);
     appendTableCell(tr, row.issued_virtual_key_id || "—");
+    const lastNotify = row.last_notify && typeof row.last_notify === "object" ? row.last_notify : null;
+    if (lastNotify) {
+      appendTableCell(
+        tr,
+        `${safeText(lastNotify.event_type || "notify")} e=${safeText(lastNotify.emails_sent ?? 0)} w=${safeText(lastNotify.webhook_ok ?? 0)}/${safeText(lastNotify.webhook_count ?? 0)}`,
+      );
+    } else {
+      appendTableCell(tr, "—");
+    }
     appendTableCell(tr, row.expires_at ? formatGatewayRecordDate(row.expires_at) : "—");
     const actions = document.createElement("td");
     actions.className = "cell-actions";
@@ -10042,6 +11406,41 @@ function renderGatewayJitQueueTable() {
       notifyBtn.textContent = "Notify";
       notifyBtn.addEventListener("click", () => void notifyGatewayJitRequest(row.request_id));
       actions.appendChild(notifyBtn);
+      const reminderBtn = document.createElement("button");
+      reminderBtn.type = "button";
+      reminderBtn.className = "ghost";
+      reminderBtn.textContent = "Remind";
+      reminderBtn.addEventListener("click", () => void notifyGatewayJitRequest(row.request_id, { reminder: true, force: true }));
+      actions.appendChild(reminderBtn);
+      const escalateBtn = document.createElement("button");
+      escalateBtn.type = "button";
+      escalateBtn.className = "ghost";
+      escalateBtn.textContent = "Escalate";
+      escalateBtn.addEventListener("click", () => void notifyGatewayJitRequest(row.request_id, { escalate: true, force: true }));
+      actions.appendChild(escalateBtn);
+      const previewBtn = document.createElement("button");
+      previewBtn.type = "button";
+      previewBtn.className = "ghost";
+      previewBtn.textContent = "Preview Links";
+      previewBtn.addEventListener("click", () => void previewGatewayJitActionLinks(row.request_id));
+      actions.appendChild(previewBtn);
+    }
+    const historyBtn = document.createElement("button");
+    historyBtn.type = "button";
+    historyBtn.className = "ghost";
+    historyBtn.textContent = "History";
+    historyBtn.addEventListener("click", () => void loadGatewayJitNotifyHistory(row.request_id));
+    actions.appendChild(historyBtn);
+    const failedHooks = Array.isArray(row.last_notify?.webhooks)
+      ? row.last_notify.webhooks.filter((item) => item && item.ok === false)
+      : [];
+    if (failedHooks.length) {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "ghost";
+      retryBtn.textContent = "Retry Hooks";
+      retryBtn.addEventListener("click", () => void retryGatewayJitNotify(row.request_id));
+      actions.appendChild(retryBtn);
     }
     if (row.issued_virtual_key_id) {
       const keyBtn = document.createElement("button");
@@ -10170,8 +11569,16 @@ async function loadGatewayJitDecisionNotify() {
     const data = await api("/gateway/jit-decision-notify/config");
     form.elements.enabled.value = data.enabled ? "true" : "false";
     form.elements.notify_on_create.value = data.notify_on_create === false ? "false" : "true";
+    if (form.elements.notify_on_decide) {
+      form.elements.notify_on_decide.value = data.notify_on_decide === false ? "false" : "true";
+    }
     form.elements.email_channel_id.value = data.email_channel_id || "";
     form.elements.reviewer_emails.value = Array.isArray(data.reviewer_emails) ? data.reviewer_emails.join(", ") : "";
+    if (form.elements.decision_recipient_emails) {
+      form.elements.decision_recipient_emails.value = Array.isArray(data.decision_recipient_emails)
+        ? data.decision_recipient_emails.join(", ")
+        : "";
+    }
     form.elements.public_base_url.value = data.public_base_url || "";
     form.elements.external_callback_ids.value = Array.isArray(data.external_callback_ids)
       ? data.external_callback_ids.join(", ")
@@ -10180,8 +11587,43 @@ async function loadGatewayJitDecisionNotify() {
     form.elements.external_rest_credential_binding_id.value = data.external_rest_credential_binding_id || "";
     form.elements.action_token_ttl_minutes.value = String(data.action_token_ttl_minutes || 1440);
     form.elements.allow_prod_email_approve.value = data.allow_prod_email_approve ? "true" : "false";
+    if (form.elements.expose_virtual_key_on_email_action) {
+      form.elements.expose_virtual_key_on_email_action.value = data.expose_virtual_key_on_email_action ? "true" : "false";
+    }
+    if (form.elements.email_virtual_key_to_recipients) {
+      form.elements.email_virtual_key_to_recipients.value = data.email_virtual_key_to_recipients === false ? "false" : "true";
+    }
+    if (form.elements.webhook_sign_requests) {
+      form.elements.webhook_sign_requests.value = data.webhook_sign_requests === false ? "false" : "true";
+    }
+    if (form.elements.include_action_links_in_webhooks) {
+      form.elements.include_action_links_in_webhooks.value = data.include_action_links_in_webhooks ? "true" : "false";
+    }
+    if (form.elements.min_notify_interval_minutes) {
+      form.elements.min_notify_interval_minutes.value = String(data.min_notify_interval_minutes ?? 15);
+    }
+    if (form.elements.webhook_payload_style) {
+      form.elements.webhook_payload_style.value = data.webhook_payload_style === "compact" ? "compact" : "standard";
+    }
+    if (form.elements.auto_reminder_after_minutes) {
+      form.elements.auto_reminder_after_minutes.value = String(data.auto_reminder_after_minutes ?? 0);
+    }
+    if (form.elements.escalate_after_minutes) {
+      form.elements.escalate_after_minutes.value = String(data.escalate_after_minutes ?? 0);
+    }
+    if (form.elements.escalation_reviewer_emails) {
+      form.elements.escalation_reviewer_emails.value = Array.isArray(data.escalation_reviewer_emails)
+        ? data.escalation_reviewer_emails.join(", ")
+        : "";
+    }
+    if (form.elements.max_auto_reminders) {
+      form.elements.max_auto_reminders.value = String(data.max_auto_reminders ?? 3);
+    }
+    if (form.elements.auto_retry_failed_webhooks_on_tick) {
+      form.elements.auto_retry_failed_webhooks_on_tick.value = data.auto_retry_failed_webhooks_on_tick ? "true" : "false";
+    }
     if (status) {
-      status.textContent = `Loaded JIT decision notify config (enabled=${data.enabled ? "true" : "false"}).`;
+      status.textContent = `Loaded JIT decision notify config (enabled=${data.enabled ? "true" : "false"}, signed_webhooks=${data.webhook_sign_requests !== false ? "true" : "false"}).`;
     }
     if (result) result.textContent = JSON.stringify(data, null, 2);
   } catch (err) {
@@ -10205,14 +11647,27 @@ async function saveGatewayJitDecisionNotify() {
   const body = {
     enabled: String(raw.enabled || "false").toLowerCase() === "true",
     notify_on_create: String(raw.notify_on_create || "true").toLowerCase() !== "false",
+    notify_on_decide: String(raw.notify_on_decide || "true").toLowerCase() !== "false",
     email_channel_id: String(raw.email_channel_id || "").trim(),
     reviewer_emails: _parseCommaList(raw.reviewer_emails),
+    decision_recipient_emails: _parseCommaList(raw.decision_recipient_emails),
     public_base_url: String(raw.public_base_url || "").trim(),
     external_callback_ids: _parseCommaList(raw.external_callback_ids),
     external_rest_url: String(raw.external_rest_url || "").trim(),
     external_rest_credential_binding_id: String(raw.external_rest_credential_binding_id || "").trim(),
     action_token_ttl_minutes: Number(raw.action_token_ttl_minutes || 1440),
     allow_prod_email_approve: String(raw.allow_prod_email_approve || "false").toLowerCase() === "true",
+    expose_virtual_key_on_email_action: String(raw.expose_virtual_key_on_email_action || "false").toLowerCase() === "true",
+    email_virtual_key_to_recipients: String(raw.email_virtual_key_to_recipients || "true").toLowerCase() !== "false",
+    webhook_sign_requests: String(raw.webhook_sign_requests || "true").toLowerCase() !== "false",
+    include_action_links_in_webhooks: String(raw.include_action_links_in_webhooks || "false").toLowerCase() === "true",
+    min_notify_interval_minutes: Number(raw.min_notify_interval_minutes ?? 15),
+    webhook_payload_style: String(raw.webhook_payload_style || "standard").trim().toLowerCase() === "compact" ? "compact" : "standard",
+    auto_reminder_after_minutes: Number(raw.auto_reminder_after_minutes ?? 0),
+    escalate_after_minutes: Number(raw.escalate_after_minutes ?? 0),
+    escalation_reviewer_emails: _parseCommaList(raw.escalation_reviewer_emails),
+    max_auto_reminders: Number(raw.max_auto_reminders ?? 3),
+    auto_retry_failed_webhooks_on_tick: String(raw.auto_retry_failed_webhooks_on_tick || "false").toLowerCase() === "true",
   };
   try {
     const data = await api("/gateway/jit-decision-notify/config", {
@@ -10224,7 +11679,7 @@ async function saveGatewayJitDecisionNotify() {
       body: JSON.stringify(body),
     });
     if (status) {
-      status.textContent = `Saved JIT decision notify config (enabled=${data.enabled ? "true" : "false"}, reviewers=${(data.reviewer_emails || []).length}).`;
+      status.textContent = `Saved JIT decision notify config (enabled=${data.enabled ? "true" : "false"}, reviewers=${(data.reviewer_emails || []).length}, recipients=${(data.decision_recipient_emails || []).length}).`;
     }
     if (result) result.textContent = JSON.stringify(data, null, 2);
   } catch (err) {
@@ -10233,16 +11688,97 @@ async function saveGatewayJitDecisionNotify() {
   }
 }
 
-async function notifyGatewayJitRequest(requestId) {
+async function testGatewayJitDecisionNotify() {
+  const status = qs("#gatewayJitDecisionNotifyStatus");
+  const result = qs("#gatewayJitResult");
+  try {
+    const data = await api("/gateway/jit-decision-notify/test-delivery", { method: "POST" });
+    if (status) {
+      status.textContent = `Test delivery: emails=${data.emails_sent ?? 0}, webhooks=${(data.webhooks || []).length}, probe=${safeText(data.probe_id || "n/a")}.`;
+    }
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    if (status) status.textContent = `Error: ${safeText(err.message)}`;
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function previewGatewayJitActionLinks(requestId) {
+  const accessResult = qs("#gatewayAccessReviewResult");
+  const result = qs("#gatewayJitResult");
+  const form = qs("#gatewayJitDecisionNotifyForm");
+  const id = String(requestId || "").trim();
+  if (!id) return;
+  const reviewerEmail = String(form?.elements?.preview_reviewer_email?.value || "preview@example.com").trim() || "preview@example.com";
+  try {
+    const data = await api(
+      `/gateway/jit-requests/${encodeURIComponent(id)}/preview-action-links?reviewer_email=${encodeURIComponent(reviewerEmail)}`,
+      { method: "POST" },
+    );
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+    if (accessResult) {
+      accessResult.textContent = data.links_ready
+        ? `Preview links ready for ${id} (TTL ${data.action_token_ttl_minutes}m).`
+        : `Preview links incomplete for ${id} — set public_base_url in notify config.`;
+    }
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function notifyGatewayJitRequest(requestId, { reminder = false, force = false, escalate = false } = {}) {
+  const accessResult = qs("#gatewayAccessReviewResult");
+  const result = qs("#gatewayJitResult");
+  const id = String(requestId || "").trim();
+  if (!id) return;
+  const params = new URLSearchParams();
+  if (reminder) params.set("reminder", "true");
+  if (escalate) params.set("escalate", "true");
+  if (force) params.set("force", "true");
+  const qsSuffix = params.toString() ? `?${params.toString()}` : "";
+  try {
+    const data = await api(`/gateway/jit-requests/${encodeURIComponent(id)}/notify${qsSuffix}`, { method: "POST" });
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+    if (accessResult) {
+      const label = escalate ? "Escalated" : reminder ? "Reminder" : "Notified";
+      accessResult.textContent = `${label} JIT ${id}: emails=${data.emails_sent ?? 0}, webhooks=${(data.webhooks || []).length}, delivery=${safeText(data.delivery_id || "n/a")}.`;
+    }
+    void loadGatewayJitQueue();
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function retryGatewayJitNotify(requestId) {
   const accessResult = qs("#gatewayAccessReviewResult");
   const result = qs("#gatewayJitResult");
   const id = String(requestId || "").trim();
   if (!id) return;
   try {
-    const data = await api(`/gateway/jit-requests/${encodeURIComponent(id)}/notify`, { method: "POST" });
+    const data = await api(`/gateway/jit-requests/${encodeURIComponent(id)}/notify-retry`, { method: "POST" });
     if (result) result.textContent = JSON.stringify(data, null, 2);
     if (accessResult) {
-      accessResult.textContent = `Notified JIT ${id}: emails=${data.emails_sent ?? 0}, webhooks=${(data.webhooks || []).length}.`;
+      accessResult.textContent = `Retry hooks for ${id}: ok=${(data.webhooks || []).filter((w) => w.ok).length}/${(data.webhooks || []).length}.`;
+    }
+    void loadGatewayJitQueue();
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayJitNotifyHistory(requestId) {
+  const accessResult = qs("#gatewayAccessReviewResult");
+  const result = qs("#gatewayJitResult");
+  const id = String(requestId || "").trim();
+  if (!id) return;
+  try {
+    const data = await api(`/gateway/jit-requests/${encodeURIComponent(id)}/notify-history`);
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+    if (accessResult) {
+      accessResult.textContent = `Notify history for ${id}: ${(data.history || []).length} event(s).`;
     }
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
@@ -10264,6 +11800,41 @@ async function runGatewayJitExpireTick() {
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
     if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayJitNotifyTick() {
+  const accessResult = qs("#gatewayAccessReviewResult");
+  const result = qs("#gatewayJitResult");
+  try {
+    const data = await api("/gateway/jit-requests/notify-tick", { method: "POST" });
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+    if (accessResult) {
+      accessResult.textContent = `Notify tick: scanned ${data.scanned}, reminded ${data.reminded}, escalated ${data.escalated}, retried ${data.retried}, skipped ${data.skipped}.`;
+    }
+    await loadGatewayJitPendingNotifySummary();
+    await loadGatewayJitQueue();
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    if (accessResult) accessResult.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayJitPendingNotifySummary() {
+  const summaryEl = qs("#gatewayJitPendingNotifySummary");
+  const result = qs("#gatewayJitResult");
+  try {
+    const data = await api("/gateway/jit-decision-notify/pending-summary");
+    if (summaryEl) {
+      summaryEl.textContent =
+        `Pending JIT notify: pending=${data.pending_count ?? 0}, overdue_reminders=${data.overdue_reminder_count ?? 0}, ` +
+        `overdue_escalations=${data.overdue_escalation_count ?? 0}, failed_webhooks=${data.failed_webhook_count ?? 0}, ` +
+        `oldest_age_min=${data.oldest_pending_age_minutes ?? "n/a"} (enabled=${data.enabled ? "true" : "false"}).`;
+    }
+    if (result) result.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    if (summaryEl) summaryEl.textContent = `Error: ${safeText(err.message)}`;
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
   }
 }
 
@@ -10607,8 +12178,23 @@ async function runGatewayOpenAiChatCompletion(evt) {
   }
 
   const stops = parseListInput(raw.stop_csv);
+  const autoRoute = String(raw.auto_route || "").toLowerCase() === "true" || raw.auto_route === "on";
+  let properties = null;
+  if (String(raw.properties_json || "").trim()) {
+    try {
+      properties = parseGatewayJsonInput(raw.properties_json, "Helicone properties JSON");
+      if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+        throw new Error("Helicone properties JSON must be an object.");
+      }
+    } catch (err) {
+      renderGatewayInferenceResult(result, { error: safeText(err.message), source: "chat.create" });
+      return;
+    }
+  }
   const payload = {
-    model: normalizeGatewayInferenceModel(raw.model),
+    model: autoRoute ? "auto" : normalizeGatewayInferenceModel(raw.model),
+    auto_route: autoRoute,
+    auto_route_strategy: String(raw.auto_route_strategy || "balanced").trim() || "balanced",
     messages,
     stream: false,
     environment: String(raw.environment || "dev").trim() || "dev",
@@ -10617,6 +12203,10 @@ async function runGatewayOpenAiChatCompletion(evt) {
     max_tokens: Number(raw.max_tokens || 64),
     response_format: { type: String(raw.response_format_type || "text").trim() || "text" },
     stop: stops.length === 0 ? null : (stops.length === 1 ? stops[0] : stops),
+    session_path: String(raw.session_path || "").trim() || null,
+    session_name: String(raw.session_name || "").trim() || null,
+    user: String(raw.user || "").trim() || null,
+    properties,
   };
 
   try {
@@ -11410,7 +13000,7 @@ function validateProvidersDualApproval(form) {
   const approverRole = String(form?.elements?.approver_role?.value || "").trim();
   const approverId = String(form?.elements?.approver_id?.value || "").trim();
   if (!approverRole || !approverId) {
-    return "Approver Role and Approver ID are required for production Save/Clear actions (unless signed in as Super Admin or Master Admin).";
+    return "Approver Role and Approver ID are required for production Save/Clear actions (unless signed in as Super Admin or Master Admin). Production co-sign will prompt for the approver password (second session).";
   }
   return "";
 }
@@ -14950,6 +16540,48 @@ async function executeKeyRotationSchedule(scheduleId, keyId) {
   }
 }
 
+function routeDraftActionsForStatus(status) {
+  const state = String(status || "").trim().toLowerCase();
+  const map = {
+    draft: ["submit"],
+    expired: ["submit"],
+    rejected: ["submit", "rollback-to-draft"],
+    submitted: ["approve", "reject"],
+    security_approved: ["approve", "reject"],
+    aiops_approved: ["approve-change-window", "reject"],
+    change_window_approved: ["promote", "reject"],
+    promoted: ["rollback-to-draft", "rollback-last-good"],
+  };
+  return map[state] || [
+    "submit",
+    "approve",
+    "reject",
+    "approve-change-window",
+    "promote",
+    "rollback-to-draft",
+    "rollback-last-good",
+  ];
+}
+
+function applyRouteDraftActionAffordances(status) {
+  const select = qs("#routeDraftActionSelect") || qs("#routeDraftActionForm")?.elements?.action;
+  const hint = qs("#routeDraftActionHint");
+  if (!select) return;
+  const allowed = new Set(routeDraftActionsForStatus(status));
+  Array.from(select.options || []).forEach((opt) => {
+    const ok = allowed.has(opt.value);
+    opt.disabled = !ok;
+    opt.hidden = !ok;
+  });
+  const firstAllowed = Array.from(select.options || []).find((opt) => !opt.disabled);
+  if (firstAllowed) select.value = firstAllowed.value;
+  if (hint) {
+    hint.textContent = status
+      ? `Status ${safeText(status)} → allowed: ${Array.from(allowed).join(", ")}.`
+      : "Select a draft (Use) to enable status-aware actions.";
+  }
+}
+
 function renderRouteDraftRows() {
   const tbody = qs("#routeDraftsTable");
   if (!tbody) return;
@@ -14960,9 +16592,15 @@ function renderRouteDraftRows() {
   tbody.textContent = "";
   routeDraftRows.forEach((row) => {
     const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Click to select draft for actions / auto-route recommend";
     if (row.draft_id === selectedRouteDraftId) {
       tr.classList.add("selected-row");
     }
+    tr.addEventListener("click", (evt) => {
+      if (evt.target?.closest?.("button")) return;
+      populateRouteDraftActionForm(row);
+    });
     appendTableCell(tr, row.draft_id);
     appendTableCell(tr, row.agent_id);
     appendTableCell(tr, row.environment);
@@ -14983,6 +16621,16 @@ function renderRouteDraftRows() {
     historyBtn.textContent = "History";
     historyBtn.addEventListener("click", () => loadRouteDraftHistory(row.draft_id));
     actions.appendChild(historyBtn);
+    const recommendBtn = document.createElement("button");
+    recommendBtn.type = "button";
+    recommendBtn.className = "ghost";
+    recommendBtn.textContent = "Recommend";
+    recommendBtn.title = "Auto-route recommend for this draft";
+    recommendBtn.addEventListener("click", () => {
+      populateRouteDraftActionForm(row);
+      void recommendRouteDraftAutoRoute();
+    });
+    actions.appendChild(recommendBtn);
     tr.appendChild(actions);
     tbody.appendChild(tr);
   });
@@ -15073,6 +16721,49 @@ function populateRouteDraftActionForm(row) {
   form.elements.agent_id.value = row.agent_id || "";
   form.elements.environment.value = row.environment || "dev";
   form.elements.expected_state_version.value = String(row.state_version || 1);
+  selectedRouteDraftId = row.draft_id || "";
+  applyRouteDraftActionAffordances(row.status);
+  const filters = qs("#routeDraftFilters");
+  if (filters?.elements?.draft_id) filters.elements.draft_id.value = row.draft_id || "";
+  renderRouteDraftRows();
+}
+
+async function recommendRouteDraftAutoRoute(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#routeDraftsResult");
+  const preview = qs("#routeDraftAutoRoutePreview");
+  const form = qs("#routeDraftActionForm");
+  const draftId = String(
+    form?.elements?.draft_id?.value || selectedRouteDraftId || qs("#routeDraftFilters")?.elements?.draft_id?.value || ""
+  ).trim();
+  if (!draftId) {
+    if (result) result.textContent = "Select a route draft (Use) before recommending auto-route.";
+    return;
+  }
+  if (result) result.textContent = `Recommending auto-route for ${draftId}…`;
+  try {
+    const data = await api(
+      `/gateway/best-practices/route-draft-auto-route-recommend${buildQueryString({ draft_id: draftId })}`,
+      { headers: { "X-Actor-Role": "Auditor" } }
+    );
+    if (!data?.found) {
+      if (result) result.textContent = `Recommend failed: ${safeText(data?.message || "draft not found")}.`;
+      if (preview) preview.hidden = true;
+      return;
+    }
+    const hops = Array.isArray(data.fallback_priority_order) ? data.fallback_priority_order.slice(0, 3).join(" → ") : "";
+    if (result) {
+      result.textContent =
+        `Draft ${safeText(data.draft_id)} (${safeText(data.status)}): model=${safeText(data.recommended_model || "none")}` +
+        (hops ? ` · fallback ${hops}` : "");
+    }
+    if (preview) {
+      preview.hidden = false;
+      preview.textContent = JSON.stringify(data, null, 2);
+    }
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
 }
 
 function parseRouteDraftEvidenceRefs(raw) {
@@ -15089,6 +16780,25 @@ async function runRouteDraftAction(evt) {
   const action = String(raw.action || "").trim();
   if (!draftId || !action) {
     if (result) result.textContent = "Draft ID and action are required.";
+    return;
+  }
+  const selected = routeDraftRows.find((row) => row.draft_id === draftId);
+  if (selected) {
+    const allowed = routeDraftActionsForStatus(selected.status);
+    if (!allowed.includes(action)) {
+      if (result) {
+        result.textContent = `Action ${safeText(action)} is not valid for status ${safeText(selected.status)}. Allowed: ${allowed.join(", ")}.`;
+      }
+      applyRouteDraftActionAffordances(selected.status);
+      return;
+    }
+  }
+  if ((action === "reject" || action === "rollback-to-draft" || action === "rollback-last-good") && !String(raw.reason_code || "").trim()) {
+    if (result) result.textContent = `Reason Code is required for ${safeText(action)}.`;
+    return;
+  }
+  if (action === "submit" && !String(raw.agent_id || "").trim()) {
+    if (result) result.textContent = "Agent ID is required for submit.";
     return;
   }
 
@@ -15127,6 +16837,8 @@ async function runRouteDraftAction(evt) {
     selectedRouteDraftId = draftId;
     await loadRouteDrafts();
     await loadRouteDraftHistory(draftId);
+    const refreshed = routeDraftRows.find((row) => row.draft_id === draftId);
+    if (refreshed) populateRouteDraftActionForm(refreshed);
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
   }
@@ -16445,9 +18157,44 @@ function enforceKnownActorRole() {
   state.actorRole = resolveActorRole(state.actorId, state.actorRole);
 }
 
-function redirectToLoginPage() {
+function clearLocalSessionMarkers() {
+  state.accessToken = "";
+  state.sessionActive = false;
+  state.approverAccessToken = "";
+  state.approverCosignUser = "";
+  localStorage.removeItem("accessToken");
+  localStorage.removeItem("sessionActive");
+  try {
+    sessionStorage.removeItem("sessionBearer");
+    sessionStorage.removeItem("sessionActive");
+  } catch {
+    /* ignore */
+  }
+  ApiClient.setCsrfToken("");
+}
+
+function redirectToLoginPage(reason = "unauthenticated") {
   if (window.location.pathname.endsWith("/login.html")) return;
-  window.location.href = "./login.html";
+  const safeReason = encodeURIComponent(String(reason || "unauthenticated").slice(0, 64));
+  window.location.replace(`./login.html?reason=${safeReason}`);
+}
+
+function hasActiveSession() {
+  return Boolean(state.accessToken) || Boolean(state.sessionActive) || localStorage.getItem("sessionActive") === "1";
+}
+
+async function ensureCsrfToken() {
+  if (ApiClient.readCsrfToken()) return ApiClient.readCsrfToken();
+  const requestBase = resolveApiBaseForPath("/auth/csrf");
+  const resp = await fetch(`${requestBase}/auth/csrf`, {
+    method: "GET",
+    credentials: "include",
+  });
+  if (!resp.ok) {
+    throw new Error(`Unable to refresh CSRF token (${resp.status}).`);
+  }
+  const payload = await resp.json().catch(() => ({}));
+  return ApiClient.setCsrfToken(payload?.csrf_token || "");
 }
 
 function deriveUserNameFromActorId(actorId) {
@@ -16494,15 +18241,16 @@ function renderLoggedInUserDetails() {
   if (overviewContext) {
     overviewContext.textContent = `${safeText(state.actorRole)} @ ${safeText(state.environmentProfile).toUpperCase()}`;
   }
+  const signedIn = hasActiveSession();
   if (overviewSessionBadge) {
-    overviewSessionBadge.textContent = state.accessToken ? "Signed in" : "Not signed in";
-    overviewSessionBadge.className = `status-pill ${state.accessToken ? "success" : "idle"}`;
+    overviewSessionBadge.textContent = signedIn ? "Signed in" : "Not signed in";
+    overviewSessionBadge.className = `status-pill ${signedIn ? "success" : "idle"}`;
   }
   const headerPlaneSeal = qs(".header-plane-seal");
   if (headerPlaneSeal) {
-    headerPlaneSeal.textContent = state.accessToken ? "Session governed" : "Session idle";
-    headerPlaneSeal.classList.toggle("is-idle", !state.accessToken);
-    headerPlaneSeal.title = state.accessToken
+    headerPlaneSeal.textContent = signedIn ? "Session governed" : "Session idle";
+    headerPlaneSeal.classList.toggle("is-idle", !signedIn);
+    headerPlaneSeal.title = signedIn
       ? "Operator session on governance plane"
       : "Sign in to enter the governance plane";
   }
@@ -16523,12 +18271,14 @@ function renderLoggedInUserDetails() {
     headerEnv.title = `Environment: ${safeText(state.environmentProfile)}`;
   }
   if (headerSignOut) {
-    headerSignOut.hidden = !state.accessToken;
+    headerSignOut.hidden = !signedIn;
   }
 
   if (!target) return;
-  const sessionLine = state.accessToken
-    ? "session: signed in (bearer token)"
+  const sessionLine = signedIn
+    ? state.accessToken
+      ? "session: signed in (bearer token)"
+      : "session: signed in (httpOnly cookie)"
     : "session: not signed in";
   target.textContent = [
     `actor_id: ${safeText(state.actorId)}`,
@@ -16540,15 +18290,15 @@ function renderLoggedInUserDetails() {
   ].join("\n");
 
   if (loginControls) {
-    loginControls.hidden = Boolean(state.accessToken);
+    loginControls.hidden = signedIn;
   }
   if (signOutButton) {
-    signOutButton.hidden = !state.accessToken;
+    signOutButton.hidden = !signedIn;
   }
   if (loginResult) {
-    loginResult.textContent = state.accessToken
+    loginResult.textContent = signedIn
       ? `Signed in as ${safeText(state.actorId)} (${safeText(state.actorRole)}).`
-      : "Sign in with a directory user to issue a session token and hide these controls.";
+      : "Sign in with a directory user to issue a session cookie and enter the plane.";
   }
 }
 
@@ -16672,7 +18422,12 @@ function saveContext() {
   state.gatewayApiBase = gatewayRaw ? parseApiBaseOrThrow(gatewayRaw) : "";
   state.actorId = qs("#actorId").value.trim();
   state.actorRole = resolveActorRole(state.actorId, qs("#actorRole").value);
-  state.accessToken = "";
+  // Preserve tab-scoped bearer; never wipe an active console session on Save Context.
+  try {
+    state.accessToken = String(sessionStorage.getItem("sessionBearer") || state.accessToken || "").trim();
+  } catch {
+    /* keep existing state.accessToken */
+  }
   const selectedProfile = String(qs("#environmentProfile")?.value || "").trim();
   state.environmentProfile =
     selectedProfile && selectedProfile !== "custom"
@@ -16684,19 +18439,38 @@ function saveContext() {
   else localStorage.removeItem("gatewayApiBase");
   localStorage.setItem("actorRole", state.actorRole);
   localStorage.setItem("actorId", state.actorId);
+  // Never persist bearer tokens in localStorage (XSS-readable). Prefer httpOnly cookie.
   localStorage.removeItem("accessToken");
   localStorage.setItem("environmentProfile", state.environmentProfile);
   localStorage.setItem("mfaVerified", String(state.mfaVerified));
   updateContextInputs();
 }
 
-function signOutSession() {
-  state.accessToken = "";
-  localStorage.removeItem("accessToken");
+async function signOutSession() {
+  if (state.signOutArmedAt && Date.now() < state.signOutArmedAt) {
+    return;
+  }
+  const confirmed = await operatorConfirm("Sign out of the governance plane?", {
+    title: "Sign out",
+    okLabel: "Sign out",
+    danger: true,
+  }).catch(() => false);
+  if (!confirmed) return;
+  try {
+    const logoutBase = resolveApiBaseForPath("/auth/logout");
+    await fetch(`${logoutBase}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+      headers: ApiClient.buildHeaders(state),
+    });
+  } catch {
+    // Best-effort cookie clear; always wipe local state.
+  }
+  clearLocalSessionMarkers();
   renderLoggedInUserDetails();
   const result = qs("#loginResult");
   if (result) result.textContent = "Signed out. Enter credentials to sign in again.";
-  redirectToLoginPage();
+  redirectToLoginPage("signed_out");
 }
 
 async function signInWithPrompt() {
@@ -16727,13 +18501,11 @@ async function signInWithPrompt() {
   state.actorId = String(issued?.actor_id || username);
   state.actorRole = resolveActorRole(state.actorId, issued?.actor_role || qs("#actorRole")?.value || "Master Admin");
 
-  state.accessToken = String(issued?.access_token || "");
-  if (!state.accessToken) {
-    throw new Error("Session token was not issued.");
-  }
+  // Prefer httpOnly gb_session cookie; keep bearer in memory only for optional API paste.
+  state.accessToken = "";
   localStorage.setItem("actorId", state.actorId);
   localStorage.setItem("actorRole", state.actorRole);
-  localStorage.setItem("accessToken", state.accessToken);
+  localStorage.removeItem("accessToken");
   localStorage.setItem("mfaVerified", String(state.mfaVerified));
   updateContextInputs();
 
@@ -16806,6 +18578,42 @@ function initPlatformExperienceModules() {
   }
 }
 
+async function ensureProductionApproverCosign(headers, { skip = false } = {}) {
+  if (skip) return headers;
+  const profile = String(state.environmentProfile || "").trim().toLowerCase();
+  const isProdProfile = profile === "prod" || profile === "production";
+  if (!isProdProfile || actorBypassesProvidersDualApproval()) return headers;
+  const approverId = String(headers["X-Approver-Id"] || "").trim();
+  if (!approverId || headers["X-Approver-Authorization"]) return headers;
+
+  if (state.approverAccessToken && state.approverCosignUser === approverId) {
+    headers["X-Approver-Authorization"] = `Bearer ${state.approverAccessToken}`;
+    return headers;
+  }
+
+  const password = window.prompt(`Production co-sign required. Enter password for ${approverId}:`) || "";
+  if (!password) {
+    throw new Error("Approver co-sign canceled.");
+  }
+  const issued = await api("/auth/approver-session", {
+    method: "POST",
+    body: JSON.stringify({
+      username: approverId,
+      password,
+      ttl_minutes: 15,
+      idle_timeout_minutes: 15,
+    }),
+    headers: { "X-Skip-Approver-Cosign": "1" },
+  });
+  state.approverAccessToken = String(issued?.access_token || "");
+  state.approverCosignUser = approverId;
+  if (!state.approverAccessToken) {
+    throw new Error("Approver session token was not issued.");
+  }
+  headers["X-Approver-Authorization"] = `Bearer ${state.approverAccessToken}`;
+  return headers;
+}
+
 async function api(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   UiCoverage.assertFrontendAvailable(method, path);
@@ -16821,7 +18629,26 @@ async function api(path, options = {}) {
     }
   }
 
-  const headers = ApiClient.buildHeaders(state, options);
+  let headers = ApiClient.buildHeaders(state, options);
+  const skipApproverCosign =
+    String(headers["X-Skip-Approver-Cosign"] || "").trim() === "1" ||
+    path === "/auth/approver-session" ||
+    path === "/auth/login" ||
+    path === "/auth/logout";
+  if (headers["X-Skip-Approver-Cosign"]) {
+    delete headers["X-Skip-Approver-Cosign"];
+  }
+  if (!SAFE_HTTP_METHODS.has(method) && path !== "/auth/login" && path !== "/auth/approver-session") {
+    try {
+      await ensureCsrfToken();
+      headers = ApiClient.buildHeaders(state, { ...options, headers });
+    } catch {
+      /* Mutations may still succeed via Bearer; cookie-auth needs CSRF. */
+    }
+  }
+  if (!SAFE_HTTP_METHODS.has(method) && !skipApproverCosign) {
+    headers = await ensureProductionApproverCosign(headers, { skip: false });
+  }
 
   const requestBase = resolveApiBaseForPath(path);
   const requestUrl = `${requestBase}${path}`;
@@ -16840,6 +18667,7 @@ async function api(path, options = {}) {
     ...options,
     headers,
     body,
+    credentials: "include",
   };
 
   const executeRequest = async () => {
@@ -16858,10 +18686,11 @@ async function api(path, options = {}) {
     resp = await fetch(requestUrl, {
       ...requestOptions,
       headers: fallbackHeaders,
+      credentials: "include",
     });
     if (resp.ok) {
       state.accessToken = "";
-      localStorage.setItem("accessToken", "");
+      localStorage.removeItem("accessToken");
       const tokenInput = qs("#accessToken");
       if (tokenInput) tokenInput.value = "";
     }
@@ -16891,10 +18720,11 @@ async function api(path, options = {}) {
   if (!resp.ok) {
     const detail = data?.detail;
     let message = detail?.message || detail || `Request failed (${resp.status})`;
+    let errorCode = "";
     if (detail && typeof detail === "object") {
       const actorRole = String(detail.actor_role || "").trim();
       const requiredRole = String(detail.required_role || "").trim();
-      const errorCode = String(detail.error_code || "").trim();
+      errorCode = String(detail.error_code || "").trim();
       const traceId = String(detail.decision_trace_id || "").trim();
       if (errorCode === "AUTHZ_ROLE_FORBIDDEN" && usedBearerToken && isLoopbackApiBase(state.apiBase)) {
         message = `${message} Session token role${actorRole ? ` (${actorRole})` : ""} was used for authorization. Sign in with Platform Admin, AI Ops Approver, or Agent Owner, or use a local session without a conflicting bearer token.`;
@@ -16906,7 +18736,24 @@ async function api(path, options = {}) {
         message = `${message} Trace: ${traceId}.`;
       }
     }
-    if (resp.status >= 500) {
+    if (
+      resp.status === 401 &&
+      (errorCode === "AUTHN_SESSION_IDLE_TIMEOUT" ||
+        errorCode === "AUTHN_SESSION_EXPIRED" ||
+        errorCode === "AUTHN_REQUIRED")
+    ) {
+      clearLocalSessionMarkers();
+      redirectToLoginPage(
+        errorCode === "AUTHN_SESSION_IDLE_TIMEOUT"
+          ? "session_idle"
+          : errorCode === "AUTHN_SESSION_EXPIRED"
+            ? "session_expired"
+            : "auth_required",
+      );
+    }
+    // Only treat transport/gateway outages as a global plane incident.
+    // 500/501 (app errors / not implemented) should surface on the calling control, not as "unavailable".
+    if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
       setGlobalError("The service is currently unavailable");
     }
     throw new Error(String(message));
@@ -17576,12 +19423,19 @@ async function switchView(viewName) {
     UiKit.announce(`${viewTitle} console`);
   }
   if (viewName === "routing-gateway") {
+    void loadGatewayBestPracticesPosture();
+    void loadGatewayLeadershipIndex();
+    void loadGatewayAttributionAnalytics();
+    void loadGatewayModelRankings();
+    void loadLeadershipDashboardStrip();
+    void loadLeadershipHealthBanner();
     renderGatewayMcpSummary();
     renderCursorGatewayOpsMatrix();
     renderCursorAutomationRecipe();
     switchGatewayOpsTab("core");
     void ensureTenantCatalogReady();
     void loadGatewayConfiguredModels();
+    void loadInferenceReadinessPanel();
     void loadRoutePolicies();
     void loadKeys();
     void refreshCursorIntegrationHub();
@@ -17625,6 +19479,8 @@ async function switchView(viewName) {
   }
   if (viewName === "playground") {
     void refreshGatewayCredentialReadiness("playgroundCredentialStatus");
+    void refreshPlaygroundLeadershipTrafficLight();
+    void loadInferenceReadinessPanel();
     void loadPlaygroundTestSets();
     void loadPlaygroundRuns();
   } else if (viewName === "benchmark-scan") {
@@ -17951,14 +19807,21 @@ function applyOverviewPlaneLeadership(leadership) {
         ? leadership.blockers
         : [];
     if (!items.length) {
-      blockers.innerHTML = `<li class="mono">No CPLI blockers — eng band ${safeText(leadership.band || "--")} (marketing still blocked).</li>`;
+      const prog = window.__overviewProgramLeadership || leadership.program_lrs || null;
+      const claimOk = Boolean(prog?.lrs_claim_allowed || (prog?.score != null && prog.score >= 32));
+      const claimNote = claimOk
+        ? "program LRS claim gate open (no competitor #1)"
+        : "marketing claims follow program LRS honesty gate";
+      blockers.innerHTML = `<li class="mono">No CPLI blockers — eng band ${safeText(leadership.band || "--")} · ${safeText(claimNote)}.</li>`;
     } else {
       blockers.innerHTML = items.map((b) => `<li>${safeText(b)}</li>`).join("");
     }
   }
   const dimsBody = qs("#overviewPlaneDimensions");
   if (dimsBody) {
-    const dims = Array.isArray(leadership.dimensions) ? leadership.dimensions : [];
+    const dims = Array.isArray(leadership.dimensions)
+      ? leadership.dimensions.filter((d) => d && typeof d === "object")
+      : [];
     if (!dims.length) {
       dimsBody.innerHTML = `<tr><td colspan="3" class="mono">Load CPLI to see dimensions.</td></tr>`;
     } else {
@@ -18421,27 +20284,234 @@ async function evaluateOverviewPlaneReleaseGate() {
   }
 }
 
+function setReadinessTone(el, tone) {
+  if (!el) return;
+  el.classList.remove("tone-ok", "tone-warn", "tone-blocked", "tone-idle");
+  if (tone) el.classList.add(`tone-${tone}`);
+}
+
+function applyProgramLeadershipChips(data, ids = {}) {
+  const prog = data?.program_leadership || {};
+  const honesty = data?.honesty || {};
+  const lrs = prog.lrs || honesty.lrs || null;
+  const claimAllowed = Boolean(prog.lrs_claim_allowed ?? honesty.leader_claim_allowed);
+  const reason = String(prog.lrs_reason || honesty.reason || "");
+  const unified = Boolean(prog.unified_ready);
+
+  const claimEl = ids.claim ? qs(ids.claim) : null;
+  if (claimEl) {
+    claimEl.textContent = claimAllowed ? "allowed" : "blocked";
+    claimEl.title = reason || (claimAllowed ? "LRS gate met" : "LRS gate not met");
+    setReadinessTone(claimEl, claimAllowed ? "ok" : "blocked");
+  }
+
+  const lrsEl = ids.lrs ? qs(ids.lrs) : null;
+  if (lrsEl) {
+    const score = lrs?.score;
+    const max = lrs?.max_score ?? 40;
+    lrsEl.textContent = score != null ? `${score}/${max}` : "--";
+    lrsEl.title = lrs?.attestation_id
+      ? `${lrs.attestation_id} · ${lrs.band || ""} · ${lrs.attested_on || ""}`.trim()
+      : reason || "No LRS attestation";
+    setReadinessTone(lrsEl, score != null && Number(score) >= 32 ? "ok" : score != null ? "warn" : "idle");
+  }
+
+  const sustainEl = ids.sustain ? qs(ids.sustain) : null;
+  if (sustainEl) {
+    const sustainOn = lrs?.last_sustain_on || lrs?.attested_on || "";
+    sustainEl.textContent = sustainOn || "--";
+    sustainEl.title = sustainOn
+      ? `Last LRS sustain/attestation refresh · ${lrs?.attestation_id || ""}`.trim()
+      : "No LRS sustain date";
+    setReadinessTone(sustainEl, sustainOn ? "ok" : "idle");
+  }
+
+  const unifiedEl = ids.unified ? qs(ids.unified) : null;
+  if (unifiedEl) {
+    unifiedEl.textContent = unified ? "ready" : claimAllowed ? "lrs-ok" : "building";
+    unifiedEl.title = unified
+      ? "LRS claim gate + CPLI engineering leader band both met"
+      : claimAllowed
+        ? "LRS met; CPLI still below engineering leader band"
+        : "Program LRS and/or CPLI not yet ready";
+    setReadinessTone(unifiedEl, unified ? "ok" : claimAllowed ? "warn" : "idle");
+  }
+
+  const engEl = ids.engReady ? qs(ids.engReady) : null;
+  if (engEl) {
+    const ready = prog.cpli_engineering_leader_ready;
+    engEl.textContent = ready == null ? "--" : ready ? "yes" : "no";
+    engEl.title = prog.cpli_band
+      ? `CPLI ${prog.cpli_score ?? "--"}/${prog.cpli_max ?? 20} · ${String(prog.cpli_band).replace(/_/g, " ")}`
+      : "";
+    setReadinessTone(engEl, ready ? "ok" : ready === false ? "warn" : "idle");
+  }
+
+  return { prog, honesty, claimAllowed, unified, reason };
+}
+
 async function loadOverviewLeadershipReadiness() {
   const nhiEl = qs("#overviewReadyNhi");
   const rtEl = qs("#overviewReadyRt");
   const claimEl = qs("#overviewReadyClaim");
+  const lrsEl = qs("#overviewReadyLrs");
+  const unifiedEl = qs("#overviewReadyUnified");
+  const postureEl = qs("#overviewLeadershipPosture");
   // Platform health (#overviewReadyHealth) is owned by GET /health in loadOverview — never overwrite it here.
-  if (!nhiEl && !rtEl && !claimEl) return;
+  if (!nhiEl && !rtEl && !claimEl && !postureEl && !lrsEl && !unifiedEl) return;
   try {
     const data = await api("/gateway/governance/qbr-snapshot?hours=24");
     if (nhiEl) {
       nhiEl.textContent = data?.clocks?.prod_unmanaged_zero_ok ? "zero-ok" : "review";
+      setReadinessTone(nhiEl, data?.clocks?.prod_unmanaged_zero_ok ? "ok" : "warn");
     }
     if (rtEl) {
-      rtEl.textContent = data?.drills?.rt_01_02_within_90d ? "fresh" : "due";
+      const fresh = Boolean(data?.drills?.rt_01_02_within_90d);
+      rtEl.textContent = fresh ? "fresh" : "due";
+      setReadinessTone(rtEl, fresh ? "ok" : "warn");
+    }
+    applyProgramLeadershipChips(data, {
+      claim: "#overviewReadyClaim",
+      lrs: "#overviewReadyLrs",
+      sustain: "#overviewReadyLrsSustain",
+      unified: "#overviewReadyUnified",
+    });
+    window.__overviewProgramLeadership = data?.program_leadership || null;
+  } catch {
+    if (nhiEl) {
+      nhiEl.textContent = "--";
+      setReadinessTone(nhiEl, "idle");
+    }
+    if (rtEl) {
+      rtEl.textContent = "--";
+      setReadinessTone(rtEl, "idle");
     }
     if (claimEl) {
-      claimEl.textContent = data?.honesty?.leader_claim_allowed ? "allowed" : "blocked";
+      claimEl.textContent = "blocked";
+      setReadinessTone(claimEl, "blocked");
     }
-  } catch {
-    if (nhiEl) nhiEl.textContent = "--";
-    if (rtEl) rtEl.textContent = "--";
-    if (claimEl) claimEl.textContent = "blocked";
+    if (lrsEl) {
+      lrsEl.textContent = "--";
+      setReadinessTone(lrsEl, "idle");
+    }
+    if (unifiedEl) {
+      unifiedEl.textContent = "--";
+      setReadinessTone(unifiedEl, "idle");
+    }
+  }
+  if (postureEl) {
+    try {
+      const digest = await api("/gateway/best-practices/leadership-posture-digest", {
+        headers: { "X-Actor-Role": "Auditor" },
+      });
+      postureEl.textContent = `${String(digest?.traffic_light || "?").toUpperCase()} ${digest?.score ?? ""}`.trim();
+    } catch {
+      postureEl.textContent = "--";
+    }
+  }
+  const trendEl = qs("#overviewLeadershipTrend");
+  if (trendEl) {
+    try {
+      const trend = await api("/gateway/best-practices/score-trend-muted?points=6&decline_points=3", {
+        headers: { "X-Actor-Role": "Auditor" },
+      });
+      trendEl.textContent = trend?.effective_alert
+        ? "decline"
+        : trend?.muted
+          ? "muted"
+          : "stable";
+    } catch {
+      trendEl.textContent = "--";
+    }
+  }
+  const decisionEl = qs("#overviewLeadershipDecision");
+  const deltaEl = qs("#overviewLeadershipDelta");
+  if (decisionEl || deltaEl) {
+    try {
+      const strip = await api("/gateway/best-practices/overview-executive-strip", {
+        headers: { "X-Actor-Role": "Auditor" },
+      });
+      if (decisionEl) decisionEl.textContent = String(strip?.decision || "--");
+      if (deltaEl) {
+        const d = strip?.score_delta;
+        deltaEl.textContent = d === undefined || d === null ? "--" : String(d);
+      }
+      if (postureEl && strip?.label) {
+        postureEl.textContent = String(strip.label).trim() || postureEl.textContent;
+      }
+    } catch {
+      if (decisionEl) decisionEl.textContent = "--";
+      if (deltaEl) deltaEl.textContent = "--";
+    }
+  }
+}
+
+async function raiseOverviewLeadershipScore() {
+  const statusEl = qs("#overviewLeadershipBootstrapStatus");
+  const btn = qs("#overviewRaiseLeadershipScore");
+  const enhanceCpli = String(qs("#overviewEnhanceCpli")?.value || "true").trim() !== "false";
+  const probePeerMode = String(qs("#overviewProbePeer")?.value || "auto").trim().toLowerCase();
+  if (btn) btn.disabled = true;
+  if (statusEl) {
+    statusEl.textContent = enhanceCpli
+      ? "Raising best-practices + CPLI…"
+      : "Raising best-practices posture…";
+  }
+  try {
+    const profile = String(state.environmentProfile || "local").trim().toLowerCase();
+    const environment = profile === "prod" || profile === "production" ? "prod" : "dev";
+    const headers = { "Content-Type": "application/json" };
+    if (environment === "prod") {
+      Object.assign(headers, getGatewayDualApprovalHeaders("#overview") || {});
+    }
+    const body = {
+      tenant_id: "tenant-leadership-bootstrap",
+      environment,
+      max_hops: 3,
+      enhance_cpli: enhanceCpli,
+    };
+    if (probePeerMode === "true") body.probe_peer = true;
+    else if (probePeerMode === "false") body.probe_peer = false;
+    const result = await api("/gateway/best-practices/leadership-bootstrap", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const before = result?.before?.score ?? "?";
+    const after = result?.after?.score ?? "?";
+    const delta = result?.delta ?? 0;
+    const band = result?.after?.band || "";
+    const cpli = result?.cpli || {};
+    const cpliBefore = cpli?.before?.score;
+    const cpliAfter = cpli?.after?.score;
+    const cpliDelta = cpli?.delta;
+    const cpliNote =
+      cpli?.enhanced && cpliAfter !== undefined
+        ? ` · CPLI ${cpliBefore ?? "?"} → ${cpliAfter} (Δ${(cpliDelta ?? 0) >= 0 ? "+" : ""}${cpliDelta ?? 0})`
+        : enhanceCpli
+          ? ""
+          : " · CPLI skipped";
+    const probeNote =
+      result?.probe_peer != null
+        ? ` · probe_peer=${safeText(result.probe_peer)}`
+        : probePeerMode !== "auto"
+          ? ` · probe_peer=${probePeerMode}`
+          : "";
+    const gaps = (result?.remaining_gaps || [])
+      .slice(0, 2)
+      .map((g) => g.label || g.check_id)
+      .filter(Boolean);
+    const gapNote = gaps.length ? ` Remaining: ${gaps.join("; ")}.` : "";
+    if (statusEl) {
+      statusEl.textContent = `Posture ${before} → ${after} (Δ${delta >= 0 ? "+" : ""}${delta})${band ? ` · ${band}` : ""}${cpliNote}${probeNote}.${gapNote}`;
+    }
+    await Promise.allSettled([loadOverviewLeadershipReadiness(), loadOverviewControlPlane()]);
+  } catch (error) {
+    if (statusEl) {
+      statusEl.textContent = `Raise failed: ${safeText(error?.message || "error")}`;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -20411,6 +22481,8 @@ async function seedTrendingSupportedModels(evt) {
     qs("#seedAzureSupportedModels"),
     qs("#seedGcpSupportedModels"),
     qs("#seedAllCloudSupportedModels"),
+    qs("#discoverCloudSupportedModels"),
+    qs("#syncCloudSupportedModels"),
   ].filter(Boolean);
   buttons.forEach((button) => {
     button.disabled = true;
@@ -20432,7 +22504,70 @@ async function seedTrendingSupportedModels(evt) {
       loadSupportedModelOptions(),
       loadPlatformAvailableModels({ force: true }),
       loadPlatformModelAvailabilityRegister(),
+      loadInferenceReadinessPanel(),
     ]);
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  } finally {
+    buttons.forEach((button) => {
+      button.disabled = false;
+    });
+  }
+}
+
+async function discoverOrSyncCloudSupportedModels(evt, { sync = false } = {}) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#seedTrendingModelsResult") || qs("#supportedModelsResult");
+  const buttons = [
+    qs("#seedTrendingSupportedModels"),
+    qs("#seedBedrockSupportedModels"),
+    qs("#seedAzureSupportedModels"),
+    qs("#seedGcpSupportedModels"),
+    qs("#seedAllCloudSupportedModels"),
+    qs("#discoverCloudSupportedModels"),
+    qs("#syncCloudSupportedModels"),
+  ].filter(Boolean);
+  buttons.forEach((button) => {
+    button.disabled = true;
+  });
+  const path = sync ? "/providers/models/sync-cloud" : "/providers/models/discover-cloud";
+  try {
+    if (result) result.textContent = sync ? "Syncing live cloud models…" : "Discovering live cloud models…";
+    const data = await api(path, {
+      method: "POST",
+      body: JSON.stringify({
+        targets: ["all"],
+        overwrite: false,
+        auto_approve: true,
+        limit: 200,
+      }),
+    });
+    const errorBits = Array.isArray(data?.errors) && data.errors.length
+      ? ` Errors: ${data.errors.map((row) => `${row.target}: ${row.error}`).join(" | ")}`
+      : "";
+    if (sync) {
+      if (result) {
+        result.textContent =
+          `Live sync [${safeText((data?.targets || []).join(", "))}] — discovered ${safeText(String(data?.discovered ?? 0))}, ` +
+          `created ${safeText(String(data?.created ?? 0))}, updated ${safeText(String(data?.updated ?? 0))}, ` +
+          `skipped ${safeText(String(data?.skipped ?? 0))}.${errorBits}`;
+      }
+      await Promise.all([
+        loadSupportedModels(),
+        loadSupportedModelOptions(),
+        loadPlatformAvailableModels({ force: true }),
+        loadPlatformModelAvailabilityRegister(),
+        loadInferenceReadinessPanel(),
+      ]);
+    } else if (result) {
+      const sample = Array.isArray(data?.models)
+        ? data.models.slice(0, 8).map((row) => `${row.provider_type}:${row.model_name}`).join(", ")
+        : "";
+      result.textContent =
+        `Live discover found ${safeText(String(data?.total ?? 0))} models` +
+        (sample ? ` (sample: ${safeText(sample)})` : "") +
+        `.${errorBits}`;
+    }
   } catch (err) {
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
   } finally {
@@ -20616,6 +22751,9 @@ function initProvidersConsoleTabs() {
       if (["tenants", "workload", "secrets", "models"].includes(tabName)) {
         refreshProvidersTenantSearchUi();
       }
+      if (tabName === "models") {
+        void loadInferenceReadinessPanel();
+      }
     },
   });
 }
@@ -20628,7 +22766,14 @@ const SECRET_REF_TEMPLATE_PLACEHOLDERS = {
   "providers/mistral/api-key": "Mistral API key",
   "providers/groq/api-key": "Groq API key",
   "providers/azure/openai-key": "Azure OpenAI key or connection string",
-  "providers/aws/bedrock-credentials": "AWS access key or role material",
+  "providers/aws/bedrock-credentials": 'AWS JSON: {"access_key_id":"…","secret_access_key":"…","region":"us-east-1"} or aws-default',
+  "providers/google/api-key": "Google Gemini API key (AIza…)",
+  "providers/vertex/access-token": "Vertex OAuth access token or API key",
+  "providers/deepseek/api-key": "DeepSeek API key",
+  "providers/xai/api-key": "xAI API key",
+  "providers/together/api-key": "Together API key",
+  "providers/fireworks/api-key": "Fireworks API key",
+  "providers/perplexity/api-key": "Perplexity API key",
   "providers/sendgrid/api-key": "SendGrid API key (SG…)",
   "providers/twilio/credentials": 'JSON: {"username":"ACxxxxxxxx","password":"your_auth_token"}',
 };
@@ -20689,38 +22834,2965 @@ function initSecretRefTemplatePicker() {
 async function refreshGatewayCredentialReadiness(targetId) {
   const target = qs(`#${targetId}`);
   if (!target) return;
-  target.textContent = "Credential readiness: checking gateway binding…";
-  const selectedModel = String(qs("#playgroundRunForm")?.elements?.selected_model?.value || "").trim().toLowerCase();
-  const modelProvider = selectedModel.startsWith("cursor/") || selectedModel.startsWith("composer")
-    ? "cursor"
-    : selectedModel.startsWith("claude")
-      ? "anthropic"
-      : "openai";
-  try {
-    const data = await api("/gateway/cursor-secret-binding", {
-      headers: { "X-Actor-Role": "Auditor" },
-    });
-    const configured = Boolean(data?.configured);
-    const providerId = String(data?.secret_provider_id || "").trim() || "--";
-    const secretRef = String(data?.secret_ref || "").trim() || "--";
-    const masked = String(data?.masked_hint || data?.masked_secret_hint || "").trim() || "--";
-    let message = "";
-    if (configured) {
-      message = `Credential readiness: gateway Cursor binding active · provider ${safeText(providerId)} · ref ${safeText(secretRef)} · masked ${safeText(masked)}`;
+  target.textContent = "Credential readiness: checking…";
+  const selectedModel = String(qs("#playgroundRunForm")?.elements?.selected_model?.value || "").trim();
+  const catalogRow = findGatewayCatalogRow(selectedModel);
+  let inferredProvider = String(catalogRow?.provider_type || "").trim().toLowerCase();
+  if (!inferredProvider) {
+    const lower = selectedModel.toLowerCase();
+    if (lower.startsWith("amazon.") || lower.startsWith("anthropic.") || lower.startsWith("meta.") || lower.startsWith("us.") || lower.startsWith("eu.")) {
+      inferredProvider = "aws";
+    } else if (lower.startsWith("claude")) {
+      inferredProvider = "anthropic";
+    } else if (lower.startsWith("gemini") || lower.startsWith("publishers/")) {
+      inferredProvider = lower.startsWith("publishers/") ? "vertex" : "google";
+    } else if (lower.startsWith("grok")) {
+      inferredProvider = "xai";
+    } else if (lower.startsWith("deepseek")) {
+      inferredProvider = "deepseek";
+    } else if (lower.startsWith("composer") || lower.startsWith("cursor/") || lower.startsWith("cursor-")) {
+      inferredProvider = "cursor";
     } else {
-      message =
-        "Credential readiness: gateway binding not configured — use Providers → Store Secret Value (gateway/cursor-token) then Gateway Cursor Secret Binding.";
+      inferredProvider = "openai";
     }
-    if (modelProvider === "openai") {
-      message +=
-        " · Selected model looks OpenAI — add Providers → platform/default OpenAI binding or OPENAI_API_KEY for live gpt-* responses (otherwise structured simulation templates apply).";
-    } else if (modelProvider === "cursor" && !configured) {
-      message += " · Cursor model selected but gateway binding is not configured.";
+  }
+
+  try {
+    const [binding, readiness] = await Promise.all([
+      api("/gateway/cursor-secret-binding", { headers: { "X-Actor-Role": "Auditor" } }).catch(() => null),
+      api("/providers/models/inference-readiness", { headers: { "X-Actor-Role": "Auditor" } }).catch(() => null),
+    ]);
+    if (readiness) {
+      const previous = JSON.stringify(inferenceReadinessCache?.providers || []);
+      inferenceReadinessCache = readiness;
+      populateProviderFilterControls();
+      renderGatewayInferenceReadinessStrip(readiness);
+      if (previous !== JSON.stringify(readiness.providers || [])) {
+        refreshAllGatewayModelSelects();
+      }
+    }
+    const configured = Boolean(binding?.configured);
+    const providers = Array.isArray(readiness?.providers) ? readiness.providers : [];
+    const selected = providers.find((row) => String(row.provider_type || "").toLowerCase() === inferredProvider);
+    const liveBits = providers
+      .filter((row) => row.live_ready)
+      .map((row) => row.provider_type)
+      .slice(0, 8)
+      .join(", ");
+    const selectedStatus = selected
+      ? selected.live_ready
+        ? `live ready (${selected.catalog_models} catalog models)`
+        : `${selected.status.replaceAll("_", " ")} — ${selected.setup_hint}`
+      : "provider not listed";
+    let message = `Selected ${safeText(selectedModel || "(none)")} → ${safeText(inferredProvider)}: ${safeText(selectedStatus)}`;
+    if (inferredProvider === "cursor") {
+      message += configured
+        ? " · Cursor gateway binding active."
+        : " · Cursor gateway binding missing — configure Providers → Gateway Cursor Secret Binding.";
+    }
+    if (readiness?.simulation_enabled) {
+      message += " · Gateway simulation mode is ON (no live upstream keys detected for default path).";
+    }
+    if (liveBits) {
+      message += ` · Live-ready vendors: ${safeText(liveBits)}.`;
+    } else {
+      message += " · No live-ready vendors yet — store keys in Providers or set runtime env credentials.";
     }
     target.textContent = message;
+    renderInferenceReadinessPanel(readiness);
   } catch (err) {
-    target.textContent = `Credential readiness: unable to load binding (${safeText(err.message)}). Configure in Providers → Secret Providers.`;
+    target.textContent = `Credential readiness: unable to load status (${safeText(err.message)}). Configure in Providers.`;
   }
+}
+
+function renderInferenceReadinessPanel(readiness) {
+  const panel = qs("#inferenceReadinessPanel");
+  const summary = qs("#inferenceReadinessSummary");
+  const tbody = qs("#inferenceReadinessTable");
+  if (!panel || !summary || !tbody) return;
+  if (!readiness) {
+    summary.textContent = "Unable to load inference readiness.";
+    setTableMessage(tbody, 5, "Unavailable");
+    return;
+  }
+  summary.textContent =
+    `${Number(readiness.ready_providers || 0)}/${Number(readiness.total_providers || 0)} vendors live-ready · ` +
+    `${Number(readiness.catalog_models_total || 0)} catalog models` +
+    (readiness.simulation_enabled ? " · simulation ON" : " · simulation OFF");
+  const rows = Array.isArray(readiness.providers) ? readiness.providers : [];
+  if (!rows.length) {
+    setTableMessage(tbody, 5, "No providers reported.");
+    return;
+  }
+  tbody.textContent = "";
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    appendTableCell(tr, row.label || row.provider_type);
+    appendTableCell(tr, row.catalog_models ?? 0);
+    appendTableCell(tr, row.live_ready ? "live" : String(row.status || "").replaceAll("_", " "));
+    appendTableCell(tr, row.env_credential_configured ? "yes" : "no");
+    appendTableCell(tr, row.setup_hint || "");
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadInferenceReadinessPanel() {
+  const summary = qs("#inferenceReadinessSummary");
+  try {
+    if (summary) summary.textContent = "Loading inference readiness…";
+    const readiness = await api("/providers/models/inference-readiness", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    inferenceReadinessCache = readiness;
+    renderInferenceReadinessPanel(readiness);
+    renderGatewayInferenceReadinessStrip(readiness);
+    populateProviderFilterControls();
+    refreshAllGatewayModelSelects();
+  } catch (err) {
+    renderInferenceReadinessPanel(null);
+    if (summary) summary.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function providerFilterOptionsFromReadiness() {
+  const providers = Array.isArray(inferenceReadinessCache?.providers) ? inferenceReadinessCache.providers : [];
+  const options = [{ value: "", label: "All providers" }];
+  providers
+    .filter((row) => Number(row.catalog_models || 0) > 0 || row.live_ready)
+    .forEach((row) => {
+      const live = row.live_ready ? " · live" : "";
+      options.push({
+        value: String(row.provider_type || "").trim(),
+        label: `${row.label || row.provider_type} (${row.catalog_models || 0}${live})`,
+      });
+    });
+  if (options.length === 1) {
+    AI_PROVIDER_TYPE_OPTIONS.forEach((item) => options.push({ value: item.value, label: item.label }));
+  }
+  return options;
+}
+
+function populateProviderFilterControls() {
+  const options = providerFilterOptionsFromReadiness();
+  const playgroundSelect = qs("#playgroundProviderFilter");
+  if (playgroundSelect) {
+    setLabeledSelectOptions(playgroundSelect, options, {
+      placeholder: "All providers",
+      selectedValue: playgroundProviderFilter,
+      autoSelectFirst: false,
+    });
+    if (!playgroundProviderFilter) playgroundSelect.value = "";
+  }
+  const gatewaySelect = qs("#gatewayOpsProviderFilter");
+  if (gatewaySelect) {
+    setLabeledSelectOptions(gatewaySelect, options, {
+      placeholder: "All providers",
+      selectedValue: gatewayOpsProviderFilter,
+      autoSelectFirst: false,
+    });
+    if (!gatewayOpsProviderFilter) gatewaySelect.value = "";
+  }
+  renderProviderFilterChips("#playgroundProviderChips", playgroundProviderFilter, (value) => {
+    playgroundProviderFilter = value;
+    if (playgroundSelect) playgroundSelect.value = value;
+    refreshAllGatewayModelSelects();
+  });
+  renderProviderFilterChips("#gatewayOpsProviderChips", gatewayOpsProviderFilter, (value) => {
+    gatewayOpsProviderFilter = value;
+    if (gatewaySelect) gatewaySelect.value = value;
+    refreshAllGatewayModelSelects();
+  });
+}
+
+function renderProviderFilterChips(containerSelector, activeValue, onSelect) {
+  const container = qs(containerSelector);
+  if (!container) return;
+  const providers = Array.isArray(inferenceReadinessCache?.providers) ? inferenceReadinessCache.providers : [];
+  const chips = [
+    { value: "", label: "All" },
+    ...providers
+      .filter((row) => Number(row.catalog_models || 0) > 0 || row.live_ready)
+      .slice(0, 10)
+      .map((row) => ({
+        value: String(row.provider_type || ""),
+        label: `${row.label || row.provider_type}${row.live_ready ? " ✓" : ""}`,
+      })),
+  ];
+  container.textContent = "";
+  chips.forEach((chip) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `chip${chip.value === activeValue ? " active" : ""}`;
+    button.textContent = chip.label;
+    button.addEventListener("click", () => onSelect(chip.value));
+    container.appendChild(button);
+  });
+}
+
+function renderGatewayInferenceReadinessStrip(readiness) {
+  const target = qs("#gatewayInferenceReadinessStatus");
+  if (!target) return;
+  if (!readiness) {
+    target.textContent = "Inference readiness unavailable.";
+    return;
+  }
+  const live = (readiness.providers || [])
+    .filter((row) => row.live_ready)
+    .map((row) => row.provider_type)
+    .slice(0, 8)
+    .join(", ");
+  target.textContent =
+    `${Number(readiness.ready_providers || 0)}/${Number(readiness.total_providers || 0)} vendors live-ready` +
+    (live ? ` (${live})` : " — configure Providers credentials for live invoke") +
+    (readiness.simulation_enabled ? " · simulation ON" : "");
+}
+
+async function loadGatewayBestPracticesPosture() {
+  const target = qs("#gatewayBestPracticesStatus");
+  if (!target) return;
+  try {
+    target.textContent = "Loading market best-practices posture…";
+    const posture = await api("/gateway/best-practices/posture", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const gaps = Array.isArray(posture?.top_gaps) ? posture.top_gaps : [];
+    const gapLabels = gaps
+      .slice(0, 2)
+      .map((row) => row.label)
+      .join("; ");
+    target.textContent =
+      `Best-practices score ${Number(posture?.score || 0)}/100 (${posture?.band || "n/a"})` +
+      (gapLabels ? ` · top gaps: ${gapLabels}` : " · market checklist clear") +
+      (posture?.readiness?.simulation_enabled ? " · simulation ON" : "");
+  } catch (err) {
+    target.textContent = `Best-practices posture unavailable: ${safeText(err.message)}`;
+  }
+}
+
+function gatewayExcludeWarmupQuery() {
+  return qs("#gatewayExcludeWarmup")?.checked ? "&exclude_warmup=true" : "";
+}
+
+function setGatewayLeadershipOpsStatus(message) {
+  const target = qs("#gatewayLeadershipOpsStatus");
+  if (target) target.textContent = message;
+}
+
+async function loadGatewayLeadershipIndex() {
+  const target = qs("#gatewayLeadershipIndexStatus");
+  if (!target) return;
+  try {
+    target.textContent = "Loading leadership index…";
+    const index = await api(`/gateway/best-practices/leadership-index?hours=24${gatewayExcludeWarmupQuery()}`, {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const next = Array.isArray(index?.next_actions) ? index.next_actions[0]?.action : "";
+    target.textContent =
+      `Leadership index ${Number(index?.score || 0)}/100 (${index?.band || "n/a"})` +
+      (next ? ` · next: ${next}` : "") +
+      (index?.market_claim ? ` · ${index.market_claim}` : "");
+  } catch (err) {
+    target.textContent = `Leadership index unavailable: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayAttributionAnalytics() {
+  const target = qs("#gatewayAttributionAnalyticsStatus");
+  if (!target) return;
+  try {
+    target.textContent = "Loading attribution analytics…";
+    const analytics = await api(
+      `/gateway/best-practices/attribution-analytics?hours=24${gatewayExcludeWarmupQuery()}`,
+      { headers: { "X-Actor-Role": "Auditor" } }
+    );
+    const topPair = Array.isArray(analytics?.top_switch_pairs) ? analytics.top_switch_pairs[0] : null;
+    target.textContent =
+      `Attribution ${Number(analytics?.attributed_events || 0)}/${Number(analytics?.total_events || 0)} events` +
+      ` · switch ${Number(analytics?.switch_rate_percent || 0)}%` +
+      ` · auto-routed ${Number(analytics?.auto_routed_events || 0)}` +
+      (topPair
+        ? ` · top switch ${topPair.intended_model} → ${topPair.actual_model} (${topPair.events})`
+        : "") +
+      ` · signal ${analytics?.leader_signal || "n/a"}`;
+  } catch (err) {
+    target.textContent = `Attribution analytics unavailable: ${safeText(err.message)}`;
+  }
+}
+
+async function compareGatewayAutoRouteStrategies() {
+  setGatewayLeadershipOpsStatus("Comparing auto-route strategies…");
+  try {
+    const promptText =
+      String(qs("#gatewayAutoRouteForm")?.elements?.prompt_text?.value || "").trim() ||
+      "Summarize this support ticket and propose next steps for the on-call engineer.";
+    const result = await api("/gateway/best-practices/auto-route-compare", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt_text: promptText,
+        prefer_live_only: true,
+        strategies: ["balanced", "cost", "quality"],
+      }),
+    });
+    const rows = Array.isArray(result?.comparisons) ? result.comparisons : [];
+    const label = rows
+      .map((row) => `${row.strategy}->${row.selected_model || "none"}`)
+      .join(" · ");
+    setGatewayLeadershipOpsStatus(
+      `Strategy compare: ${label || "no candidates"}` +
+        (result?.recommendation ? ` · ${result.recommendation}` : "")
+    );
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`Strategy compare failed: ${safeText(err.message)}`);
+  }
+}
+
+async function recordGatewayLeadershipSnapshot() {
+  setGatewayLeadershipOpsStatus("Recording leadership snapshot…");
+  try {
+    const snap = await api(
+      `/gateway/best-practices/leadership-snapshot?hours=24${gatewayExcludeWarmupQuery()}`,
+      { method: "POST", headers: { "X-Actor-Role": "AI Ops" } }
+    );
+    const row = snap?.snapshot || snap || {};
+    setGatewayLeadershipOpsStatus(
+      `Snapshot recorded score=${Number(row.score || 0)} band=${row.band || "n/a"} at ${row.recorded_at || "n/a"}`
+    );
+    if (typeof UiKit !== "undefined") UiKit.showToast("Leadership snapshot recorded.", "success");
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`Snapshot failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadGatewayLeadershipAlerts() {
+  setGatewayLeadershipOpsStatus("Loading leadership alerts…");
+  try {
+    const alerts = await api("/gateway/best-practices/leadership-alerts?hours=24&floor_score=70", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(alerts?.alerts) ? alerts.alerts : [];
+    setGatewayLeadershipOpsStatus(
+      rows.length
+        ? `Alerts (${rows.length}): ${rows.map((a) => a.code || a.message).slice(0, 4).join(" · ")}`
+        : `No alerts · score floor ${alerts?.floor_score ?? 70}`
+    );
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`Alerts unavailable: ${safeText(err.message)}`);
+  }
+}
+
+async function loadGatewayLeadershipHistory() {
+  setGatewayLeadershipOpsStatus("Loading leadership history…");
+  try {
+    const history = await api("/gateway/best-practices/leadership-history?limit=8", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(history?.snapshots) ? history.snapshots : [];
+    setGatewayLeadershipOpsStatus(
+      rows.length
+        ? `History: ${rows
+            .map((row) => `${row.score ?? "?"}@${String(row.recorded_at || "").slice(0, 19)}`)
+            .join(" · ")}`
+        : "History empty — record a snapshot first."
+    );
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`History unavailable: ${safeText(err.message)}`);
+  }
+}
+
+async function exportGatewayLeadershipEvidence() {
+  setGatewayLeadershipOpsStatus("Exporting leadership evidence pack…");
+  try {
+    const pack = await api(
+      `/gateway/best-practices/evidence-export?hours=24${gatewayExcludeWarmupQuery()}`,
+      { headers: { "X-Actor-Role": "Auditor" } }
+    );
+    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `leadership-evidence-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setGatewayLeadershipOpsStatus(
+      `Evidence pack exported · score ${pack?.leadership_index?.score ?? "n/a"} · keys ${Object.keys(pack || {}).length}`
+    );
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`Evidence export failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadGatewaySavingsEstimate() {
+  setGatewayLeadershipOpsStatus("Estimating tier savings…");
+  try {
+    const estimate = await api("/gateway/best-practices/savings-estimate?hours=168", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const tiers = estimate?.tier_events || {};
+    setGatewayLeadershipOpsStatus(
+      `Savings estimate: ${estimate?.estimated_relative_savings_percent ?? 0}%` +
+        ` · units saved ${estimate?.estimated_relative_savings_units ?? 0}` +
+        ` · tiers s/st/c ${tiers.simple ?? 0}/${tiers.standard ?? 0}/${tiers.complex ?? 0}` +
+        (estimate?.note ? ` · ${estimate.note}` : "")
+    );
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`Savings estimate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadGatewayCircuitBreakerRecs() {
+  setGatewayLeadershipOpsStatus("Loading circuit-breaker recommendations…");
+  try {
+    const recs = await api("/gateway/best-practices/circuit-breaker-recommendations", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(recs?.recommendations) ? recs.recommendations : [];
+    setGatewayLeadershipOpsStatus(
+      rows.length
+        ? `Circuit-breaker: ${rows
+            .slice(0, 3)
+            .map((row) => `${row.provider_id || row.model_name || row.target}: ${row.action || row.reason}`)
+            .join(" · ")}`
+        : recs?.message || "No circuit-breaker changes recommended."
+    );
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`Circuit-breaker recs failed: ${safeText(err.message)}`);
+  }
+}
+
+async function applySdkPresetToChat() {
+  setGatewayLeadershipOpsStatus("Loading SDK instrumentation presets…");
+  try {
+    const presets = await api("/gateway/best-practices/sdk-presets", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(presets?.presets) ? presets.presets : [];
+    const pick = rows.find((row) => String(row.id || "") === "console-ops") || rows[0];
+    if (!pick) throw new Error("No SDK presets available.");
+    const form = qs("#gatewayOpenAiChatForm") || qs("#gatewayChatForm") || qs("#gatewayOpsChatForm");
+    const props = pick.properties || pick.default_properties || {};
+    if (form?.elements?.session_path && pick.session_path) {
+      form.elements.session_path.value = pick.session_path;
+    }
+    if (form?.elements?.session_name && pick.session_name) {
+      form.elements.session_name.value = pick.session_name;
+    }
+    if (form?.elements?.user) {
+      form.elements.user.value = props.user_id || "console-operator";
+    }
+    if (form?.elements?.properties_json) {
+      form.elements.properties_json.value = JSON.stringify(props, null, 2);
+    }
+    setGatewayLeadershipOpsStatus(
+      `Applied SDK preset ${pick.id || pick.label || "default"} to chat attribution fields.`
+    );
+    if (typeof UiKit !== "undefined") UiKit.showToast("SDK preset applied to chat fields.", "success");
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`SDK preset apply failed: ${safeText(err.message)}`);
+  }
+}
+
+function downloadJsonArtifact(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function downloadGatewayModelRankings() {
+  setGatewayLeadershipOpsStatus("Downloading model rankings…");
+  try {
+    const rankings = await api("/gateway/best-practices/model-rankings?hours=168", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    downloadJsonArtifact(`gateway-model-rankings-${Date.now()}.json`, rankings);
+    setGatewayLeadershipOpsStatus(
+      `Rankings JSON downloaded · models ${Array.isArray(rankings?.models) ? rankings.models.length : 0}`
+    );
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`Rankings download failed: ${safeText(err.message)}`);
+  }
+}
+
+async function downloadGatewayAttributionJson() {
+  setGatewayLeadershipOpsStatus("Downloading attribution analytics…");
+  try {
+    const analytics = await api(
+      `/gateway/best-practices/attribution-analytics?hours=24${gatewayExcludeWarmupQuery()}`,
+      { headers: { "X-Actor-Role": "Auditor" } }
+    );
+    downloadJsonArtifact(`gateway-attribution-${Date.now()}.json`, analytics);
+    setGatewayLeadershipOpsStatus(
+      `Attribution JSON downloaded · attributed ${Number(analytics?.attributed_events || 0)}`
+    );
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`Attribution download failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runGatewayAutoRouteBatch() {
+  setGatewayLeadershipOpsStatus("Batch classifying sample prompts…");
+  try {
+    const sample =
+      String(qs("#gatewayAutoRouteForm")?.elements?.prompt_text?.value || "").trim() ||
+      "Summarize this escalation for the on-call engineer.";
+    const result = await api("/gateway/best-practices/auto-route-batch", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompts: [
+          sample,
+          "What is 2+2?",
+          "Design a multi-region failover architecture with threat model and rollback plan.",
+        ],
+        strategy: "balanced",
+        prefer_live_only: true,
+      }),
+    });
+    const tiers = result?.tier_counts || {};
+    setGatewayLeadershipOpsStatus(
+      `Batch classify n=${result?.count ?? 0}` +
+        ` · tiers ${Object.entries(tiers)
+          .map(([k, v]) => `${k}:${v}`)
+          .join(",") || "n/a"}`
+    );
+  } catch (err) {
+    setGatewayLeadershipOpsStatus(`Batch classify failed: ${safeText(err.message)}`);
+  }
+}
+
+function setGatewayPack6OpsStatus(message) {
+  const target = qs("#gatewayPack6OpsStatus");
+  if (target) target.textContent = message;
+}
+
+function pack6SamplePrompt() {
+  return (
+    String(qs("#gatewayAutoRouteForm")?.elements?.prompt_text?.value || "").trim() ||
+    "Design a multi-region failover architecture with threat model and rollback plan."
+  );
+}
+
+async function runGatewayLiveJudge() {
+  setGatewayPack6OpsStatus("Running simulation-safe live judge refine…");
+  try {
+    const result = await api("/gateway/best-practices/live-judge-refine", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt_text: pack6SamplePrompt(), force_live: false }),
+    });
+    const c = result?.complexity || {};
+    setGatewayPack6OpsStatus(
+      `Live judge mode=${result?.mode || "n/a"} · tier=${c.tier || "?"} score=${c.score ?? "?"}`
+    );
+  } catch (err) {
+    setGatewayPack6OpsStatus(`Live judge failed: ${safeText(err.message)}`);
+  }
+}
+
+async function importOpenRouterLiquidity() {
+  setGatewayPack6OpsStatus("Importing OpenRouter liquidity seed…");
+  try {
+    const result = await api("/gateway/best-practices/openrouter-liquidity-import", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ use_seed: true }),
+    });
+    setGatewayPack6OpsStatus(
+      `OpenRouter liquidity imported · count ${result?.count ?? 0} · source ${result?.source || "n/a"}`
+    );
+  } catch (err) {
+    setGatewayPack6OpsStatus(`Liquidity import failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadBindingReadinessInventory() {
+  setGatewayPack6OpsStatus("Loading binding readiness inventory…");
+  try {
+    const result = await api("/gateway/best-practices/binding-readiness-inventory", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const summary = result?.summary || {};
+    setGatewayPack6OpsStatus(
+      `Bindings ${result?.count ?? 0} · live ${summary.live_ready ?? 0} · configured ${summary.configured ?? 0} · needs_creds ${summary.needs_creds ?? 0}`
+    );
+  } catch (err) {
+    setGatewayPack6OpsStatus(`Binding inventory failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadAttributionTimeseries() {
+  setGatewayPack6OpsStatus("Loading attribution timeseries…");
+  try {
+    const result = await api("/gateway/best-practices/attribution-timeseries?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack6OpsStatus(
+      `Attribution timeseries · points ${result?.point_count ?? 0} · hours ${result?.hours ?? 24}`
+    );
+  } catch (err) {
+    setGatewayPack6OpsStatus(`Timeseries failed: ${safeText(err.message)}`);
+  }
+}
+
+async function createAutoRouteExperiment() {
+  setGatewayPack6OpsStatus("Creating auto-route A/B experiment…");
+  try {
+    const result = await api("/gateway/best-practices/auto-route-experiments", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "console-ab", strategies: ["balanced", "cost", "quality"] }),
+    });
+    const exp = result?.experiment || {};
+    setGatewayPack6OpsStatus(
+      `Experiment ${exp.experiment_id || "n/a"} · strategies ${(exp.strategies || []).join(",")}`
+    );
+  } catch (err) {
+    setGatewayPack6OpsStatus(`Experiment create failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runFallbackQualityGate() {
+  setGatewayPack6OpsStatus("Evaluating fallback quality gate…");
+  try {
+    const result = await api("/gateway/best-practices/fallback-quality-gate", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ min_live_ready: 2, min_leadership_score: 60 }),
+    });
+    setGatewayPack6OpsStatus(
+      `Quality gate ${result?.decision || "n/a"} · passed=${result?.passed} · score=${result?.leadership_score ?? "?"}`
+    );
+  } catch (err) {
+    setGatewayPack6OpsStatus(`Quality gate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadProviderHealthScores() {
+  setGatewayPack6OpsStatus("Loading provider health scores…");
+  try {
+    const result = await api("/gateway/best-practices/provider-health-scores?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(result?.providers) ? result.providers : [];
+    setGatewayPack6OpsStatus(
+      rows.length
+        ? `Provider health: ${rows
+            .slice(0, 3)
+            .map((row) => `${row.provider_id}:${row.health_score}`)
+            .join(" · ")}`
+        : "Provider health: no hop samples yet."
+    );
+  } catch (err) {
+    setGatewayPack6OpsStatus(`Provider health failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runAutoRouteStreamFrames() {
+  setGatewayPack6OpsStatus("Building auto-route stream frames…");
+  try {
+    const result = await api("/gateway/best-practices/auto-route-stream-frames", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt_text: pack6SamplePrompt(), strategy: "balanced" }),
+    });
+    const frames = Array.isArray(result?.frames) ? result.frames : [];
+    setGatewayPack6OpsStatus(
+      `Stream frames ${result?.frame_count ?? frames.length}: ${frames.map((f) => f.event).join(" → ")}`
+    );
+  } catch (err) {
+    setGatewayPack6OpsStatus(`Stream frames failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runAutoRouteExplain() {
+  setGatewayPack6OpsStatus("Explaining auto-route decision…");
+  try {
+    const result = await api("/gateway/best-practices/auto-route-explain", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt_text: pack6SamplePrompt(),
+        strategy: "balanced",
+        max_budget_tier: "standard",
+        latency_slo_ms: 1200,
+        attachment_types: ["image"],
+        tools_json: [{ type: "function", function: { name: "lookup_ticket", parameters: { type: "object", properties: { id: { type: "string" } } } } }],
+      }),
+    });
+    setGatewayPack6OpsStatus(
+      `Why: ${result?.selected_model || "none"} · ${safeText(result?.why_this_model || "")}`
+    );
+  } catch (err) {
+    setGatewayPack6OpsStatus(`Explain failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadModalityAdvisor() {
+  setGatewayPack6OpsStatus("Loading embeddings modality advisor…");
+  try {
+    const result = await api("/gateway/best-practices/modality-advisor?modality=embeddings", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(result?.recommendations) ? result.recommendations : [];
+    setGatewayPack6OpsStatus(
+      `Embeddings advisor: ${rows
+        .slice(0, 3)
+        .map((row) => `${row.model_name}${row.live_ready ? "(live)" : ""}`)
+        .join(", ") || "none"}`
+    );
+  } catch (err) {
+    setGatewayPack6OpsStatus(`Modality advisor failed: ${safeText(err.message)}`);
+  }
+}
+
+function setGatewayPack7OpsStatus(message) {
+  const target = qs("#gatewayPack7OpsStatus");
+  if (target) target.textContent = message;
+}
+
+async function loadPromptAutoRouteBindings() {
+  setGatewayPack7OpsStatus("Loading prompt auto-route bindings…");
+  try {
+    const result = await api("/gateway/best-practices/prompt-auto-route-bindings?limit=20", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack7OpsStatus(`Prompt bindings ${result?.count ?? 0}`);
+  } catch (err) {
+    setGatewayPack7OpsStatus(`Prompt bindings failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadTeamRankingLeaderboards() {
+  setGatewayPack7OpsStatus("Loading team ranking leaderboards…");
+  try {
+    const result = await api("/gateway/best-practices/team-ranking-leaderboards?hours=168", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const boards = Array.isArray(result?.leaderboards) ? result.leaderboards : [];
+    setGatewayPack7OpsStatus(
+      boards.length
+        ? `Team boards: ${boards
+            .slice(0, 3)
+            .map((row) => `${row.owner_scope}:${row.events}`)
+            .join(" · ")}`
+        : "Team boards empty — need owner_scope traffic."
+    );
+  } catch (err) {
+    setGatewayPack7OpsStatus(`Team leaderboards failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadEnvironmentDiffLeadership() {
+  setGatewayPack7OpsStatus("Loading environment-diff leadership…");
+  try {
+    const result = await api("/gateway/best-practices/environment-diff-leadership?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const envs = result?.environments || {};
+    setGatewayPack7OpsStatus(
+      `Env diff leader=${result?.leader_environment || "n/a"}` +
+        ` · dev ${envs.dev?.score ?? "?"} / staging ${envs.staging?.score ?? "?"} / prod ${envs.prod?.score ?? "?"}`
+    );
+  } catch (err) {
+    setGatewayPack7OpsStatus(`Env diff failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadCacheAutoRouteMetrics() {
+  setGatewayPack7OpsStatus("Loading cache×auto-route metrics…");
+  try {
+    const result = await api("/gateway/best-practices/cache-auto-route-metrics?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack7OpsStatus(
+      `Cache hit ${result?.cache_hit_rate_percent ?? 0}% · auto-route ${result?.auto_route_rate_percent ?? 0}% · both ${result?.cache_and_auto_routed ?? 0}`
+    );
+  } catch (err) {
+    setGatewayPack7OpsStatus(`Cache metrics failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadMirrorAttributionTags() {
+  setGatewayPack7OpsStatus("Loading mirror attribution tags…");
+  try {
+    const result = await api("/gateway/best-practices/mirror-attribution-tags?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const tags = Array.isArray(result?.tags) ? result.tags : [];
+    setGatewayPack7OpsStatus(
+      `Mirror events ${result?.mirror_events ?? 0}` +
+        (tags.length ? ` · ${tags.slice(0, 3).map((t) => `${t.tag}:${t.events}`).join(", ")}` : "")
+    );
+  } catch (err) {
+    setGatewayPack7OpsStatus(`Mirror tags failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadQbrLeadershipEmbed() {
+  setGatewayPack7OpsStatus("Loading QBR leadership embed…");
+  try {
+    const result = await api("/gateway/best-practices/qbr-embed?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack7OpsStatus(
+      `QBR embed score=${result?.score ?? "?"} band=${result?.band || "n/a"} · attribution ${result?.attribution_coverage_percent ?? "?"}%`
+    );
+  } catch (err) {
+    setGatewayPack7OpsStatus(`QBR embed failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadComplianceLeadershipEvidence() {
+  setGatewayPack7OpsStatus("Loading compliance leadership evidence…");
+  try {
+    const result = await api("/gateway/best-practices/compliance-leadership-evidence?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    downloadJsonArtifact(`compliance-leadership-${Date.now()}.json`, result);
+    setGatewayPack7OpsStatus(
+      `Compliance evidence downloaded · controls ${(result?.control_refs || []).length}`
+    );
+  } catch (err) {
+    setGatewayPack7OpsStatus(`Compliance evidence failed: ${safeText(err.message)}`);
+  }
+}
+
+async function dispatchLeadershipAlerts() {
+  setGatewayPack7OpsStatus("Dispatching leadership alerts (dry-run)…");
+  try {
+    const result = await api("/gateway/best-practices/alert-dispatch", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ hours: 24, floor_score: 70, dry_run: true }),
+    });
+    setGatewayPack7OpsStatus(
+      `Alert dispatch ${result?.delivery || "n/a"} · alerts ${result?.alert_count ?? 0} · channels ${result?.channels_configured}`
+    );
+  } catch (err) {
+    setGatewayPack7OpsStatus(`Alert dispatch failed: ${safeText(err.message)}`);
+  }
+}
+
+async function downloadGrafanaDashboard() {
+  setGatewayPack7OpsStatus("Downloading Grafana dashboard JSON…");
+  try {
+    const result = await api("/gateway/best-practices/grafana-dashboard?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    downloadJsonArtifact(`agenthub-leadership-grafana-${Date.now()}.json`, result);
+    setGatewayPack7OpsStatus(`Grafana dashboard exported · uid ${result?.dashboard?.uid || "n/a"}`);
+  } catch (err) {
+    setGatewayPack7OpsStatus(`Grafana export failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadDatadogTileNotes() {
+  setGatewayPack7OpsStatus("Loading Datadog tile notes…");
+  try {
+    const result = await api("/gateway/best-practices/datadog-tile-notes", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack7OpsStatus(
+      `Datadog tile: ${result?.tile || "n/a"} · metrics ${(result?.metrics || []).length}`
+    );
+  } catch (err) {
+    setGatewayPack7OpsStatus(`Datadog notes failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadSdkAutoRouteHelpers() {
+  setGatewayPack7OpsStatus("Loading SDK auto-route helper contract…");
+  try {
+    const result = await api("/gateway/best-practices/sdk-auto-route-helpers", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack7OpsStatus(
+      `SDK helpers · py ${result?.python?.methods?.[0] || "n/a"} · js ${result?.javascript?.methods?.[0] || "n/a"}`
+    );
+  } catch (err) {
+    setGatewayPack7OpsStatus(`SDK helpers failed: ${safeText(err.message)}`);
+  }
+}
+
+function setGatewayPack8OpsStatus(message) {
+  const target = qs("#gatewayPack8OpsStatus");
+  if (target) target.textContent = message;
+}
+
+async function loadModelDeprecationAdvisor() {
+  setGatewayPack8OpsStatus("Loading model deprecation advisor…");
+  try {
+    const result = await api("/gateway/best-practices/model-deprecation-advisor?hours=168", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack8OpsStatus(`Deprecation advice ${result?.count ?? 0} models`);
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Deprecation advisor failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadShadowRankingValidation() {
+  setGatewayPack8OpsStatus("Validating shadow rankings…");
+  try {
+    const result = await api("/gateway/best-practices/shadow-ranking-validation?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack8OpsStatus(
+      `Shadow validation=${result?.validated} · overlap ${(result?.overlap_models || []).join(",") || "none"}`
+    );
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Shadow validation failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runWhyThisModelCard() {
+  setGatewayPack8OpsStatus("Building why-this-model card…");
+  try {
+    const result = await api("/gateway/best-practices/why-this-model-card", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt_text: pack6SamplePrompt(),
+        strategy: "balanced",
+      }),
+    });
+    setGatewayPack8OpsStatus(
+      `Why card → ${result?.selected_model || "none"}` +
+        (result?.pii?.pii_detected ? " · PII bias on" : "") +
+        (result?.adversarial ? " · adversarial boost" : "")
+    );
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Why card failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadCostSwitchCorrelation() {
+  setGatewayPack8OpsStatus("Correlating cost anomalies with switches…");
+  try {
+    const result = await api("/gateway/best-practices/cost-switch-correlation?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack8OpsStatus(
+      `Cost anomalies ${result?.anomaly_count ?? 0} · switched ${result?.switched_anomaly_count ?? 0} · corr ${result?.correlation_rate_percent ?? 0}%`
+    );
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Cost correlation failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runReplayStrategies() {
+  setGatewayPack8OpsStatus("Replaying alternate strategies…");
+  try {
+    const result = await api("/gateway/best-practices/replay-strategies", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt_text: pack6SamplePrompt() }),
+    });
+    const rows = Array.isArray(result?.replays) ? result.replays : [];
+    setGatewayPack8OpsStatus(
+      `Replay: ${rows.map((row) => `${row.strategy}->${row.selected_model || "none"}`).join(" · ") || "n/a"}`
+    );
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Replay failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runCsvClassifySample() {
+  setGatewayPack8OpsStatus("Classifying CSV sample…");
+  try {
+    const csv = "prompt_text\nWhat is 2+2?\nDesign a threat model for multi-region failover.\nSummarize this ticket.\n";
+    const result = await api("/gateway/best-practices/csv-classify", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ csv_text: csv, strategy: "balanced" }),
+    });
+    setGatewayPack8OpsStatus(`CSV classify n=${result?.count ?? 0} · tiers ${JSON.stringify(result?.tier_counts || {})}`);
+  } catch (err) {
+    setGatewayPack8OpsStatus(`CSV classify failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runNightlyLeadershipSnapshot() {
+  setGatewayPack8OpsStatus("Running nightly leadership snapshot…");
+  try {
+    const result = await api("/gateway/best-practices/nightly-snapshot?hours=24", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    const snap = result?.result?.snapshot || {};
+    setGatewayPack8OpsStatus(`Nightly snapshot score=${snap.score ?? "?"} band=${snap.band || "n/a"}`);
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Nightly snapshot failed: ${safeText(err.message)}`);
+  }
+}
+
+async function purgeWarmupEventsDryRun() {
+  setGatewayPack8OpsStatus("Warmup purge dry-run…");
+  try {
+    const result = await api("/gateway/best-practices/warmup-purge", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ dry_run: true }),
+    });
+    setGatewayPack8OpsStatus(`Warmup purge dry-run matched=${result?.matched ?? 0}`);
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Warmup purge failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadLeadershipSnapshotDiff() {
+  setGatewayPack8OpsStatus("Diffing leadership snapshots…");
+  try {
+    const result = await api("/gateway/best-practices/leadership-snapshot-diff", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack8OpsStatus(
+      result?.diffable
+        ? `Snapshot delta ${result.score_delta} · band_changed=${result.band_changed}`
+        : result?.message || "Need two snapshots."
+    );
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Snapshot diff failed: ${safeText(err.message)}`);
+  }
+}
+
+async function downloadSignedEvidence() {
+  setGatewayPack8OpsStatus("Downloading signed evidence…");
+  try {
+    const result = await api("/gateway/best-practices/signed-evidence?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    downloadJsonArtifact(`signed-leadership-evidence-${Date.now()}.json`, result);
+    setGatewayPack8OpsStatus(`Signed evidence exported · sig ${String(result?.signature || "").slice(0, 12)}…`);
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Signed evidence failed: ${safeText(err.message)}`);
+  }
+}
+
+async function createAuditorShareLink() {
+  setGatewayPack8OpsStatus("Creating auditor share link…");
+  try {
+    const result = await api("/gateway/best-practices/auditor-share-link", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ hours: 24, ttl_seconds: 3600 }),
+    });
+    setGatewayPack8OpsStatus(`Share ${result?.share_id || "n/a"} expires ${result?.expires_at || "n/a"}`);
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Share link failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runCiLeadershipFloor() {
+  setGatewayPack8OpsStatus("Evaluating CI leadership floor…");
+  try {
+    const result = await api("/gateway/best-practices/ci-leadership-floor", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ floor_score: 70 }),
+    });
+    setGatewayPack8OpsStatus(
+      `CI gate ${result?.passed ? "PASS" : "FAIL"} score=${result?.score ?? "?"} floor=${result?.floor_score ?? 70}`
+    );
+  } catch (err) {
+    setGatewayPack8OpsStatus(`CI floor failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runReleaseGateAttestation() {
+  setGatewayPack8OpsStatus("Creating release-gate attestation…");
+  try {
+    const result = await api("/gateway/best-practices/release-gate-attestation", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ floor_score: 70 }),
+    });
+    setGatewayPack8OpsStatus(`Release attestation ${result?.decision || "n/a"} · ${result?.attestation_id || ""}`);
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Release attestation failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runChaosProviderFailDrill() {
+  setGatewayPack8OpsStatus("Running chaos provider-fail drill…");
+  try {
+    const result = await api("/gateway/best-practices/chaos-provider-fail-drill", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ provider_id: "chaos-provider" }),
+    });
+    setGatewayPack8OpsStatus(`Chaos drill created_events=${result?.created_events ?? 0}`);
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Chaos drill failed: ${safeText(err.message)}`);
+  }
+}
+
+async function downloadBoardOnePager() {
+  setGatewayPack8OpsStatus("Exporting board one-pager…");
+  try {
+    const result = await api("/gateway/best-practices/board-one-pager?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const blob = new Blob([String(result?.html || "")], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = result?.filename_hint || `board-one-pager-${Date.now()}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setGatewayPack8OpsStatus(`Board one-pager exported · score ${result?.score ?? "?"}`);
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Board one-pager failed: ${safeText(err.message)}`);
+  }
+}
+
+async function refreshCompetitiveScorecard() {
+  setGatewayPack8OpsStatus("Refreshing competitive scorecard…");
+  try {
+    const result = await api("/gateway/best-practices/competitive-scorecard-refresh", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack8OpsStatus(
+      `Scorecard refreshed · leadership ${result?.leadership_score ?? "?"} · band ${result?.band || "n/a"}`
+    );
+  } catch (err) {
+    setGatewayPack8OpsStatus(`Scorecard refresh failed: ${safeText(err.message)}`);
+  }
+}
+
+function setGatewayPack10OpsStatus(message) {
+  const target = qs("#gatewayPack10OpsStatus");
+  if (target) target.textContent = message;
+}
+
+async function loadLeadershipTrafficLight() {
+  setGatewayPack10OpsStatus("Loading traffic light…");
+  try {
+    const result = await api("/gateway/best-practices/traffic-light?hours=24&floor_score=70", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack10OpsStatus(
+      `Traffic light ${String(result?.light || "?").toUpperCase()} · score ${result?.score ?? "?"}`
+    );
+  } catch (err) {
+    setGatewayPack10OpsStatus(`Traffic light failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadLeadershipHealthz() {
+  setGatewayPack10OpsStatus("Probing leadership healthz…");
+  try {
+    const result = await api("/gateway/best-practices/healthz", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack10OpsStatus(
+      `Healthz ${result?.status || "n/a"} · light ${result?.light || "?"} · ready ${result?.ready_providers ?? "?"}`
+    );
+  } catch (err) {
+    setGatewayPack10OpsStatus(`Healthz failed: ${safeText(err.message)}`);
+  }
+}
+
+async function deliverLeadershipAlertsDryRun() {
+  setGatewayPack10OpsStatus("Delivering leadership alerts (dry-run)…");
+  try {
+    const result = await api("/gateway/best-practices/alert-deliver", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ hours: 24, floor_score: 70, dry_run: true }),
+    });
+    setGatewayPack10OpsStatus(
+      `Alert deliver ${result?.message || "ok"} · alerts ${result?.alert_count ?? 0}`
+    );
+  } catch (err) {
+    setGatewayPack10OpsStatus(`Alert deliver failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadSlaBurnRate() {
+  setGatewayPack10OpsStatus("Loading SLA burn rate…");
+  try {
+    const result = await api("/gateway/best-practices/sla-burn-rate?hours=24&floor_score=70", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack10OpsStatus(
+      `SLA ${result?.status || "n/a"} · burn ${result?.burn_rate_percent ?? 0}% · deficit ${result?.deficit ?? 0}`
+    );
+  } catch (err) {
+    setGatewayPack10OpsStatus(`SLA burn failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadCredentialWarnings() {
+  setGatewayPack10OpsStatus("Loading credential warnings…");
+  try {
+    const result = await api("/gateway/best-practices/credential-warnings", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack10OpsStatus(`Credential warnings ${result?.warning_count ?? 0}`);
+  } catch (err) {
+    setGatewayPack10OpsStatus(`Credential warnings failed: ${safeText(err.message)}`);
+  }
+}
+
+async function diffEvidencePacks() {
+  setGatewayPack10OpsStatus("Diffing evidence packs…");
+  try {
+    const result = await api("/gateway/best-practices/evidence-diff", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ hours_a: 24, hours_b: 168 }),
+    });
+    setGatewayPack10OpsStatus(
+      `Evidence diff Δ ${result?.score_delta ?? "?"} (${result?.score_a ?? "?"} vs ${result?.score_b ?? "?"})`
+    );
+  } catch (err) {
+    setGatewayPack10OpsStatus(`Evidence diff failed: ${safeText(err.message)}`);
+  }
+}
+
+async function buildScorecardDigest() {
+  setGatewayPack10OpsStatus("Building scorecard digest…");
+  try {
+    const result = await api("/gateway/best-practices/scorecard-digest", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack10OpsStatus(`Digest ${result?.digest_id || "n/a"} · ${safeText(result?.subject || "")}`);
+  } catch (err) {
+    setGatewayPack10OpsStatus(`Scorecard digest failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadOpsActivityTimeline() {
+  setGatewayPack10OpsStatus("Loading ops activity…");
+  try {
+    const result = await api("/gateway/best-practices/ops-activity?limit=10", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(result?.activities) ? result.activities : [];
+    setGatewayPack10OpsStatus(
+      rows.length
+        ? `Ops activity: ${rows.slice(0, 4).map((row) => row.action).join(" · ")}`
+        : "Ops activity empty."
+    );
+  } catch (err) {
+    setGatewayPack10OpsStatus(`Ops activity failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runSimulationJudgeTranscript() {
+  setGatewayPack10OpsStatus("Running simulation judge transcript…");
+  try {
+    const result = await api("/gateway/best-practices/simulation-judge-transcript", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt_text: pack6SamplePrompt() }),
+    });
+    setGatewayPack10OpsStatus(
+      `Sim judge ${result?.mode || "n/a"} · tier ${result?.complexity?.tier || "?"} · turns ${(result?.transcript || []).length}`
+    );
+  } catch (err) {
+    setGatewayPack10OpsStatus(`Sim judge failed: ${safeText(err.message)}`);
+  }
+}
+
+async function cleanupChaosEventsDryRun() {
+  setGatewayPack10OpsStatus("Chaos cleanup dry-run…");
+  try {
+    const result = await api("/gateway/best-practices/chaos-cleanup?dry_run=true", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack10OpsStatus(`Chaos cleanup matched=${result?.matched ?? 0}`);
+  } catch (err) {
+    setGatewayPack10OpsStatus(`Chaos cleanup failed: ${safeText(err.message)}`);
+  }
+}
+
+async function downloadLeadershipOpenapi() {
+  setGatewayPack10OpsStatus("Downloading OpenAPI fragment…");
+  try {
+    const result = await api("/gateway/best-practices/openapi-fragment", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    downloadJsonArtifact(`leadership-openapi-${Date.now()}.json`, result);
+    setGatewayPack10OpsStatus(`OpenAPI fragment exported · paths ${Object.keys(result?.paths || {}).length}`);
+  } catch (err) {
+    setGatewayPack10OpsStatus(`OpenAPI fragment failed: ${safeText(err.message)}`);
+  }
+}
+
+function setGatewayPack11OpsStatus(message) {
+  const target = qs("#gatewayPack11OpsStatus");
+  if (target) target.textContent = message;
+}
+
+function routePolicyIdFromPriorityForm() {
+  const form = qs("#routePriorityForm");
+  if (!form) return "";
+  const raw = Object.fromEntries(new FormData(form).entries());
+  return String(raw.route_policy_id || "").trim();
+}
+
+async function loadLeadershipDashboardSummary() {
+  setGatewayPack11OpsStatus("Loading dashboard summary…");
+  try {
+    const result = await api("/gateway/best-practices/dashboard-summary?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const light = result?.traffic_light || {};
+    setGatewayPack11OpsStatus(
+      `Dashboard ${String(light.light || "?").toUpperCase()} · score ${light.score ?? "?"} · auto-routed ${result?.auto_routed_events ?? 0} · ready ${result?.ready_providers ?? "?"}`
+    );
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Dashboard summary failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadLeadershipSparkline() {
+  setGatewayPack11OpsStatus("Loading sparkline…");
+  try {
+    const result = await api("/gateway/best-practices/sparkline?points=12", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const pts = Array.isArray(result?.points) ? result.points : [];
+    const scores = pts.map((row) => row.score).filter((n) => n != null).slice(-5);
+    setGatewayPack11OpsStatus(
+      `Sparkline n=${result?.count ?? pts.length}` + (scores.length ? ` · ${scores.join(" → ")}` : "")
+    );
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Sparkline failed: ${safeText(err.message)}`);
+  }
+}
+
+async function downloadOperatorRunbook() {
+  setGatewayPack11OpsStatus("Exporting operator runbook…");
+  try {
+    const result = await api("/gateway/best-practices/operator-runbook", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    downloadJsonArtifact(`leadership-runbook-${Date.now()}.json`, result);
+    setGatewayPack11OpsStatus(
+      `Runbook exported · light ${result?.current_light || "?"} · score ${result?.current_score ?? "?"}`
+    );
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Runbook failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadWeeklyOpsReport() {
+  setGatewayPack11OpsStatus("Building weekly ops report…");
+  try {
+    const result = await api("/gateway/best-practices/weekly-ops-report", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    downloadJsonArtifact(`weekly-ops-${result?.report_id || Date.now()}.json`, result);
+    setGatewayPack11OpsStatus(`Weekly ops ${result?.report_id || "n/a"} exported`);
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Weekly ops failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadLatencyHistogram() {
+  setGatewayPack11OpsStatus("Loading latency histogram…");
+  try {
+    const result = await api("/gateway/best-practices/latency-histogram?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const buckets = Array.isArray(result?.buckets) ? result.buckets : [];
+    const label = buckets.map((b) => `${b.bucket}:${b.count}`).join(" · ");
+    setGatewayPack11OpsStatus(`Latency samples ${result?.samples ?? 0}${label ? ` · ${label}` : ""}`);
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Latency histogram failed: ${safeText(err.message)}`);
+  }
+}
+
+async function verifyFailoverDrill() {
+  setGatewayPack11OpsStatus("Verifying failover drill…");
+  try {
+    const result = await api("/gateway/best-practices/failover-drill-verify?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack11OpsStatus(
+      `Failover verify=${result?.verified ? "yes" : "no"} · fail ${result?.failed_events ?? 0} · chaos ${result?.chaos_events ?? 0}`
+    );
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Failover verify failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadBudgetAutorouteCorrelation() {
+  setGatewayPack11OpsStatus("Loading budget↔auto-route correlation…");
+  try {
+    const result = await api("/gateway/best-practices/budget-autoroute-correlation?hours=168", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack11OpsStatus(
+      `Budget corr auto=${result?.auto_routed_cost_cents ?? 0}¢ (${result?.auto_routed_events ?? 0}) vs other=${result?.other_cost_cents ?? 0}¢`
+    );
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Budget correlation failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadEnforcementFlags() {
+  setGatewayPack11OpsStatus("Loading enforcement flags…");
+  try {
+    const result = await api("/gateway/best-practices/enforcement-flags", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const flags = result?.flags || {};
+    setGatewayPack11OpsStatus(
+      `Flags pii=${flags.enforce_pii_bias} adv=${flags.enforce_adversarial_boost} cache=${flags.use_decision_cache} deny=${flags.enforce_model_denylist}`
+    );
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Enforcement flags failed: ${safeText(err.message)}`);
+  }
+}
+
+async function applyRankedFallbackToRoute() {
+  const routePolicyId = routePolicyIdFromPriorityForm();
+  if (!routePolicyId) {
+    setGatewayPack11OpsStatus("Set route_policy_id on Route Priority form first.");
+    return;
+  }
+  setGatewayPack11OpsStatus(`Applying ranked fallback to ${routePolicyId}…`);
+  try {
+    const result = await api("/gateway/best-practices/apply-ranked-fallback", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ route_policy_id: routePolicyId }),
+    });
+    setGatewayPack11OpsStatus(
+      result?.applied
+        ? `Ranked fallback applied to ${result.route_policy_id || routePolicyId}`
+        : `Apply fallback: ${safeText(result?.message || "not applied")}`
+    );
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Apply ranked fallback failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runCanaryPromoteGate() {
+  const routePolicyId = routePolicyIdFromPriorityForm();
+  if (!routePolicyId) {
+    setGatewayPack11OpsStatus("Set route_policy_id on Route Priority form first.");
+    return;
+  }
+  setGatewayPack11OpsStatus(`Evaluating canary promote gate for ${routePolicyId}…`);
+  try {
+    const result = await api("/gateway/best-practices/canary-promote-gate", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ route_policy_id: routePolicyId, floor_score: 70 }),
+    });
+    setGatewayPack11OpsStatus(
+      `Canary gate ${result?.decision || "n/a"} · score ${result?.leadership_score ?? "?"} · ${safeText(result?.message || "")}`
+    );
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Canary promote gate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function annotateCircuitBreakerNotes() {
+  const routePolicyId = routePolicyIdFromPriorityForm();
+  if (!routePolicyId) {
+    setGatewayPack11OpsStatus("Set route_policy_id on Route Priority form first.");
+    return;
+  }
+  setGatewayPack11OpsStatus(`Annotating circuit-breaker notes on ${routePolicyId}…`);
+  try {
+    const result = await api("/gateway/best-practices/circuit-breaker-annotate", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ route_policy_id: routePolicyId }),
+    });
+    setGatewayPack11OpsStatus(
+      result?.annotated
+        ? `Circuit notes annotated · recs ${result.recommendation_count ?? 0}`
+        : `Annotate: ${safeText(result?.message || "failed")}`
+    );
+  } catch (err) {
+    setGatewayPack11OpsStatus(`Circuit annotate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function refreshPlaygroundLeadershipTrafficLight() {
+  const target = qs("#playgroundLeadershipTrafficLight");
+  const warn = qs("#playgroundLeadershipWarn");
+  if (!target) return;
+  target.textContent = "Leadership traffic light: checking…";
+  if (warn) warn.textContent = "";
+  try {
+    const result = await api("/gateway/best-practices/traffic-light?hours=24&floor_score=70", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const light = String(result?.light || "?").toLowerCase();
+    target.textContent = `Leadership traffic light: ${light.toUpperCase()} · score ${result?.score ?? "?"}`;
+    if (warn && light === "red") {
+      warn.textContent =
+        "Warning: leadership traffic light is RED — prefer live-ready models and review credential warnings before promoting routes.";
+    }
+  } catch (err) {
+    target.textContent = `Leadership traffic light unavailable: ${safeText(err.message)}`;
+  }
+}
+
+function setGatewayPack12OpsStatus(message) {
+  const target = qs("#gatewayPack12OpsStatus");
+  if (target) target.textContent = message;
+}
+
+async function loadLeadershipDashboardStrip() {
+  const target = qs("#gatewayLeadershipDashboardStrip");
+  if (!target) return;
+  target.textContent = "Leadership dashboard strip: loading…";
+  try {
+    const result = await api("/gateway/best-practices/dashboard-summary?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const light = result?.traffic_light || {};
+    target.textContent =
+      `Dashboard strip ${String(light.light || "?").toUpperCase()} · score ${light.score ?? "?"} · auto-routed ${result?.auto_routed_events ?? 0} · ready ${result?.ready_providers ?? "?"}`;
+  } catch (err) {
+    target.textContent = `Dashboard strip unavailable: ${safeText(err.message)}`;
+  }
+}
+
+async function invalidateDecisionCache() {
+  setGatewayPack12OpsStatus("Invalidating decision cache…");
+  try {
+    const result = await api("/gateway/best-practices/decision-cache-invalidate", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack12OpsStatus(result?.message || "Decision cache invalidated.");
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Cache invalidate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadDecisionCacheStats() {
+  setGatewayPack12OpsStatus("Loading cache stats…");
+  try {
+    const result = await api("/gateway/best-practices/decision-cache-stats", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack12OpsStatus(
+      `Cache hits ${result?.hits ?? 0} · misses ${result?.misses ?? 0} · hit-rate ${result?.hit_rate_percent ?? 0}%`
+    );
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Cache stats failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadModelRoutePolicy() {
+  setGatewayPack12OpsStatus("Loading model route policy…");
+  try {
+    const result = await api("/gateway/best-practices/model-route-policy", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack12OpsStatus(
+      `Model policy allow=${(result?.allowlist || []).length} deny=${(result?.denylist || []).length}`
+    );
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Model policy failed: ${safeText(err.message)}`);
+  }
+}
+
+async function saveModelRoutePolicyDenySample() {
+  setGatewayPack12OpsStatus("Updating denylist sample…");
+  try {
+    const current = await api("/gateway/best-practices/model-route-policy", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const denylist = Array.from(new Set([...(current?.denylist || []), "blocked-sample-model"]));
+    const result = await api("/gateway/best-practices/model-route-policy", {
+      method: "PUT",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ allowlist: current?.allowlist || [], denylist }),
+    });
+    setGatewayPack12OpsStatus(`Denylist updated · ${ (result?.denylist || []).length } models`);
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Denylist update failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadAlertRetries() {
+  setGatewayPack12OpsStatus("Loading alert retries…");
+  try {
+    const result = await api("/gateway/best-practices/alert-retries?limit=10", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(result?.retries) ? result.retries : [];
+    setGatewayPack12OpsStatus(
+      rows.length
+        ? `Alert retries ${result?.count ?? rows.length}: ${rows.slice(0, 3).map((r) => r.status).join(" · ")}`
+        : "Alert retry queue empty."
+    );
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Alert retries failed: ${safeText(err.message)}`);
+  }
+}
+
+async function processAlertRetriesDryRun() {
+  setGatewayPack12OpsStatus("Processing alert retries (dry-run)…");
+  try {
+    const result = await api("/gateway/best-practices/alert-retries/process?dry_run=true&limit=5", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack12OpsStatus(`Retry process dry-run count=${result?.count ?? 0}`);
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Retry process failed: ${safeText(err.message)}`);
+  }
+}
+
+async function archiveLeadershipHistoryAction() {
+  setGatewayPack12OpsStatus("Archiving leadership history…");
+  try {
+    const result = await api("/gateway/best-practices/history-archive?keep=20", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack12OpsStatus(
+      `History archive kept=${result?.kept ?? 0} archived_now=${result?.archived_now ?? 0} total=${result?.archive_total ?? 0}`
+    );
+  } catch (err) {
+    setGatewayPack12OpsStatus(`History archive failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadTrafficLightFloors() {
+  setGatewayPack12OpsStatus("Comparing traffic-light floors…");
+  try {
+    const result = await api("/gateway/best-practices/traffic-light-floors?floors=50,70,85&hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(result?.comparisons) ? result.comparisons : [];
+    setGatewayPack12OpsStatus(
+      rows.map((r) => `${r.floor_score}:${String(r.light || "?").toUpperCase()}`).join(" · ") || "No floor comparisons."
+    );
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Traffic floors failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadReadinessLeadershipDelta() {
+  setGatewayPack12OpsStatus("Loading readiness Δ…");
+  try {
+    const result = await api("/gateway/best-practices/readiness-leadership-delta?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack12OpsStatus(
+      `Δ ${result?.delta ?? "?"} (lead ${result?.leadership_score ?? "?"} vs ready% ${result?.readiness_percent ?? "?"})`
+    );
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Readiness Δ failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadBudgetCorrelationWarning() {
+  setGatewayPack12OpsStatus("Checking budget correlation warning…");
+  try {
+    const result = await api("/gateway/best-practices/budget-correlation-warning?hours=168&warn_avg_cents=50", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack12OpsStatus(
+      `${result?.warning ? "WARN" : "ok"} · ${safeText(result?.message || "")}`
+    );
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Budget warn failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadLeadershipPostureDigest() {
+  setGatewayPack12OpsStatus("Loading posture digest…");
+  try {
+    const result = await api("/gateway/best-practices/leadership-posture-digest", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack12OpsStatus(
+      `Posture ${String(result?.traffic_light || "?").toUpperCase()} · score ${result?.score ?? "?"} · cache ${result?.cache_hit_rate_percent ?? 0}% · deny ${result?.denylist_count ?? 0}`
+    );
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Posture digest failed: ${safeText(err.message)}`);
+  }
+}
+
+async function downloadOperatorRunbookMd() {
+  setGatewayPack12OpsStatus("Downloading runbook markdown…");
+  try {
+    const result = await api("/gateway/best-practices/operator-runbook", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const blob = new Blob([String(result?.markdown || "")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `leadership-runbook-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setGatewayPack12OpsStatus(
+      `Runbook markdown downloaded · light ${result?.current_light || "?"} · score ${result?.current_score ?? "?"}`
+    );
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Runbook md failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadRouteCircuitNotes() {
+  const routePolicyId = routePolicyIdFromPriorityForm();
+  if (!routePolicyId) {
+    setGatewayPack12OpsStatus("Set route_policy_id on Route Priority form first.");
+    return;
+  }
+  setGatewayPack12OpsStatus(`Loading circuit notes for ${routePolicyId}…`);
+  try {
+    const result = await api(
+      `/gateway/best-practices/route-circuit-notes?route_policy_id=${encodeURIComponent(routePolicyId)}`,
+      { headers: { "X-Actor-Role": "Auditor" } }
+    );
+    setGatewayPack12OpsStatus(
+      result?.has_notes
+        ? `Circuit notes present · recs ${((result?.notes || {}).recommendations || []).length}`
+        : `No circuit notes on ${routePolicyId}`
+    );
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Circuit notes failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runCanaryAnnotateCombo() {
+  const routePolicyId = routePolicyIdFromPriorityForm();
+  if (!routePolicyId) {
+    setGatewayPack12OpsStatus("Set route_policy_id on Route Priority form first.");
+    return;
+  }
+  setGatewayPack12OpsStatus(`Running canary+annotate for ${routePolicyId}…`);
+  try {
+    const result = await api("/gateway/best-practices/canary-annotate-combo", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ route_policy_id: routePolicyId, floor_score: 70, annotate_if_passed: true }),
+    });
+    setGatewayPack12OpsStatus(safeText(result?.message || JSON.stringify(result?.gate || {})));
+  } catch (err) {
+    setGatewayPack12OpsStatus(`Canary+annotate failed: ${safeText(err.message)}`);
+  }
+}
+
+function setGatewayPack13OpsStatus(message) {
+  const target = qs("#gatewayPack13OpsStatus");
+  if (target) target.textContent = message;
+}
+
+function pack13SamplePrompt() {
+  const form = qs("#gatewayAutoRouteForm");
+  if (!form) return "Explain gateway fallback in one sentence.";
+  const raw = Object.fromEntries(new FormData(form).entries());
+  return String(raw.prompt_text || "").trim() || "Explain gateway fallback in one sentence.";
+}
+
+async function runAutoRouteExplain() {
+  setGatewayPack13OpsStatus("Explaining auto-route…");
+  try {
+    const form = qs("#gatewayAutoRouteForm");
+    const raw = form ? Object.fromEntries(new FormData(form).entries()) : {};
+    const result = await api("/gateway/best-practices/auto-route-explain", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt_text: pack13SamplePrompt(),
+        strategy: String(raw.strategy || "balanced"),
+        prefer_live_only: true,
+        request_tag: String(raw.request_tag || "").trim() || undefined,
+        route_policy_id: String(raw.route_policy_id || "").trim() || undefined,
+      }),
+    });
+    setGatewayPack13OpsStatus(
+      `Explain → ${result?.selected_model || "none"} · alts ${(result?.alternatives || []).length} · ${safeText(result?.why_not_alternatives || "")}`
+    );
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Explain failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runShadowCompareStrategies() {
+  setGatewayPack13OpsStatus("Shadow-comparing strategies…");
+  try {
+    const result = await api("/gateway/best-practices/shadow-compare-strategies", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt_text: pack13SamplePrompt(), prefer_live_only: true }),
+    });
+    const rows = Array.isArray(result?.comparisons) ? result.comparisons : [];
+    setGatewayPack13OpsStatus(
+      `${result?.divergence ? "DIVERGE" : "converge"} · ` +
+        rows.map((r) => `${r.strategy}:${r.selected_model || "?"}`).join(" · ")
+    );
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Shadow compare failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadScoreTrend() {
+  setGatewayPack13OpsStatus("Loading score trend…");
+  try {
+    const result = await api("/gateway/best-practices/score-trend?points=6&decline_points=3", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack13OpsStatus(
+      `${result?.alert ? "ALERT" : "ok"} · streak ${result?.declining_streak ?? 0} · ${(result?.scores || []).join(" → ")}`
+    );
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Score trend failed: ${safeText(err.message)}`);
+  }
+}
+
+async function resetModelRoutePolicyAction() {
+  setGatewayPack13OpsStatus("Resetting model route policy…");
+  try {
+    const result = await api("/gateway/best-practices/model-route-policy/reset", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack13OpsStatus(result?.reset ? "Model route policy reset." : "Reset completed.");
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Reset policy failed: ${safeText(err.message)}`);
+  }
+}
+
+async function clearModelDenylistAction() {
+  setGatewayPack13OpsStatus("Clearing denylist…");
+  try {
+    const result = await api("/gateway/best-practices/model-route-policy/clear-denylist", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack13OpsStatus(`Denylist cleared · allow=${(result?.allowlist || []).length}`);
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Clear denylist failed: ${safeText(err.message)}`);
+  }
+}
+
+async function exportPostureDigestAction() {
+  setGatewayPack13OpsStatus("Exporting posture digest…");
+  try {
+    const result = await api("/gateway/best-practices/posture-digest-export", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    downloadJsonArtifact(result?.filename || `leadership-posture-${Date.now()}.json`, result);
+    setGatewayPack13OpsStatus(`Posture digest exported · ${result?.digest?.traffic_light || "?"}`);
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Posture export failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadMultiWindowSummary() {
+  setGatewayPack13OpsStatus("Loading multi-window summary…");
+  try {
+    const result = await api("/gateway/best-practices/multi-window-summary", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(result?.windows) ? result.windows : [];
+    setGatewayPack13OpsStatus(
+      rows.map((w) => `${w.hours}h:${String(w.light || "?").toUpperCase()}(${w.score ?? "?"})`).join(" · ")
+    );
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Multi-window failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadRouteHealthScore() {
+  const routePolicyId = routePolicyIdFromPriorityForm();
+  if (!routePolicyId) {
+    setGatewayPack13OpsStatus("Set route_policy_id on Route Priority form first.");
+    return;
+  }
+  setGatewayPack13OpsStatus(`Scoring route health for ${routePolicyId}…`);
+  try {
+    const result = await api("/gateway/best-practices/route-health-score", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ route_policy_id: routePolicyId }),
+    });
+    setGatewayPack13OpsStatus(
+      `Route health ${result?.score ?? "?"} (${result?.band || "?"}) · ${safeText(result?.message || "")}`
+    );
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Route health failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadOperatorChecklist() {
+  setGatewayPack13OpsStatus("Loading operator checklist…");
+  try {
+    const result = await api("/gateway/best-practices/operator-checklist", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack13OpsStatus(
+      `Checklist ${result?.completed_count ?? 0}/${result?.total ?? 0} · ${(result?.steps || [])
+        .filter((s) => s.done)
+        .map((s) => s.id)
+        .join(", ") || "none done"}`
+    );
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Checklist failed: ${safeText(err.message)}`);
+  }
+}
+
+async function markChecklistTrafficLight() {
+  setGatewayPack13OpsStatus("Marking checklist step traffic_light…");
+  try {
+    const result = await api("/gateway/best-practices/operator-checklist", {
+      method: "PUT",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ completed: { traffic_light: true } }),
+    });
+    setGatewayPack13OpsStatus(`Checklist now ${result?.completed_count ?? 0}/${result?.total ?? 0}`);
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Checklist mark failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadLatencyEstimate() {
+  setGatewayPack13OpsStatus("Estimating latency…");
+  try {
+    const result = await api("/gateway/best-practices/latency-estimate?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack13OpsStatus(safeText(result?.message || `estimate ${result?.estimate_ms ?? "n/a"}ms`));
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Latency estimate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadPackRegistry() {
+  setGatewayPack13OpsStatus("Loading pack registry…");
+  try {
+    const result = await api("/gateway/best-practices/pack-registry", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const packs = Array.isArray(result?.packs) ? result.packs : [];
+    setGatewayPack13OpsStatus(`Packs ${packs.map((p) => p.pack).join(", ")} · n=${result?.count ?? packs.length}`);
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Pack registry failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runOnDemandSnapshot() {
+  setGatewayPack13OpsStatus("Recording on-demand snapshot…");
+  try {
+    const result = await api("/gateway/best-practices/on-demand-snapshot?hours=24", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack13OpsStatus(`Snapshot score ${result?.score ?? "?"} · band ${result?.band || "?"}`);
+  } catch (err) {
+    setGatewayPack13OpsStatus(`On-demand snapshot failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadEnforcementFlagsDiff() {
+  setGatewayPack13OpsStatus("Diffing enforcement flags…");
+  try {
+    const result = await api("/gateway/best-practices/enforcement-flags-diff", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack13OpsStatus(
+      result?.in_sync_with_defaults
+        ? "Flags match defaults."
+        : `Flag diffs ${result?.count ?? 0}: ${(result?.diffs || []).map((d) => d.key).join(", ")}`
+    );
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Flags diff failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadWarmupEligibility() {
+  setGatewayPack13OpsStatus("Probing warmup eligibility…");
+  try {
+    const result = await api("/gateway/best-practices/warmup-eligibility", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack13OpsStatus(
+      `${result?.eligible ? "eligible" : "blocked"} · ${result?.count ?? 0}/${result?.max_per_hour ?? "?"} this hour`
+    );
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Warmup eligibility failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadStrategyPolicies() {
+  setGatewayPack13OpsStatus("Loading strategy policies…");
+  try {
+    const result = await api("/gateway/best-practices/strategy-policies", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack13OpsStatus(
+      `Strategy policies tags=${result?.tag_count ?? 0} routes=${result?.route_count ?? 0}`
+    );
+  } catch (err) {
+    setGatewayPack13OpsStatus(`Strategy policies failed: ${safeText(err.message)}`);
+  }
+}
+
+function setGatewayPack14OpsStatus(message) {
+  const target = qs("#gatewayPack14OpsStatus");
+  if (target) target.textContent = message;
+}
+
+async function loadAutoRouteAudit() {
+  setGatewayPack14OpsStatus("Loading auto-route audit…");
+  try {
+    const result = await api("/gateway/best-practices/auto-route-audit?limit=8", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(result?.audits) ? result.audits : [];
+    setGatewayPack14OpsStatus(
+      rows.length
+        ? `Audit n=${result?.count ?? rows.length}: ${rows
+            .slice(0, 3)
+            .map((r) => `${r.selected_model || "?"}(${r.source || "?"})`)
+            .join(" · ")}`
+        : "Auto-route audit empty."
+    );
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Audit failed: ${safeText(err.message)}`);
+  }
+}
+
+async function openLeadershipIncidentAction() {
+  setGatewayPack14OpsStatus("Opening leadership incident…");
+  try {
+    const result = await api("/gateway/best-practices/incidents", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Operator-opened leadership incident",
+        severity: "warning",
+        detail: "Opened from Routing & Gateway Pack 14 controls.",
+      }),
+    });
+    setGatewayPack14OpsStatus(`Incident opened ${result?.incident_id || "n/a"}`);
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Open incident failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadLeadershipIncidents() {
+  setGatewayPack14OpsStatus("Listing incidents…");
+  try {
+    const result = await api("/gateway/best-practices/incidents?limit=10", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(result?.incidents) ? result.incidents : [];
+    setGatewayPack14OpsStatus(
+      rows.length
+        ? `Incidents ${result?.count ?? rows.length}: ${rows
+            .slice(0, 3)
+            .map((r) => `${r.incident_id}:${r.status}`)
+            .join(" · ")}`
+        : "No incidents."
+    );
+  } catch (err) {
+    setGatewayPack14OpsStatus(`List incidents failed: ${safeText(err.message)}`);
+  }
+}
+
+async function closeLatestIncident() {
+  setGatewayPack14OpsStatus("Closing latest open incident…");
+  try {
+    const listed = await api("/gateway/best-practices/incidents?limit=10&status=open", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const open = Array.isArray(listed?.incidents) ? listed.incidents : [];
+    if (!open.length) {
+      setGatewayPack14OpsStatus("No open incidents to close.");
+      return;
+    }
+    const result = await api("/gateway/best-practices/incidents/close", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ incident_id: open[0].incident_id }),
+    });
+    setGatewayPack14OpsStatus(
+      result?.closed ? `Closed ${open[0].incident_id}` : safeText(result?.message || "Close failed")
+    );
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Close incident failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runLeadershipFloorGate() {
+  setGatewayPack14OpsStatus("Running leadership floor gate…");
+  try {
+    const result = await api("/gateway/best-practices/leadership-floor-gate", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ floor_score: 70, hours: 24 }),
+    });
+    setGatewayPack14OpsStatus(
+      `Floor gate ${result?.decision || "n/a"} · score ${result?.score ?? "?"} · ${safeText(result?.message || "")}`
+    );
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Floor gate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function downloadPackRegistryMd() {
+  setGatewayPack14OpsStatus("Downloading pack registry markdown…");
+  try {
+    const result = await api("/gateway/best-practices/pack-registry.md", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const blob = new Blob([String(result?.markdown || "")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = result?.filename || `leadership-pack-registry-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setGatewayPack14OpsStatus(`Pack registry md downloaded · packs ${result?.count ?? "?"}`);
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Pack registry md failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadAutoRouteCostEstimate() {
+  setGatewayPack14OpsStatus("Estimating auto-route cost…");
+  try {
+    const result = await api("/gateway/best-practices/auto-route-cost-estimate?hours=168", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack14OpsStatus(safeText(result?.message || ""));
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Cost estimate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function muteScoreTrendAction() {
+  setGatewayPack14OpsStatus("Muting score trend…");
+  try {
+    const result = await api("/gateway/best-practices/score-trend/mute", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ minutes: 60, reason: "Operator mute from Pack 14" }),
+    });
+    setGatewayPack14OpsStatus(`Trend muted until ${result?.muted_until || "?"}`);
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Mute trend failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadScoreTrendMuted() {
+  setGatewayPack14OpsStatus("Loading muted score trend…");
+  try {
+    const result = await api("/gateway/best-practices/score-trend-muted?points=6&decline_points=3", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack14OpsStatus(
+      `${result?.effective_alert ? "ALERT" : "ok"} · muted=${result?.muted ? "yes" : "no"} · ${(result?.scores || []).join(" → ")}`
+    );
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Muted trend failed: ${safeText(err.message)}`);
+  }
+}
+
+async function rollbackEnforcementFlagsAction() {
+  setGatewayPack14OpsStatus("Rolling back enforcement flags…");
+  try {
+    const result = await api("/gateway/best-practices/enforcement-flags/rollback", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack14OpsStatus(result?.rolled_back ? "Enforcement flags rolled back to defaults." : "Rollback done.");
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Flags rollback failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadRouteHealthBatch() {
+  setGatewayPack14OpsStatus("Loading route health batch…");
+  try {
+    const result = await api("/gateway/best-practices/route-health-batch?limit=8", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const rows = Array.isArray(result?.routes) ? result.routes : [];
+    setGatewayPack14OpsStatus(
+      rows.length
+        ? `Route health n=${result?.count ?? rows.length}: ${rows
+            .slice(0, 3)
+            .map((r) => `${r.route_policy_id}:${r.score}`)
+            .join(" · ")}`
+        : "No routes for health batch."
+    );
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Route health batch failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadDayRollup() {
+  setGatewayPack14OpsStatus("Loading day rollup…");
+  try {
+    const result = await api("/gateway/best-practices/day-rollup", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack14OpsStatus(
+      `Day rollup light=${result?.posture?.traffic_light || "?"} · open incidents=${result?.open_incidents ?? 0} · checklist ${result?.checklist_completion_percent ?? 0}%`
+    );
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Day rollup failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadChecklistGate() {
+  setGatewayPack14OpsStatus("Evaluating checklist gate…");
+  try {
+    const result = await api("/gateway/best-practices/checklist-gate?min_percent=50", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack14OpsStatus(
+      `Checklist gate ${result?.decision || "n/a"} · ${result?.completion_percent ?? 0}% · ${safeText(result?.message || "")}`
+    );
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Checklist gate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadDecisionCacheInventory() {
+  setGatewayPack14OpsStatus("Loading decision cache inventory…");
+  try {
+    const result = await api("/gateway/best-practices/decision-cache-inventory", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack14OpsStatus(`Cache inventory entries=${result?.entry_count ?? 0}`);
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Cache inventory failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runNightlyTrendReport() {
+  setGatewayPack14OpsStatus("Building nightly+trend report…");
+  try {
+    const result = await api("/gateway/best-practices/nightly-trend-report", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    downloadJsonArtifact(`nightly-trend-${result?.report_id || Date.now()}.json`, result);
+    setGatewayPack14OpsStatus(`Nightly+trend ${result?.report_id || "n/a"} · score ${result?.snapshot?.score ?? "?"}`);
+  } catch (err) {
+    setGatewayPack14OpsStatus(`Nightly+trend failed: ${safeText(err.message)}`);
+  }
+}
+
+function setGatewayPack15OpsStatus(message) {
+  const target = qs("#gatewayPack15OpsStatus");
+  if (target) target.textContent = message;
+}
+
+async function loadLeadershipHealthBanner() {
+  const target = qs("#gatewayLeadershipHealthBanner");
+  if (!target) return;
+  target.textContent = "Leadership health banner: loading…";
+  try {
+    const result = await api("/gateway/best-practices/composite-go-no-go", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ floor_score: 70, checklist_min_percent: 50, hours: 24 }),
+    });
+    const light = result?.traffic_light?.light || "?";
+    target.textContent =
+      `Health banner ${result?.decision || "n/a"} · light ${String(light).toUpperCase()} · score ${result?.traffic_light?.score ?? "?"}`;
+  } catch (err) {
+    target.textContent = `Health banner unavailable: ${safeText(err.message)}`;
+  }
+}
+
+async function runCompositeGoNoGo() {
+  setGatewayPack15OpsStatus("Running composite go/no-go…");
+  try {
+    const result = await api("/gateway/best-practices/composite-go-no-go", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ floor_score: 70, checklist_min_percent: 50, hours: 24 }),
+    });
+    setGatewayPack15OpsStatus(
+      `Composite ${result?.decision || "n/a"} · ${safeText(result?.message || "")}`
+    );
+    void loadLeadershipHealthBanner();
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Composite gate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function unmuteScoreTrendAction() {
+  setGatewayPack15OpsStatus("Unmuting score trend…");
+  try {
+    const result = await api("/gateway/best-practices/score-trend/unmute", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack15OpsStatus(result?.message || "Score trend unmuted.");
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Unmute failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadAutoRouteAuditSummary() {
+  setGatewayPack15OpsStatus("Loading audit summary…");
+  try {
+    const result = await api("/gateway/best-practices/auto-route-audit-summary?limit=100", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack15OpsStatus(
+      `Audit n=${result?.count ?? 0} · cache-hit ${result?.cache_hit_rate_percent ?? 0}% · strategies ${Object.keys(result?.by_strategy || {}).join(",") || "n/a"}`
+    );
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Audit summary failed: ${safeText(err.message)}`);
+  }
+}
+
+async function purgeAutoRouteAuditAction() {
+  setGatewayPack15OpsStatus("Purging auto-route audit…");
+  try {
+    const result = await api("/gateway/best-practices/auto-route-audit/purge?keep=20", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack15OpsStatus(`Audit purge kept=${result?.kept ?? 0} purged=${result?.purged ?? 0}`);
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Audit purge failed: ${safeText(err.message)}`);
+  }
+}
+
+async function exportAutoRouteAuditAction() {
+  setGatewayPack15OpsStatus("Exporting auto-route audit…");
+  try {
+    const result = await api("/gateway/best-practices/auto-route-audit-export?limit=50", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    downloadJsonArtifact(result?.filename || `auto-route-audit-${Date.now()}.json`, result);
+    setGatewayPack15OpsStatus(`Audit exported · n=${result?.count ?? 0}`);
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Audit export failed: ${safeText(err.message)}`);
+  }
+}
+
+async function escalateLatestIncidentAction() {
+  setGatewayPack15OpsStatus("Escalating latest open incident…");
+  try {
+    const listed = await api("/gateway/best-practices/incidents?limit=5&status=open", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const open = Array.isArray(listed?.incidents) ? listed.incidents : [];
+    if (!open.length) {
+      setGatewayPack15OpsStatus("No open incidents to escalate.");
+      return;
+    }
+    const result = await api("/gateway/best-practices/incidents/escalate", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ incident_id: open[0].incident_id, severity: "critical" }),
+    });
+    setGatewayPack15OpsStatus(
+      result?.escalated ? `Escalated ${open[0].incident_id}` : safeText(result?.message || "Escalate failed")
+    );
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Escalate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function bulkCloseIncidentsAction() {
+  setGatewayPack15OpsStatus("Bulk-closing open incidents…");
+  try {
+    const result = await api("/gateway/best-practices/incidents/bulk-close?limit=20", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack15OpsStatus(`Bulk closed ${result?.closed_count ?? 0} incidents`);
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Bulk close failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runFloorGateAutoIncident() {
+  setGatewayPack15OpsStatus("Running floor gate with auto-incident…");
+  try {
+    const result = await api("/gateway/best-practices/floor-gate-auto-incident", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ floor_score: 70, hours: 24, open_incident_on_fail: true }),
+    });
+    setGatewayPack15OpsStatus(
+      `Floor ${result?.decision || "n/a"} · incident ${result?.incident?.incident_id || "none"}`
+    );
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Floor+incident failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runRedLightProbe() {
+  setGatewayPack15OpsStatus("Probing RED traffic light…");
+  try {
+    const result = await api("/gateway/best-practices/red-light-probe?open_incident=true", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack15OpsStatus(safeText(result?.message || `light=${result?.light}`));
+  } catch (err) {
+    setGatewayPack15OpsStatus(`RED probe failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadPreferredModel() {
+  setGatewayPack15OpsStatus("Loading preferred model…");
+  try {
+    const result = await api("/gateway/best-practices/preferred-model", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack15OpsStatus(
+      `Preferred ${result?.enabled ? "ON" : "off"} · ${result?.model_name || "none"}`
+    );
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Preferred model failed: ${safeText(err.message)}`);
+  }
+}
+
+async function setPreferredModelSample() {
+  setGatewayPack15OpsStatus("Setting preferred model sample…");
+  try {
+    const result = await api("/gateway/best-practices/preferred-model", {
+      method: "PUT",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ model_name: "gpt-4o-mini", enabled: true }),
+    });
+    setGatewayPack15OpsStatus(`Preferred set → ${result?.model_name || "n/a"}`);
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Set preferred failed: ${safeText(err.message)}`);
+  }
+}
+
+async function clearPreferredModelAction() {
+  setGatewayPack15OpsStatus("Clearing preferred model…");
+  try {
+    const result = await api("/gateway/best-practices/preferred-model", {
+      method: "DELETE",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack15OpsStatus(result?.cleared ? "Preferred model cleared." : "Clear done.");
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Clear preferred failed: ${safeText(err.message)}`);
+  }
+}
+
+async function downloadDayRollupMd() {
+  setGatewayPack15OpsStatus("Downloading day rollup markdown…");
+  try {
+    const result = await api("/gateway/best-practices/day-rollup.md", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const blob = new Blob([String(result?.markdown || "")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = result?.filename || `leadership-day-rollup-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setGatewayPack15OpsStatus("Day rollup markdown downloaded.");
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Day rollup md failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runDigestWebhookDryRun() {
+  setGatewayPack15OpsStatus("Preparing digest webhook dry-run…");
+  try {
+    const result = await api("/gateway/best-practices/digest-webhook-dry-run", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack15OpsStatus(
+      `Digest dry-run ${result?.payload?.composite_decision || "n/a"} · light ${result?.payload?.traffic_light || "?"}`
+    );
+  } catch (err) {
+    setGatewayPack15OpsStatus(`Digest dry-run failed: ${safeText(err.message)}`);
+  }
+}
+
+function setBenchmarkLeadershipGateStatus(message) {
+  const target = qs("#benchmarkLeadershipGateStatus");
+  if (target) target.textContent = message;
+}
+
+async function runBenchmarkLeadershipFloorGate() {
+  setBenchmarkLeadershipGateStatus("Running leadership floor gate…");
+  try {
+    const result = await api("/gateway/best-practices/leadership-floor-gate", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ floor_score: 70, hours: 24 }),
+    });
+    setBenchmarkLeadershipGateStatus(
+      `Floor ${result?.decision || "n/a"} · score ${result?.score ?? "?"} · ${safeText(result?.message || "")}`
+    );
+  } catch (err) {
+    setBenchmarkLeadershipGateStatus(`Floor gate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runBenchmarkCompositeGate() {
+  setBenchmarkLeadershipGateStatus("Running leadership composite gate…");
+  try {
+    const result = await api("/gateway/best-practices/composite-go-no-go", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({ floor_score: 70, checklist_min_percent: 50, hours: 24 }),
+    });
+    setBenchmarkLeadershipGateStatus(
+      `Composite ${result?.decision || "n/a"} · ${safeText(result?.message || "")}`
+    );
+  } catch (err) {
+    setBenchmarkLeadershipGateStatus(`Composite gate failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runBenchmarkCompositeWithEvidence() {
+  setBenchmarkLeadershipGateStatus("Running composite gate with compliance evidence…");
+  try {
+    const result = await api("/gateway/best-practices/composite-with-evidence?hours=24", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setBenchmarkLeadershipGateStatus(
+      `Composite+evidence ${result?.decision || "n/a"} · ${safeText(result?.compliance_evidence?.evidence_id || "")}`
+    );
+  } catch (err) {
+    setBenchmarkLeadershipGateStatus(`Composite+evidence failed: ${safeText(err.message)}`);
+  }
+}
+
+function setGatewayPack16OpsStatus(message) {
+  const target = qs("#gatewayPack16OpsStatus");
+  if (target) target.textContent = message;
+}
+
+async function loadExecutiveBrief() {
+  setGatewayPack16OpsStatus("Loading executive brief…");
+  try {
+    const result = await api("/gateway/best-practices/executive-brief?hours=24", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `decision=${result?.decision}`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Executive brief failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadScorecardDelta() {
+  setGatewayPack16OpsStatus("Loading scorecard delta…");
+  try {
+    const result = await api("/gateway/best-practices/scorecard-delta", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack16OpsStatus(
+      `Δ ${result?.score_delta ?? "?"} (${result?.direction || "?"}) · ${result?.latest_score ?? "?"} ← ${result?.prior_score ?? "?"}`
+    );
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Scorecard delta failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadShadowTraffic() {
+  setGatewayPack16OpsStatus("Loading shadow traffic…");
+  try {
+    const result = await api("/gateway/best-practices/shadow-traffic", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `shadow=${result?.percent}%`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Shadow traffic failed: ${safeText(err.message)}`);
+  }
+}
+
+async function setShadowTrafficSample() {
+  setGatewayPack16OpsStatus("Setting shadow traffic to 10%…");
+  try {
+    const result = await api("/gateway/best-practices/shadow-traffic", {
+      method: "PUT",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ percent: 10, enabled: true }),
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || "Shadow traffic updated."));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Set shadow failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadCanaryAutoRollback() {
+  setGatewayPack16OpsStatus("Loading canary auto-rollback…");
+  try {
+    const result = await api("/gateway/best-practices/canary-auto-rollback", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack16OpsStatus(
+      `Canary rollback enabled=${result?.enabled} red=${result?.on_red_light} floor=${result?.on_floor_fail}`
+    );
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Canary rollback failed: ${safeText(err.message)}`);
+  }
+}
+
+async function enableCanaryAutoRollback() {
+  setGatewayPack16OpsStatus("Enabling canary auto-rollback…");
+  try {
+    const result = await api("/gateway/best-practices/canary-auto-rollback", {
+      method: "PUT",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: true, on_red_light: true, on_floor_fail: true }),
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || "Canary rollback enabled."));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Enable canary failed: ${safeText(err.message)}`);
+  }
+}
+
+async function evaluateCanaryAutoRollback() {
+  setGatewayPack16OpsStatus("Evaluating canary auto-rollback…");
+  try {
+    const result = await api("/gateway/best-practices/canary-auto-rollback/evaluate?hours=24", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `rollback=${result?.should_rollback}`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Evaluate canary failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadAttributionAnomalies() {
+  setGatewayPack16OpsStatus("Scanning attribution anomalies…");
+  try {
+    const result = await api("/gateway/best-practices/attribution-anomalies?limit=100", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `anomalies=${result?.anomaly_count}`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Anomaly scan failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadWarmupBudget() {
+  setGatewayPack16OpsStatus("Checking warmup budget…");
+  try {
+    const result = await api("/gateway/best-practices/warmup-budget", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `remaining=${result?.remaining}`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Warmup budget failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runLatencyBudgetGuard() {
+  setGatewayPack16OpsStatus("Evaluating latency budget…");
+  try {
+    const result = await api("/gateway/best-practices/latency-budget-guard", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ observed_ms: 1800, budget_ms: 2500 }),
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `within=${result?.within_budget}`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Latency budget failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadParetoFrontier() {
+  setGatewayPack16OpsStatus("Loading cost–quality Pareto frontier…");
+  try {
+    const result = await api("/gateway/best-practices/pareto-frontier?limit=12", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `frontier=${result?.frontier_count}`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Pareto failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runFailoverSimulation() {
+  setGatewayPack16OpsStatus("Running failover simulation…");
+  try {
+    const result = await api("/gateway/best-practices/failover-simulation", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ primary_provider: "openai" }),
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `ready=${result?.fallback_ready}`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Failover sim failed: ${safeText(err.message)}`);
+  }
+}
+
+async function loadModelCardFreshness() {
+  setGatewayPack16OpsStatus("Checking model-card freshness…");
+  try {
+    const result = await api("/gateway/best-practices/model-card-freshness", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `fresh=${result?.fresh}`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Model-card freshness failed: ${safeText(err.message)}`);
+  }
+}
+
+async function refreshModelCardFreshnessAction() {
+  setGatewayPack16OpsStatus("Refreshing model-card freshness marker…");
+  try {
+    const result = await api("/gateway/best-practices/model-card-freshness/refresh", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops" },
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || "Model cards marked fresh."));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Refresh cards failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runCompositeWithEvidence() {
+  setGatewayPack16OpsStatus("Running composite with compliance evidence…");
+  try {
+    const result = await api("/gateway/best-practices/composite-with-evidence?hours=24", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `decision=${result?.decision}`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Composite+evidence failed: ${safeText(err.message)}`);
+  }
+}
+
+async function downloadIncidentTimelineMd() {
+  setGatewayPack16OpsStatus("Downloading incident timeline…");
+  try {
+    const result = await api("/gateway/best-practices/incident-timeline.md?limit=20", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const blob = new Blob([String(result?.markdown || "")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = result?.filename || "leadership-incident-timeline.md";
+    a.click();
+    URL.revokeObjectURL(url);
+    setGatewayPack16OpsStatus(`Incident timeline downloaded · n=${result?.count ?? 0}`);
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Incident timeline failed: ${safeText(err.message)}`);
+  }
+}
+
+async function exportOpsActivityAction() {
+  setGatewayPack16OpsStatus("Exporting ops activity…");
+  try {
+    const result = await api("/gateway/best-practices/ops-activity-export?limit=40", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || `events=${result?.count}`));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Ops activity export failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runCrossEnvSyncDryRun() {
+  setGatewayPack16OpsStatus("Preparing cross-env sync dry-run…");
+  try {
+    const result = await api("/gateway/best-practices/cross-env-sync-dry-run", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ source_env: "staging", target_env: "prod" }),
+    });
+    setGatewayPack16OpsStatus(safeText(result?.message || "Cross-env dry-run ready."));
+  } catch (err) {
+    setGatewayPack16OpsStatus(`Cross-env sync failed: ${safeText(err.message)}`);
+  }
+}
+
+async function runPlaygroundLeadershipDiagnose() {
+  const target = qs("#playgroundLeadershipDiagnoseStatus");
+  if (target) target.textContent = "Running leadership diagnose…";
+  try {
+    const result = await api("/gateway/best-practices/playground-diagnose", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    if (target) target.textContent = safeText(result?.message || "Diagnose complete.");
+    const warn = qs("#playgroundLeadershipWarn");
+    if (warn && result?.warn) warn.textContent = "Leadership warn: diagnose found RED or anomalies.";
+  } catch (err) {
+    if (target) target.textContent = `Diagnose failed: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayModelRankings() {
+  const target = qs("#gatewayModelRankingsStatus");
+  if (!target) return;
+  try {
+    target.textContent = "Loading telemetry model rankings…";
+    const rankings = await api("/gateway/best-practices/model-rankings?hours=168", {
+      headers: { "X-Actor-Role": "Auditor" },
+    });
+    const top = Array.isArray(rankings?.models) ? rankings.models.slice(0, 3) : [];
+    const topLabel = top.map((row) => `${row.model_name}(${row.score})`).join(", ");
+    target.textContent =
+      `Model rankings ${top.length ? topLabel : "none yet"}` +
+      ` · samples ${Number(rankings?.sample_events || 0)}` +
+      ` · signal ${rankings?.leader_signal || "n/a"}`;
+  } catch (err) {
+    target.textContent = `Model rankings unavailable: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayLeadershipWarmup() {
+  const target = qs("#gatewayLeadershipIndexStatus");
+  try {
+    if (target) target.textContent = "Warming up attributed leadership traffic…";
+    const result = await api("/gateway/best-practices/leadership-warmup", {
+      method: "POST",
+      headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+      body: JSON.stringify({ samples: 6, environment: "dev", strategy: "balanced" }),
+    });
+    if (typeof UiKit !== "undefined") {
+      UiKit.showToast(result?.message || "Leadership warmup complete.", "success");
+    }
+    await Promise.all([
+      loadGatewayLeadershipIndex(),
+      loadGatewayAttributionAnalytics(),
+      loadGatewayModelRankings(),
+    ]);
+  } catch (err) {
+    if (target) target.textContent = `Leadership warmup failed: ${safeText(err.message)}`;
+  }
+}
+
+async function runGatewayAutoRoutePreview(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayAutoRouteForm");
+  const target = qs("#gatewayAutoRouteResult");
+  if (!form || !target) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const promptText = String(raw.prompt_text || "").trim();
+  if (!promptText) {
+    target.textContent = "Prompt sample is required.";
+    return;
+  }
+  target.textContent = "Classifying prompt complexity…";
+  try {
+    const decision = await api("/gateway/best-practices/auto-route", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt_text: promptText,
+        prefer_live_only: String(raw.prefer_live_only || "").toLowerCase() === "true" || raw.prefer_live_only === "on",
+        max_candidates_per_tier: 3,
+        strategy: String(raw.strategy || "balanced").trim() || "balanced",
+        refine_with_judge:
+          String(raw.refine_with_judge || "").toLowerCase() === "true" || raw.refine_with_judge === "on",
+        use_telemetry_ranking:
+          String(raw.use_telemetry_ranking || "").toLowerCase() === "true" ||
+          raw.use_telemetry_ranking === "on",
+        request_tag: String(raw.request_tag || "").trim() || undefined,
+        route_policy_id: String(raw.route_policy_id || "").trim() || undefined,
+        use_cache: true,
+      }),
+    });
+    const tier = decision?.complexity?.tier || "n/a";
+    const score = decision?.complexity?.score ?? "--";
+    const cache = decision?.cache_hit ? "cache-hit" : "cache-miss";
+    const policySrc = decision?.strategy_policy?.source || "request";
+    target.textContent =
+      `tier=${tier} score=${score} strategy=${decision?.strategy || raw.strategy || "balanced"} (${policySrc}) ${cache} → ${decision?.selected_model || "no model"}` +
+      (decision?.rationale ? ` · ${decision.rationale}` : "");
+  } catch (err) {
+    target.textContent = `Auto-route error: ${safeText(err.message)}`;
+  }
+}
+
+async function suggestLiveReadyFallbackChain(ranked = false) {
+  const form = qs("#routePriorityForm");
+  setRoutePriorityValidationMessage(
+    ranked ? "Suggesting ranking-aware fallback chain…" : "Suggesting live-ready fallback chain…"
+  );
+  try {
+    await loadRoutePriorityProviderOptions();
+    const suggestion = ranked
+      ? await api("/gateway/best-practices/fallback-suggest-ranked?max_hops=3", {
+          method: "POST",
+          headers: { "X-Actor-Role": "AI Ops" },
+        })
+      : await api("/gateway/best-practices/fallback-suggest", {
+          method: "POST",
+          headers: { "X-Actor-Role": "AI Ops", "Content-Type": "application/json" },
+          body: JSON.stringify({ max_hops: 3, prefer_live_only: true }),
+        });
+    const order = normalizeRoutePriorityEntries(suggestion?.priority_order || []);
+    if (!order.length) {
+      throw new Error(suggestion?.rationale || "No fallback targets available. Configure live provider credentials first.");
+    }
+    routePriorityChainRows = order;
+    renderRoutePriorityChainTable(routePriorityChainRows);
+    syncRoutePriorityTextarea(routePriorityChainRows);
+    if (form?.elements?.health_check_enabled && suggestion?.recommended?.health_check_enabled) {
+      form.elements.health_check_enabled.value = "true";
+    }
+    if (form?.elements?.max_fallback_hops && suggestion?.recommended?.max_fallback_hops != null) {
+      form.elements.max_fallback_hops.value = String(suggestion.recommended.max_fallback_hops);
+    }
+    if (form?.elements?.global_timeout_ms && suggestion?.recommended?.global_timeout_ms != null) {
+      form.elements.global_timeout_ms.value = String(suggestion.recommended.global_timeout_ms);
+    }
+    setRoutePriorityValidationMessage(
+      `${safeText(suggestion.rationale || "Suggested chain ready.")} Review, then Save Priority.`,
+      true
+    );
+    const result = qs("#routePriorityResult");
+    if (result) {
+      result.textContent = JSON.stringify(
+        {
+          suggested: true,
+          live_ready_count: suggestion.live_ready_count,
+          priority_order: suggestion.priority_order,
+          recommended: suggestion.recommended,
+        },
+        null,
+        2
+      );
+    }
+  } catch (err) {
+    setRoutePriorityValidationMessage(safeText(err.message));
+  }
+}
+
+function applyPlaygroundProviderFilter(value) {
+  playgroundProviderFilter = String(value || "").trim().toLowerCase();
+  const select = qs("#playgroundProviderFilter");
+  if (select) select.value = playgroundProviderFilter;
+  populateProviderFilterControls();
+  refreshAllGatewayModelSelects();
+  void refreshGatewayCredentialReadiness("playgroundCredentialStatus");
+}
+
+function applyGatewayOpsProviderFilter(value) {
+  gatewayOpsProviderFilter = String(value || "").trim().toLowerCase();
+  const select = qs("#gatewayOpsProviderFilter");
+  if (select) select.value = gatewayOpsProviderFilter;
+  populateProviderFilterControls();
+  refreshAllGatewayModelSelects();
 }
 
 async function refreshAgentCredentialSetupStatus() {
@@ -23521,9 +28593,13 @@ async function loadLeadershipQbrSnapshot(evt) {
     if (qs("#qbrTabletopFresh")) {
       qs("#qbrTabletopFresh").textContent = drills.tabletop_within_180d ? "fresh" : "due";
     }
-    if (qs("#qbrLeaderClaim")) {
-      qs("#qbrLeaderClaim").textContent = data?.honesty?.leader_claim_allowed ? "allowed" : "blocked";
-    }
+    applyProgramLeadershipChips(data, {
+      claim: "#qbrLeaderClaim",
+      lrs: "#qbrLrsScore",
+      sustain: "#qbrLrsSustain",
+      unified: "#qbrUnifiedReady",
+      engReady: "#qbrCpliEngReady",
+    });
     if (qs("#qbrCpliScore")) {
       const cpli = data?.control_plane_leadership || {};
       qs("#qbrCpliScore").textContent =
@@ -23572,7 +28648,25 @@ async function loadLeadershipQbrSnapshot(evt) {
       result.textContent = `QBR snapshot ${safeText(data?.generated_at || "")}${notes ? ` — ${safeText(notes)}` : ""}`;
     }
   } catch (err) {
-    ["#qbrProdUnmanagedOk", "#qbrBreakGlass", "#qbrRtFresh", "#qbrTabletopFresh", "#qbrLeaderClaim", "#qbrCpliScore", "#qbrCpliGate", "#qbrCpliGateCi", "#qbrCpliPromotion", "#qbrCpliReady", "#qbrCpliContract", "#qbrCpliLkg", "#qbrCpliReadonly"].forEach((id) => {
+    [
+      "#qbrProdUnmanagedOk",
+      "#qbrBreakGlass",
+      "#qbrRtFresh",
+      "#qbrTabletopFresh",
+      "#qbrLeaderClaim",
+      "#qbrLrsScore",
+      "#qbrLrsSustain",
+      "#qbrUnifiedReady",
+      "#qbrCpliEngReady",
+      "#qbrCpliScore",
+      "#qbrCpliGate",
+      "#qbrCpliGateCi",
+      "#qbrCpliPromotion",
+      "#qbrCpliReady",
+      "#qbrCpliContract",
+      "#qbrCpliLkg",
+      "#qbrCpliReadonly",
+    ].forEach((id) => {
       if (qs(id)) qs(id).textContent = "--";
     });
     if (result) result.textContent = `Error: ${safeText(err.message)}`;
@@ -23639,7 +28733,19 @@ async function createLeadershipDrillRun(evt) {
     result.textContent = "Performed on date is required.";
     return;
   }
+  const today = new Date();
+  const todayIso = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, "0")}-${String(
+    today.getUTCDate(),
+  ).padStart(2, "0")}`;
+  if (performedOn > todayIso) {
+    result.textContent = "Performed on cannot be in the future (use UTC calendar date).";
+    return;
+  }
   const durationRaw = String(raw.duration_seconds || "").trim();
+  if (durationRaw !== "" && (!Number.isFinite(Number(durationRaw)) || Number(durationRaw) < 0)) {
+    result.textContent = "Duration must be a non-negative number of seconds.";
+    return;
+  }
   const payload = {
     drill_id: String(raw.drill_id || "").trim(),
     performed_on: performedOn,
@@ -23654,10 +28760,26 @@ async function createLeadershipDrillRun(evt) {
       body: JSON.stringify(payload),
     });
     result.textContent = `Recorded drill run ${safeText(data.run_id)} for ${safeText(data.drill_id)}.`;
+    form.reset();
+    const dateInput = form.elements.performed_on;
+    if (dateInput) dateInput.value = todayIso;
     await loadLeadershipDrillRuns();
     await loadLeadershipQbrSnapshot();
   } catch (err) {
     result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+function seedLeadershipDrillFormDefaults() {
+  const form = qs("#leadershipDrillRunForm");
+  if (!form) return;
+  const dateInput = form.elements.performed_on;
+  if (dateInput && !dateInput.value) {
+    const today = new Date();
+    dateInput.value = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, "0")}-${String(
+      today.getUTCDate(),
+    ).padStart(2, "0")}`;
+    dateInput.max = dateInput.value;
   }
 }
 
@@ -35125,12 +40247,48 @@ async function runPlaygroundPrompt(evt) {
   if (!form) return;
   const raw = Object.fromEntries(new FormData(form).entries());
   const promptText = String(raw.prompt_text || "").trim();
-  const selectedModel = String(raw.selected_model || "").trim();
+  let selectedModel = String(raw.selected_model || "").trim();
+  const autoRouteEnabled =
+    String(raw.auto_route || "").toLowerCase() === "true" || raw.auto_route === "on";
   const liveStream = String(raw.live_stream || "true") !== "false";
   const candidateModels = readCandidateModelsFromForm(form);
-  if (!promptText || !selectedModel) {
-    if (result) result.textContent = "Prompt text and selected model are required.";
+  if (!promptText || (!selectedModel && !autoRouteEnabled)) {
+    if (result) result.textContent = "Prompt text and selected model are required (or enable auto-router).";
     return;
+  }
+
+  if (autoRouteEnabled) {
+    const meta = qs("#playgroundAutoRouteMeta");
+    try {
+      if (result) result.textContent = "Auto-routing prompt complexity…";
+      if (meta) meta.textContent = "Auto-route meta: classifying…";
+      const decision = await api("/gateway/best-practices/auto-route", {
+        method: "POST",
+        headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt_text: promptText,
+          prefer_live_only: Boolean(qs("#playgroundPreferLiveReady")?.checked),
+          max_candidates_per_tier: 3,
+          strategy: "balanced",
+          use_telemetry_ranking: true,
+          use_cache: true,
+        }),
+      });
+      const routed = String(decision?.selected_model || "").trim();
+      if (!routed) throw new Error(decision?.rationale || "Auto-router returned no model.");
+      selectedModel = routed;
+      if (form.elements.selected_model) form.elements.selected_model.value = selectedModel;
+      if (meta) {
+        const tier = decision?.complexity?.tier || "?";
+        const cache = decision?.cache_hit ? "cache-hit" : "cache-miss";
+        const policy = decision?.strategy_policy?.source || "request";
+        meta.textContent = `Auto-route meta: ${routed} · tier=${tier} · ${cache} · policy=${policy}`;
+      }
+    } catch (err) {
+      if (result) result.textContent = `Auto-route failed: ${safeText(err.message)}`;
+      if (meta) meta.textContent = `Auto-route meta: failed · ${safeText(err.message)}`;
+      return;
+    }
   }
 
   stopPlaygroundStream();
@@ -35574,6 +40732,91 @@ async function executeRouteFallback(evt) {
   }
 }
 
+async function loadGatewayRuntimeRiskConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayRuntimeRiskConfigForm");
+  const result = qs("#gatewayRuntimeRiskConfigResult");
+  if (!form || !result) return;
+  try {
+    const data = await api("/gateway/runtime-risk/config");
+    form.elements.enabled.value = String(Boolean(data.enabled));
+    form.elements.mode.value = String(data.mode || "observe");
+    form.elements.high_action.value = String(data.high_action || "block");
+    form.elements.medium_action.value = String(data.medium_action || "warn");
+    form.elements.low_action.value = String(data.low_action || "allow");
+    if (form.elements.fail_closed_on_config_error) {
+      form.elements.fail_closed_on_config_error.value = String(
+        data.fail_closed_on_config_error !== false,
+      );
+    }
+    const envs = Array.isArray(data.enforce_environments) ? data.enforce_environments : [];
+    form.elements.enforce_environments.value = envs.join(",");
+    result.textContent = `Loaded runtime risk policy (enabled=${data.enabled}, mode=${data.mode}).`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function saveGatewayRuntimeRiskConfig(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayRuntimeRiskConfigForm");
+  const result = qs("#gatewayRuntimeRiskConfigResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const dual = getGatewayDualApprovalHeaders("#gatewayRuntimeRiskConfigForm") || {};
+  const envs = String(raw.enforce_environments || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  try {
+    const data = await api("/gateway/runtime-risk/config", {
+      method: "PUT",
+      headers: dual,
+      body: JSON.stringify({
+        enabled: String(raw.enabled || "false") === "true",
+        mode: String(raw.mode || "observe").trim(),
+        high_action: String(raw.high_action || "block").trim(),
+        medium_action: String(raw.medium_action || "warn").trim(),
+        low_action: String(raw.low_action || "allow").trim(),
+        enforce_environments: envs,
+        fail_closed_on_config_error: String(raw.fail_closed_on_config_error || "true") === "true",
+      }),
+    });
+    result.textContent = `Saved runtime risk policy (enabled=${data.enabled}, mode=${data.mode}).`;
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function evaluateGatewayRuntimeRisk(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayRuntimeRiskEvaluateForm");
+  const result = qs("#gatewayRuntimeRiskEvaluateResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  try {
+    const data = await api("/gateway/runtime-risk/evaluate", {
+      method: "POST",
+      body: JSON.stringify({
+        model_name: String(raw.model_name || "").trim(),
+        environment: String(raw.environment || "dev").trim(),
+        has_tool_calls: String(raw.has_tool_calls || "false") === "true",
+        selected_provider_id: String(raw.selected_provider_id || "").trim() || null,
+        endpoint_family: String(raw.endpoint_family || "chat.completions").trim() || "chat.completions",
+        has_agent_id: String(raw.has_agent_id || "false") === "true",
+        input_chars: Math.max(0, Number(raw.input_chars || 0) || 0),
+      }),
+    });
+    result.textContent = JSON.stringify(data, null, 2);
+    renderGatewayOpenAiRiskSummary(
+      { risk_tier: data.risk_tier, risk_reasons: data.risk_reasons },
+      "runtime-risk.evaluate",
+    );
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 async function loadRoutePreCallFilters(evt) {
   if (evt?.preventDefault) evt.preventDefault();
   const form = qs("#routePreCallFiltersForm");
@@ -35980,6 +41223,119 @@ async function runRouteCanaryRolloutAction(action, evt) {
     renderRouteCanaryRolloutState(data);
     result.textContent = `${action === "promote" ? "Promoted" : "Stopped"} canary rollout for ${routePolicyId}.`;
     await loadRouteCanaryRollout();
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function explainCanaryAutoRoute(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#routeCanaryRolloutForm");
+  const result = qs("#routeCanaryRolloutResult");
+  const preview = qs("#routeCanaryAutoRouteExplainPreview");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const routePolicyId = String(raw.route_policy_id || "").trim();
+  if (!routePolicyId) {
+    result.textContent = "Route policy ID is required for canary × auto-route explain.";
+    return;
+  }
+  result.textContent = `Explaining canary × auto-route for ${routePolicyId}…`;
+  try {
+    const data = await api("/gateway/best-practices/canary-auto-route-explain", {
+      method: "POST",
+      headers: { "X-Actor-Role": "Auditor", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        route_policy_id: routePolicyId,
+        prompt_text: String(raw.explain_prompt || "").trim() || "Canary auto-route interaction sample",
+      }),
+    });
+    if (!data?.found) {
+      result.textContent = `Explain failed: ${safeText(data?.message || "route not found")}.`;
+      if (preview) preview.hidden = true;
+      return;
+    }
+    const model = data.auto_route?.selected_model || "none";
+    result.textContent =
+      `Canary ${data.canary_enabled ? "on" : "off"} · auto-route ${safeText(model)} · ${safeText(data.interaction || "")}`;
+    if (preview) {
+      preview.hidden = false;
+      preview.textContent = JSON.stringify(data, null, 2);
+    }
+  } catch (err) {
+    result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadGatewayVkAutoRoutePolicies(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const result = qs("#gatewayVkAutoRoutePolicyResult");
+  const tbody = qs("#gatewayVkAutoRoutePolicyTable");
+  if (tbody) setTableMessage(tbody, 6, "Loading...");
+  try {
+    const data = await api("/gateway/best-practices/virtual-key-auto-route-policies?limit=50");
+    const rows = Array.isArray(data.policies) ? data.policies : [];
+    if (tbody) {
+      if (!rows.length) setTableMessage(tbody, 6, "No VK auto-route policies.");
+      else {
+        tbody.textContent = "";
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.style.cursor = "pointer";
+          tr.title = "Click to edit policy";
+          tr.addEventListener("click", () => {
+            const form = qs("#gatewayVkAutoRoutePolicyForm");
+            if (!form) return;
+            form.elements.virtual_key_id.value = row.virtual_key_id || "";
+            form.elements.strategy.value = row.strategy || "balanced";
+            form.elements.prefer_live_only.value = row.prefer_live_only === false ? "false" : "true";
+            form.elements.max_budget_tier.value = row.max_budget_tier || "";
+            form.elements.enabled.value = row.enabled === false ? "false" : "true";
+          });
+          appendTableCell(tr, row.virtual_key_id);
+          appendTableCell(tr, row.strategy || "--");
+          appendTableCell(tr, row.prefer_live_only === false ? "false" : "true");
+          appendTableCell(tr, row.max_budget_tier || "any");
+          appendTableCell(tr, row.enabled === false ? "false" : "true");
+          appendTableCell(tr, row.updated_at || "--");
+          tbody.appendChild(tr);
+        });
+      }
+    }
+    if (result) result.textContent = `Loaded ${safeText(data.count ?? rows.length)} VK auto-route policies.`;
+  } catch (err) {
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+    if (tbody) setTableMessage(tbody, 6, `Error: ${safeText(err.message)}`);
+  }
+}
+
+async function saveGatewayVkAutoRoutePolicy(evt) {
+  if (evt?.preventDefault) evt.preventDefault();
+  const form = qs("#gatewayVkAutoRoutePolicyForm");
+  const result = qs("#gatewayVkAutoRoutePolicyResult");
+  if (!form || !result) return;
+  const raw = Object.fromEntries(new FormData(form).entries());
+  const virtualKeyId = String(raw.virtual_key_id || "").trim();
+  if (!virtualKeyId) {
+    result.textContent = "Virtual Key ID is required.";
+    return;
+  }
+  try {
+    const data = await api("/gateway/best-practices/virtual-key-auto-route-policy", {
+      method: "POST",
+      body: JSON.stringify({
+        virtual_key_id: virtualKeyId,
+        strategy: String(raw.strategy || "balanced").trim(),
+        prefer_live_only: parseBooleanSelect(raw.prefer_live_only, true),
+        max_budget_tier: String(raw.max_budget_tier || "").trim() || null,
+        enabled: parseBooleanSelect(raw.enabled, true),
+      }),
+    });
+    const policy = data.policy || {};
+    result.textContent =
+      `Saved VK auto-route policy for ${safeText(policy.virtual_key_id)} ` +
+      `(strategy=${safeText(policy.strategy)}, enabled=${safeText(policy.enabled)}, vk_exists=${safeText(policy.exists)}).`;
+    await loadGatewayVkAutoRoutePolicies();
   } catch (err) {
     result.textContent = `Error: ${safeText(err.message)}`;
   }
@@ -40957,6 +46313,9 @@ function bindEvents() {
   qs("#loadOverviewUiCoverage")?.addEventListener("click", () => {
     void loadOverviewUiCoverage();
   });
+  qs("#overviewRaiseLeadershipScore")?.addEventListener("click", () => {
+    void raiseOverviewLeadershipScore();
+  });
   qs("#overviewPlaneReconcile")?.addEventListener("click", () => {
     void forceOverviewPlaneReconcile();
   });
@@ -41074,6 +46433,9 @@ function bindEvents() {
   qs("#seedAzureSupportedModels")?.addEventListener("click", seedTrendingSupportedModels);
   qs("#seedGcpSupportedModels")?.addEventListener("click", seedTrendingSupportedModels);
   qs("#seedAllCloudSupportedModels")?.addEventListener("click", seedTrendingSupportedModels);
+  qs("#discoverCloudSupportedModels")?.addEventListener("click", (evt) => discoverOrSyncCloudSupportedModels(evt, { sync: false }));
+  qs("#syncCloudSupportedModels")?.addEventListener("click", (evt) => discoverOrSyncCloudSupportedModels(evt, { sync: true }));
+  qs("#loadInferenceReadiness")?.addEventListener("click", () => void loadInferenceReadinessPanel());
   qs("#platformModelAvailabilityFilters")?.addEventListener("submit", loadPlatformModelAvailabilityRegister);
   qs("#loadPlatformModelAvailability")?.addEventListener("click", loadPlatformModelAvailabilityRegister);
   qs("#resetSupportedModelForm").addEventListener("click", () => resetSupportedModelForm("Form reset."));
@@ -41095,6 +46457,7 @@ function bindEvents() {
   qs("#loadLeadershipDrillRuns")?.addEventListener("click", () => void loadLeadershipDrillRuns());
   qs("#leadershipDrillRunForm")?.addEventListener("submit", (evt) => void createLeadershipDrillRun(evt));
   qs("#leadershipDrillRunFilters")?.addEventListener("submit", (evt) => void loadLeadershipDrillRuns(evt));
+  seedLeadershipDrillFormDefaults();
   qs("#costBudgetForm")?.addEventListener("submit", saveCostBudgetPolicy);
   qs('#costBudgetForm select[name="scope_type"]')?.addEventListener("change", () => {
     syncScopeIdPicker("#costBudgetForm", "scope_type", "scope_id", "costBudgetScopeIdList");
@@ -41469,6 +46832,180 @@ function bindEvents() {
   qs("#playgroundRunForm")?.elements?.selected_model?.addEventListener("change", () => {
     void refreshGatewayCredentialReadiness("playgroundCredentialStatus");
   });
+  qs("#playgroundProviderFilter")?.addEventListener("change", (evt) => {
+    applyPlaygroundProviderFilter(evt?.target?.value || "");
+  });
+  qs("#playgroundPreferLiveReady")?.addEventListener("change", (evt) => {
+    preferLiveReadyModels = Boolean(evt?.target?.checked);
+    refreshAllGatewayModelSelects();
+  });
+  qs("#gatewayOpsProviderFilter")?.addEventListener("change", (evt) => {
+    applyGatewayOpsProviderFilter(evt?.target?.value || "");
+  });
+  qs("#refreshGatewayInferenceReadiness")?.addEventListener("click", () => void loadInferenceReadinessPanel());
+  qs("#refreshGatewayBestPractices")?.addEventListener("click", () => void loadGatewayBestPracticesPosture());
+  qs("#refreshGatewayLeadershipIndex")?.addEventListener("click", () => void loadGatewayLeadershipIndex());
+  qs("#refreshGatewayAttributionAnalytics")?.addEventListener("click", () => void loadGatewayAttributionAnalytics());
+  qs("#refreshGatewayModelRankings")?.addEventListener("click", () => void loadGatewayModelRankings());
+  qs("#runGatewayLeadershipWarmup")?.addEventListener("click", () => void runGatewayLeadershipWarmup());
+  qs("#suggestLiveReadyFallbackChain")?.addEventListener("click", () => void suggestLiveReadyFallbackChain(false));
+  qs("#suggestRankedFallbackChain")?.addEventListener("click", () => void suggestLiveReadyFallbackChain(true));
+  qs("#compareGatewayAutoRouteStrategies")?.addEventListener("click", () => void compareGatewayAutoRouteStrategies());
+  qs("#recordGatewayLeadershipSnapshot")?.addEventListener("click", () => void recordGatewayLeadershipSnapshot());
+  qs("#loadGatewayLeadershipAlerts")?.addEventListener("click", () => void loadGatewayLeadershipAlerts());
+  qs("#exportGatewayLeadershipEvidence")?.addEventListener("click", () => void exportGatewayLeadershipEvidence());
+  qs("#loadGatewayLeadershipHistory")?.addEventListener("click", () => void loadGatewayLeadershipHistory());
+  qs("#loadGatewaySavingsEstimate")?.addEventListener("click", () => void loadGatewaySavingsEstimate());
+  qs("#loadGatewayCircuitBreakerRecs")?.addEventListener("click", () => void loadGatewayCircuitBreakerRecs());
+  qs("#applySdkPresetToChat")?.addEventListener("click", () => void applySdkPresetToChat());
+  qs("#downloadGatewayModelRankings")?.addEventListener("click", () => void downloadGatewayModelRankings());
+  qs("#downloadGatewayAttributionJson")?.addEventListener("click", () => void downloadGatewayAttributionJson());
+  qs("#runGatewayAutoRouteBatch")?.addEventListener("click", () => void runGatewayAutoRouteBatch());
+  qs("#runGatewayLiveJudge")?.addEventListener("click", () => void runGatewayLiveJudge());
+  qs("#importOpenRouterLiquidity")?.addEventListener("click", () => void importOpenRouterLiquidity());
+  qs("#loadBindingReadinessInventory")?.addEventListener("click", () => void loadBindingReadinessInventory());
+  qs("#loadAttributionTimeseries")?.addEventListener("click", () => void loadAttributionTimeseries());
+  qs("#createAutoRouteExperiment")?.addEventListener("click", () => void createAutoRouteExperiment());
+  qs("#runFallbackQualityGate")?.addEventListener("click", () => void runFallbackQualityGate());
+  qs("#loadProviderHealthScores")?.addEventListener("click", () => void loadProviderHealthScores());
+  qs("#runAutoRouteStreamFrames")?.addEventListener("click", () => void runAutoRouteStreamFrames());
+  qs("#runAutoRouteExplain")?.addEventListener("click", () => void runAutoRouteExplain());
+  qs("#loadModalityAdvisor")?.addEventListener("click", () => void loadModalityAdvisor());
+  qs("#loadPromptAutoRouteBindings")?.addEventListener("click", () => void loadPromptAutoRouteBindings());
+  qs("#loadTeamRankingLeaderboards")?.addEventListener("click", () => void loadTeamRankingLeaderboards());
+  qs("#loadEnvironmentDiffLeadership")?.addEventListener("click", () => void loadEnvironmentDiffLeadership());
+  qs("#loadCacheAutoRouteMetrics")?.addEventListener("click", () => void loadCacheAutoRouteMetrics());
+  qs("#loadMirrorAttributionTags")?.addEventListener("click", () => void loadMirrorAttributionTags());
+  qs("#loadQbrLeadershipEmbed")?.addEventListener("click", () => void loadQbrLeadershipEmbed());
+  qs("#loadComplianceLeadershipEvidence")?.addEventListener("click", () => void loadComplianceLeadershipEvidence());
+  qs("#dispatchLeadershipAlerts")?.addEventListener("click", () => void dispatchLeadershipAlerts());
+  qs("#downloadGrafanaDashboard")?.addEventListener("click", () => void downloadGrafanaDashboard());
+  qs("#loadDatadogTileNotes")?.addEventListener("click", () => void loadDatadogTileNotes());
+  qs("#loadSdkAutoRouteHelpers")?.addEventListener("click", () => void loadSdkAutoRouteHelpers());
+  qs("#loadModelDeprecationAdvisor")?.addEventListener("click", () => void loadModelDeprecationAdvisor());
+  qs("#loadShadowRankingValidation")?.addEventListener("click", () => void loadShadowRankingValidation());
+  qs("#runWhyThisModelCard")?.addEventListener("click", () => void runWhyThisModelCard());
+  qs("#loadCostSwitchCorrelation")?.addEventListener("click", () => void loadCostSwitchCorrelation());
+  qs("#runReplayStrategies")?.addEventListener("click", () => void runReplayStrategies());
+  qs("#runCsvClassifySample")?.addEventListener("click", () => void runCsvClassifySample());
+  qs("#runNightlyLeadershipSnapshot")?.addEventListener("click", () => void runNightlyLeadershipSnapshot());
+  qs("#purgeWarmupEventsDryRun")?.addEventListener("click", () => void purgeWarmupEventsDryRun());
+  qs("#loadLeadershipSnapshotDiff")?.addEventListener("click", () => void loadLeadershipSnapshotDiff());
+  qs("#downloadSignedEvidence")?.addEventListener("click", () => void downloadSignedEvidence());
+  qs("#createAuditorShareLink")?.addEventListener("click", () => void createAuditorShareLink());
+  qs("#runCiLeadershipFloor")?.addEventListener("click", () => void runCiLeadershipFloor());
+  qs("#runReleaseGateAttestation")?.addEventListener("click", () => void runReleaseGateAttestation());
+  qs("#runChaosProviderFailDrill")?.addEventListener("click", () => void runChaosProviderFailDrill());
+  qs("#downloadBoardOnePager")?.addEventListener("click", () => void downloadBoardOnePager());
+  qs("#refreshCompetitiveScorecard")?.addEventListener("click", () => void refreshCompetitiveScorecard());
+  qs("#loadLeadershipTrafficLight")?.addEventListener("click", () => void loadLeadershipTrafficLight());
+  qs("#loadLeadershipHealthz")?.addEventListener("click", () => void loadLeadershipHealthz());
+  qs("#deliverLeadershipAlertsDryRun")?.addEventListener("click", () => void deliverLeadershipAlertsDryRun());
+  qs("#loadSlaBurnRate")?.addEventListener("click", () => void loadSlaBurnRate());
+  qs("#loadCredentialWarnings")?.addEventListener("click", () => void loadCredentialWarnings());
+  qs("#diffEvidencePacks")?.addEventListener("click", () => void diffEvidencePacks());
+  qs("#buildScorecardDigest")?.addEventListener("click", () => void buildScorecardDigest());
+  qs("#loadOpsActivityTimeline")?.addEventListener("click", () => void loadOpsActivityTimeline());
+  qs("#runSimulationJudgeTranscript")?.addEventListener("click", () => void runSimulationJudgeTranscript());
+  qs("#cleanupChaosEventsDryRun")?.addEventListener("click", () => void cleanupChaosEventsDryRun());
+  qs("#downloadLeadershipOpenapi")?.addEventListener("click", () => void downloadLeadershipOpenapi());
+  qs("#loadLeadershipDashboardSummary")?.addEventListener("click", () => void loadLeadershipDashboardSummary());
+  qs("#loadLeadershipSparkline")?.addEventListener("click", () => void loadLeadershipSparkline());
+  qs("#downloadOperatorRunbook")?.addEventListener("click", () => void downloadOperatorRunbook());
+  qs("#loadWeeklyOpsReport")?.addEventListener("click", () => void loadWeeklyOpsReport());
+  qs("#loadLatencyHistogram")?.addEventListener("click", () => void loadLatencyHistogram());
+  qs("#verifyFailoverDrill")?.addEventListener("click", () => void verifyFailoverDrill());
+  qs("#loadBudgetAutorouteCorrelation")?.addEventListener("click", () => void loadBudgetAutorouteCorrelation());
+  qs("#loadEnforcementFlags")?.addEventListener("click", () => void loadEnforcementFlags());
+  qs("#applyRankedFallbackToRoute")?.addEventListener("click", () => void applyRankedFallbackToRoute());
+  qs("#runCanaryPromoteGate")?.addEventListener("click", () => void runCanaryPromoteGate());
+  qs("#annotateCircuitBreakerNotes")?.addEventListener("click", () => void annotateCircuitBreakerNotes());
+  qs("#invalidateDecisionCache")?.addEventListener("click", () => void invalidateDecisionCache());
+  qs("#loadDecisionCacheStats")?.addEventListener("click", () => void loadDecisionCacheStats());
+  qs("#loadModelRoutePolicy")?.addEventListener("click", () => void loadModelRoutePolicy());
+  qs("#saveModelRoutePolicyDenySample")?.addEventListener("click", () => void saveModelRoutePolicyDenySample());
+  qs("#loadAlertRetries")?.addEventListener("click", () => void loadAlertRetries());
+  qs("#processAlertRetriesDryRun")?.addEventListener("click", () => void processAlertRetriesDryRun());
+  qs("#archiveLeadershipHistory")?.addEventListener("click", () => void archiveLeadershipHistoryAction());
+  qs("#loadTrafficLightFloors")?.addEventListener("click", () => void loadTrafficLightFloors());
+  qs("#loadReadinessLeadershipDelta")?.addEventListener("click", () => void loadReadinessLeadershipDelta());
+  qs("#loadBudgetCorrelationWarning")?.addEventListener("click", () => void loadBudgetCorrelationWarning());
+  qs("#loadLeadershipPostureDigest")?.addEventListener("click", () => void loadLeadershipPostureDigest());
+  qs("#downloadOperatorRunbookMd")?.addEventListener("click", () => void downloadOperatorRunbookMd());
+  qs("#loadRouteCircuitNotes")?.addEventListener("click", () => void loadRouteCircuitNotes());
+  qs("#runCanaryAnnotateCombo")?.addEventListener("click", () => void runCanaryAnnotateCombo());
+  qs("#runAutoRouteExplain")?.addEventListener("click", () => void runAutoRouteExplain());
+  qs("#runShadowCompareStrategies")?.addEventListener("click", () => void runShadowCompareStrategies());
+  qs("#loadScoreTrend")?.addEventListener("click", () => void loadScoreTrend());
+  qs("#resetModelRoutePolicy")?.addEventListener("click", () => void resetModelRoutePolicyAction());
+  qs("#clearModelDenylist")?.addEventListener("click", () => void clearModelDenylistAction());
+  qs("#exportPostureDigest")?.addEventListener("click", () => void exportPostureDigestAction());
+  qs("#loadMultiWindowSummary")?.addEventListener("click", () => void loadMultiWindowSummary());
+  qs("#loadRouteHealthScore")?.addEventListener("click", () => void loadRouteHealthScore());
+  qs("#loadOperatorChecklist")?.addEventListener("click", () => void loadOperatorChecklist());
+  qs("#markChecklistTrafficLight")?.addEventListener("click", () => void markChecklistTrafficLight());
+  qs("#loadLatencyEstimate")?.addEventListener("click", () => void loadLatencyEstimate());
+  qs("#loadPackRegistry")?.addEventListener("click", () => void loadPackRegistry());
+  qs("#runOnDemandSnapshot")?.addEventListener("click", () => void runOnDemandSnapshot());
+  qs("#loadEnforcementFlagsDiff")?.addEventListener("click", () => void loadEnforcementFlagsDiff());
+  qs("#loadWarmupEligibility")?.addEventListener("click", () => void loadWarmupEligibility());
+  qs("#loadStrategyPolicies")?.addEventListener("click", () => void loadStrategyPolicies());
+  qs("#loadAutoRouteAudit")?.addEventListener("click", () => void loadAutoRouteAudit());
+  qs("#openLeadershipIncident")?.addEventListener("click", () => void openLeadershipIncidentAction());
+  qs("#loadLeadershipIncidents")?.addEventListener("click", () => void loadLeadershipIncidents());
+  qs("#closeLatestIncident")?.addEventListener("click", () => void closeLatestIncident());
+  qs("#runLeadershipFloorGate")?.addEventListener("click", () => void runLeadershipFloorGate());
+  qs("#downloadPackRegistryMd")?.addEventListener("click", () => void downloadPackRegistryMd());
+  qs("#loadAutoRouteCostEstimate")?.addEventListener("click", () => void loadAutoRouteCostEstimate());
+  qs("#muteScoreTrend")?.addEventListener("click", () => void muteScoreTrendAction());
+  qs("#loadScoreTrendMuted")?.addEventListener("click", () => void loadScoreTrendMuted());
+  qs("#rollbackEnforcementFlags")?.addEventListener("click", () => void rollbackEnforcementFlagsAction());
+  qs("#loadRouteHealthBatch")?.addEventListener("click", () => void loadRouteHealthBatch());
+  qs("#loadDayRollup")?.addEventListener("click", () => void loadDayRollup());
+  qs("#loadChecklistGate")?.addEventListener("click", () => void loadChecklistGate());
+  qs("#loadDecisionCacheInventory")?.addEventListener("click", () => void loadDecisionCacheInventory());
+  qs("#runNightlyTrendReport")?.addEventListener("click", () => void runNightlyTrendReport());
+  qs("#runCompositeGoNoGo")?.addEventListener("click", () => void runCompositeGoNoGo());
+  qs("#unmuteScoreTrend")?.addEventListener("click", () => void unmuteScoreTrendAction());
+  qs("#loadAutoRouteAuditSummary")?.addEventListener("click", () => void loadAutoRouteAuditSummary());
+  qs("#purgeAutoRouteAudit")?.addEventListener("click", () => void purgeAutoRouteAuditAction());
+  qs("#exportAutoRouteAudit")?.addEventListener("click", () => void exportAutoRouteAuditAction());
+  qs("#escalateLatestIncident")?.addEventListener("click", () => void escalateLatestIncidentAction());
+  qs("#bulkCloseIncidents")?.addEventListener("click", () => void bulkCloseIncidentsAction());
+  qs("#runFloorGateAutoIncident")?.addEventListener("click", () => void runFloorGateAutoIncident());
+  qs("#runRedLightProbe")?.addEventListener("click", () => void runRedLightProbe());
+  qs("#loadPreferredModel")?.addEventListener("click", () => void loadPreferredModel());
+  qs("#setPreferredModelSample")?.addEventListener("click", () => void setPreferredModelSample());
+  qs("#clearPreferredModel")?.addEventListener("click", () => void clearPreferredModelAction());
+  qs("#downloadDayRollupMd")?.addEventListener("click", () => void downloadDayRollupMd());
+  qs("#runDigestWebhookDryRun")?.addEventListener("click", () => void runDigestWebhookDryRun());
+  qs("#runBenchmarkLeadershipFloorGate")?.addEventListener("click", () => void runBenchmarkLeadershipFloorGate());
+  qs("#runBenchmarkCompositeGate")?.addEventListener("click", () => void runBenchmarkCompositeGate());
+  qs("#runBenchmarkCompositeWithEvidence")?.addEventListener("click", () => void runBenchmarkCompositeWithEvidence());
+  qs("#loadExecutiveBrief")?.addEventListener("click", () => void loadExecutiveBrief());
+  qs("#loadScorecardDelta")?.addEventListener("click", () => void loadScorecardDelta());
+  qs("#loadShadowTraffic")?.addEventListener("click", () => void loadShadowTraffic());
+  qs("#setShadowTrafficSample")?.addEventListener("click", () => void setShadowTrafficSample());
+  qs("#loadCanaryAutoRollback")?.addEventListener("click", () => void loadCanaryAutoRollback());
+  qs("#enableCanaryAutoRollback")?.addEventListener("click", () => void enableCanaryAutoRollback());
+  qs("#evaluateCanaryAutoRollback")?.addEventListener("click", () => void evaluateCanaryAutoRollback());
+  qs("#loadAttributionAnomalies")?.addEventListener("click", () => void loadAttributionAnomalies());
+  qs("#loadWarmupBudget")?.addEventListener("click", () => void loadWarmupBudget());
+  qs("#runLatencyBudgetGuard")?.addEventListener("click", () => void runLatencyBudgetGuard());
+  qs("#loadParetoFrontier")?.addEventListener("click", () => void loadParetoFrontier());
+  qs("#runFailoverSimulation")?.addEventListener("click", () => void runFailoverSimulation());
+  qs("#loadModelCardFreshness")?.addEventListener("click", () => void loadModelCardFreshness());
+  qs("#refreshModelCardFreshness")?.addEventListener("click", () => void refreshModelCardFreshnessAction());
+  qs("#runCompositeWithEvidence")?.addEventListener("click", () => void runCompositeWithEvidence());
+  qs("#downloadIncidentTimelineMd")?.addEventListener("click", () => void downloadIncidentTimelineMd());
+  qs("#exportOpsActivity")?.addEventListener("click", () => void exportOpsActivityAction());
+  qs("#runCrossEnvSyncDryRun")?.addEventListener("click", () => void runCrossEnvSyncDryRun());
+  qs("#runPlaygroundLeadershipDiagnose")?.addEventListener("click", () => void runPlaygroundLeadershipDiagnose());
+  qs("#gatewayExcludeWarmup")?.addEventListener("change", () => {
+    void loadGatewayLeadershipIndex();
+    void loadGatewayAttributionAnalytics();
+  });
+  qs("#gatewayAutoRouteForm")?.addEventListener("submit", (evt) => void runGatewayAutoRoutePreview(evt));
   qs("#runPlaygroundPrompt").addEventListener("click", runPlaygroundPrompt);
   qs("#judgePlaygroundPrompt").addEventListener("click", judgePlaygroundPrompt);
   qs("#judgePlaygroundPromptSecondary")?.addEventListener("click", judgePlaygroundPrompt);
@@ -41581,6 +47118,9 @@ function bindEvents() {
   initRoutePriorityChainBuilders();
   qs("#routeProviderHealthForm").addEventListener("submit", saveRouteProviderHealth);
   qs("#loadRouteProviderHealth").addEventListener("click", loadRouteProviderHealth);
+  qs("#gatewayRuntimeRiskConfigForm")?.addEventListener("submit", saveGatewayRuntimeRiskConfig);
+  qs("#loadGatewayRuntimeRiskConfig")?.addEventListener("click", loadGatewayRuntimeRiskConfig);
+  qs("#gatewayRuntimeRiskEvaluateForm")?.addEventListener("submit", evaluateGatewayRuntimeRisk);
   qs("#routePreCallFiltersForm").addEventListener("submit", saveRoutePreCallFilters);
   qs("#loadRoutePreCallFilters").addEventListener("click", loadRoutePreCallFilters);
   qs("#routeOutputGuardrailsForm").addEventListener("submit", saveRouteOutputGuardrails);
@@ -41593,6 +47133,7 @@ function bindEvents() {
   qs("#loadRouteCanaryRollout").addEventListener("click", loadRouteCanaryRollout);
   qs("#stopRouteCanaryRollout").addEventListener("click", (evt) => runRouteCanaryRolloutAction("stop", evt));
   qs("#promoteRouteCanaryRollout").addEventListener("click", (evt) => runRouteCanaryRolloutAction("promote", evt));
+  qs("#explainCanaryAutoRoute")?.addEventListener("click", (evt) => void explainCanaryAutoRoute(evt));
   qs("#routeTrafficMirroringAnalyticsForm").addEventListener("submit", loadRouteTrafficMirroringAnalytics);
   qs("#loadRouteTrafficMirroringAnalytics").addEventListener("click", loadRouteTrafficMirroringAnalytics);
   qs("#loadRouteTrafficMirroringReport").addEventListener("click", loadRouteTrafficMirroringReport);
@@ -41602,6 +47143,40 @@ function bindEvents() {
   qs("#gatewayNhiFiltersForm").addEventListener("submit", loadGatewayNhiInventory);
   qs("#loadGatewayNhiInventory").addEventListener("click", loadGatewayNhiInventory);
   qs("#loadGatewayNhiHygiene").addEventListener("click", loadGatewayNhiHygiene);
+  qs("#exportGatewayNhiIga")?.addEventListener("click", (evt) => void exportGatewayNhiIga(evt));
+  qs("#loadGatewayNhiIgaExportConfig")?.addEventListener("click", (evt) => void loadGatewayNhiIgaExportConfig(evt));
+  qs("#saveGatewayNhiIgaExportConfig")?.addEventListener("click", (evt) => void saveGatewayNhiIgaExportConfig(evt));
+  qs("#testGatewayNhiIgaExport")?.addEventListener("click", (evt) => void testGatewayNhiIgaExport(evt));
+  qs("#loadGatewayNhiIgaDenyConfig")?.addEventListener("click", (evt) => void loadGatewayNhiIgaDenyConfig(evt));
+  qs("#saveGatewayNhiIgaDenyConfig")?.addEventListener("click", (evt) => void saveGatewayNhiIgaDenyConfig(evt));
+  qs("#ingestGatewayNhiIgaDenyManual")?.addEventListener("click", (evt) => void ingestGatewayNhiIgaDenyManual(evt));
+  qs("#probeGatewayNhiIgaDenyHmac")?.addEventListener("click", (evt) => void probeGatewayNhiIgaDenyHmac(evt));
+  qs("#revokeGatewayNhiIgaDeny")?.addEventListener("click", (evt) => void revokeGatewayNhiIgaDeny(evt));
+  qs("#evaluateGatewayNhiIgaDeny")?.addEventListener("click", (evt) => void evaluateGatewayNhiIgaDeny(evt));
+  qs("#loadGatewayNhiInsights")?.addEventListener("click", (evt) => void loadGatewayNhiInsights(evt));
+  qs("#loadGatewayNhiAccessMap")?.addEventListener("click", (evt) => void loadGatewayNhiAccessMap(evt));
+  qs("#loadGatewayNhiTimeline")?.addEventListener("click", (evt) => void loadGatewayNhiTimeline(evt));
+  qs("#saveGatewayNhiOwner")?.addEventListener("click", (evt) => void saveGatewayNhiOwner(evt));
+  qs("#runGatewayNhiLifecycle")?.addEventListener("click", (evt) => void runGatewayNhiLifecycle(evt));
+  qs("#saveGatewayNhiIntents")?.addEventListener("click", (evt) => void saveGatewayNhiIntents(evt));
+  qs("#loadGatewayNhiGovernance")?.addEventListener("click", (evt) => void loadGatewayNhiGovernance(evt));
+  qs("#saveGatewayNhiGovernance")?.addEventListener("click", (evt) => void saveGatewayNhiGovernance(evt));
+  qs("#runGatewayNhiIntentCheck")?.addEventListener("click", (evt) => void runGatewayNhiIntentCheck(evt));
+  qs("#loadGatewayNhiOrphans")?.addEventListener("click", (evt) => void loadGatewayNhiOrphans(evt));
+  qs("#assignGatewayNhiOrphans")?.addEventListener("click", (evt) => void assignGatewayNhiOrphans(evt));
+  qs("#saveGatewayNhiCorrelation")?.addEventListener("click", (evt) => void saveGatewayNhiCorrelation(evt));
+  qs("#testGatewayNhiCorrelationIngest")?.addEventListener("click", (evt) => void testGatewayNhiCorrelationIngest(evt));
+  qs("#loadGatewayNhiIgaDenyEvents")?.addEventListener("click", (evt) => void loadGatewayNhiIgaDenyEvents(evt));
+  qs("#exportGatewayNhiEvidence")?.addEventListener("click", (evt) => void exportGatewayNhiEvidence(evt));
+  qs("#loadGatewayNhiAgents")?.addEventListener("click", (evt) => void loadGatewayNhiAgents(evt));
+  qs("#loadGatewayNhiGateEvents")?.addEventListener("click", (evt) => void loadGatewayNhiGateEvents(evt));
+  qs("#loadGatewayNhiAccessConfig")?.addEventListener("click", (evt) => void loadGatewayNhiAccessConfig(evt));
+  qs("#saveGatewayNhiAccessConfig")?.addEventListener("click", (evt) => void saveGatewayNhiAccessConfig(evt));
+  qs("#runGatewayNhiAccessAuthorize")?.addEventListener("click", (evt) => void runGatewayNhiAccessAuthorize(evt));
+  qs("#runGatewayNhiShadowAction")?.addEventListener("click", (evt) => void runGatewayNhiShadowAction(evt));
+  qsa("[data-nhi-panel-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => switchGatewayNhiPanel(btn.dataset.nhiPanelTab));
+  });
   qs("#createGatewayAccessReviewCampaign").addEventListener("click", createGatewayAccessReviewCampaign);
   qs("#loadGatewayAccessReviewCampaign").addEventListener("click", loadGatewayAccessReviewCampaign);
   qs("#gatewayJitRequestForm").addEventListener("submit", createGatewayJitRequest);
@@ -41610,9 +47185,12 @@ function bindEvents() {
   qs("#jumpGatewayJitMintedKey")?.addEventListener("click", jumpGatewayJitMintedKey);
   qs("#loadGatewayJitQueue")?.addEventListener("click", () => void loadGatewayJitQueue());
   qs("#runGatewayJitExpireTick")?.addEventListener("click", () => void runGatewayJitExpireTick());
+  qs("#runGatewayJitNotifyTick")?.addEventListener("click", () => void runGatewayJitNotifyTick());
+  qs("#loadGatewayJitPendingNotifySummary")?.addEventListener("click", () => void loadGatewayJitPendingNotifySummary());
   qs("#gatewayJitQueueFilters")?.addEventListener("change", () => void loadGatewayJitQueue());
   qs("#loadGatewayJitDecisionNotify")?.addEventListener("click", () => void loadGatewayJitDecisionNotify());
   qs("#saveGatewayJitDecisionNotify")?.addEventListener("click", () => void saveGatewayJitDecisionNotify());
+  qs("#testGatewayJitDecisionNotify")?.addEventListener("click", () => void testGatewayJitDecisionNotify());
   qs("#refreshGatewayJitNotifyPickers")?.addEventListener("click", () => void refreshGatewayJitNotifyPickers());
   qs("#gatewayLeastPrivilegeFiltersForm").addEventListener("submit", loadGatewayLeastPrivilegeRecommendations);
   qs("#loadGatewayLeastPrivilegeRecommendations").addEventListener("click", loadGatewayLeastPrivilegeRecommendations);
@@ -41816,6 +47394,13 @@ function bindEvents() {
   qs("#routeDraftFilters").addEventListener("submit", loadRouteDrafts);
   qs("#routeDraftActionForm").addEventListener("submit", runRouteDraftAction);
   qs("#loadRouteDrafts").addEventListener("click", loadRouteDrafts);
+  qs("#recommendRouteDraftAutoRoute")?.addEventListener("click", (evt) => void recommendRouteDraftAutoRoute(evt));
+  qs("#loadGatewayVkAutoRoutePolicies")?.addEventListener("click", (evt) => void loadGatewayVkAutoRoutePolicies(evt));
+  qs("#saveGatewayVkAutoRoutePolicy")?.addEventListener("click", (evt) => void saveGatewayVkAutoRoutePolicy(evt));
+  qs("#gatewayVkAutoRoutePolicyForm")?.addEventListener("submit", (evt) => {
+    evt.preventDefault();
+    void saveGatewayVkAutoRoutePolicy(evt);
+  });
   qs("#simulateRouteFallback").addEventListener("click", simulateRouteFallback);
   qs("#executeRouteFallback").addEventListener("click", executeRouteFallback);
   qs("#loadDirectoryUsers").addEventListener("click", loadDirectoryUsers);
@@ -50774,9 +56359,23 @@ async function init() {
   localStorage.setItem("environmentProfile", state.environmentProfile);
   enforceKnownActorRole();
   localStorage.setItem("actorRole", state.actorRole);
-  if (!state.accessToken) {
-    redirectToLoginPage();
+  state.sessionActive = localStorage.getItem("sessionActive") === "1";
+  try {
+    state.accessToken = String(sessionStorage.getItem("sessionBearer") || state.accessToken || "").trim();
+  } catch {
+    /* keep */
+  }
+  if (!hasActiveSession()) {
+    redirectToLoginPage("missing_session");
     return;
+  }
+  // Prevent login Enter key from immediately activating Sign Out on this page.
+  state.signOutArmedAt = Date.now() + 1500;
+  // CSRF refresh is best-effort at boot; do not bounce a valid cookie session on transient failures.
+  try {
+    await ensureCsrfToken();
+  } catch (err) {
+    console.warn("CSRF bootstrap skipped:", err);
   }
   applyTheme(state.theme);
   applyDensity(state.density);

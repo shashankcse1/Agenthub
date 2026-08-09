@@ -2,9 +2,11 @@
   <article class="card runtime-config-hero discovery-hero">
     <div class="card-head discovery-console-head">
       <div>
-        <p class="eyebrow">Agent Inventory · Source Sync · Risk Triage</p>
-        <h3>Discovery Console</h3>
-        <p class="card-lead">Sync sources, map agent-scoped cloud infra, merge duplicates, and promote high-confidence agents into governed inventory — with posture metrics, topology, and unified triage.</p>
+        <p class="sig-kicker">Inventory &amp; triage</p>
+        <h3>Inventory & triage</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Inventory live</span></p>
+        <p class="card-lead">Sync sources, merge duplicates, and promote into inventory.</p>
+        <p class="help-copy" data-help-label="About discovery">Sync sources, merge duplicates, and promote high-confidence agents into governed inventory — with posture metrics, topology, and unified triage.</p>
       </div>
       <div class="inline-actions discovery-console-toolbar">
         <label class="discovery-workspace-label">
@@ -33,6 +35,24 @@
       </div>
       <p class="view-page-search-status mono" aria-live="polite"></p>
     </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Sources</span>
+        <strong>Synced</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Duplicates</span>
+        <strong>Triaged</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Posture</span>
+        <strong>Scored</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Promote</span>
+        <strong>Governed</strong>
+      </div>
+    </section>
     <div class="runtime-console-tabs" role="tablist" aria-label="Discovery console sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="agents">Agents</button>
@@ -288,7 +308,11 @@
         <label>Tenant ID<input name="tenant_id" required placeholder="tenant-a" /></label>
         <label>Source<select name="source_id" id="discoveryConnectionSourceSelect" required></select></label>
         <label>Enabled<select name="enabled"><option value="true" selected>enabled</option><option value="false">disabled</option></select></label>
-        <label>Credential Binding ID<input name="credential_binding_id" placeholder="optional binding_id" /></label>
+        <label>Credential Binding
+          <select name="credential_binding_id" id="discoveryConnectionCredentialBindingSelect" data-credential-binding-select>
+            <option value="">None — optional binding</option>
+          </select>
+        </label>
         <label>Secret Provider ID<input name="secret_provider_id" placeholder="optional secret_provider_id" /></label>
         <label>Secret Ref<input name="secret_ref" placeholder="providers/openai/api-key" /></label>
         <label>Base URL (override)<input name="base_url" placeholder="https://api.openai.com/v1" /></label>

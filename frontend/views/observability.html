@@ -2,11 +2,11 @@
   <article class="card runtime-config-hero observability-hero">
     <div class="card-head observability-hero-head">
       <div>
-        <p class="eyebrow">Traces · Logs · Schema · Audit Lineage</p>
-        <h3>Observability Console</h3>
-        <p class="card-lead observability-intro">
-          Queryless drilldown — inspect traces, explore audit logs, and validate schema health with one-click pivots from compliance and gateway workflows.
-        </p>
+        <p class="sig-kicker">Signals &amp; lineage</p>
+        <h3>Traces &amp; contracts</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Signals ledgered</span></p>
+        <p class="card-lead">Traces, audit logs, schema health, and SIEM pivots.</p>
+        <p class="help-copy" data-help-label="About traces & contracts">Queryless drilldown — inspect traces, explore audit logs, and validate schema health with one-click pivots from compliance and gateway workflows.</p>
       </div>
       <div class="inline-actions observability-console-toolbar">
         <label class="observability-workspace-label">
@@ -36,6 +36,24 @@
       </div>
       <p class="view-page-search-status mono" aria-live="polite"></p>
     </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Traces</span>
+        <strong>Queryable</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Logs</span>
+        <strong>Correlated</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Schema</span>
+        <strong>Contracted</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Health</span>
+        <strong>Monitored</strong>
+      </div>
+    </section>
     <div class="runtime-console-tabs" role="tablist" aria-label="Observability console sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="traces">Traces</button>
@@ -74,22 +92,22 @@
 
     <div class="signal-strip observability-red-strip" aria-label="Telemetry signals">
       <article class="signal-tile signal-tile-clickable" data-observability-jump="logs" tabindex="0" role="button" aria-label="View logs for event volume">
-        <p class="signal-label">Event Volume</p>
+        <p class="signal-label">Ledger volume</p>
         <p class="signal-value" id="observabilityOverviewEvents">--</p>
         <p class="signal-hint">Events in selected window</p>
       </article>
       <article class="signal-tile signal-tile-warn signal-tile-clickable" data-observability-preset="deny" tabindex="0" role="button" aria-label="Filter deny and warn outcomes">
-        <p class="signal-label">Deny / Warn Rate</p>
+        <p class="signal-label">Deny · warn rate</p>
         <p class="signal-value" id="observabilityOverviewErrors">--</p>
         <p class="signal-hint" id="observabilityOverviewErrorDetail">Non-allow outcomes</p>
       </article>
       <article class="signal-tile signal-tile-clickable" data-observability-jump="traces" tabindex="0" role="button" aria-label="Open trace lookup">
-        <p class="signal-label">Unique Traces</p>
+        <p class="signal-label">Span ledger</p>
         <p class="signal-value" id="observabilityOverviewTraces">--</p>
         <p class="signal-hint">Distinct trace IDs</p>
       </article>
       <article class="signal-tile signal-tile-clickable" id="observabilitySchemaSignalTile" data-observability-jump="schema" tabindex="0" role="button" aria-label="Check schema health">
-        <p class="signal-label">Schema Conformance</p>
+        <p class="signal-label">Contract health</p>
         <p class="signal-value" id="observabilitySchemaStatus">Ready</p>
         <p class="signal-hint">Audit log field coverage</p>
       </article>
@@ -99,12 +117,12 @@
 
     <div class="card-grid compact observability-overview-metrics">
       <article class="card metric observability-metric-card">
-        <h4>Trace Lookup</h4>
+        <h4>Span ledger lookup</h4>
         <p class="metric-value" id="observabilityTraceStatus">Ready</p>
         <p class="metric-sub">Last trace investigation</p>
       </article>
       <article class="card metric observability-metric-card">
-        <h4>Log Explorer</h4>
+        <h4>Event stream</h4>
         <p class="metric-value" id="observabilityLogsStatus">Ready</p>
         <p class="metric-sub">Rows loaded in explorer</p>
       </article>
@@ -168,9 +186,9 @@
         <span class="field-help">One-click pivots to traces, logs, schema, and preset filters</span>
       </div>
       <div class="chip-row observability-signal-links">
-        <button type="button" class="chip" data-console-tab-jump="traces">Open Trace Lookup</button>
-        <button type="button" class="chip" data-console-tab-jump="logs">Open Log Explorer</button>
-        <button type="button" class="chip" data-console-tab-jump="schema">Check Schema Health</button>
+        <button type="button" class="chip" data-console-tab-jump="traces">Open span ledger</button>
+        <button type="button" class="chip" data-console-tab-jump="logs">Open event stream</button>
+        <button type="button" class="chip" data-console-tab-jump="schema">Check contract health</button>
         <button type="button" class="chip" data-observability-preset="deny">Filter Deny Outcomes</button>
         <button type="button" class="chip" data-observability-preset="gateway">Gateway Actions</button>
       </div>

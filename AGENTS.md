@@ -2,6 +2,43 @@
 
 This repository uses an agent-first delivery model. Use this file as the workspace-wide entry point for agent work. The backend-specific role and security contract lives in [backend/AGENTS.md](backend/AGENTS.md) and remains mandatory.
 
+When implementing work orders from **gateway-enhancement-agent** (autonomous cycles or manual SDLC), read and follow **[.cursor/skills/gateway-competitor-sdlc/SKILL.md](.cursor/skills/gateway-competitor-sdlc/SKILL.md)**.
+
+The orchestrator repo is a **sibling checkout** (not embedded here):
+
+- Agent overview: [`../gateway-enhancement-agent/README.md`](../gateway-enhancement-agent/README.md)
+- Agent operator guide: [`../gateway-enhancement-agent/docs/USAGE.md`](../gateway-enhancement-agent/docs/USAGE.md)
+- Agent Cursor skill: [`../gateway-enhancement-agent/.cursor/skills/gateway-competitor-sdlc/SKILL.md`](../gateway-enhancement-agent/.cursor/skills/gateway-competitor-sdlc/SKILL.md)
+
+Work orders land in `../gateway-enhancement-agent/artifacts/cycle-XXXX/agent_work_order.md` (or Application Support when the agent runs under LaunchAgent).
+
+## Enhancement agent relationship
+
+| This repo (TARGET_REPO) | gateway-enhancement-agent |
+|-------------------------|---------------------------|
+| Routers, tests, frontend, governance docs | Gap matrix, cycles, Ollama implement, validate subprocess |
+| You implement `agent_work_order.md` here | It reads inventory and emits artifacts; optional autonomous git merge |
+
+## Gap types (implemented in agent)
+
+| ID prefix | Meaning | Your delivery focus |
+|-----------|---------|---------------------|
+| `inv-*` | API inventory Partial/Gap | Backend and/or UI + governance per coverage column |
+| `cmp-*` | Competitor capability gap | Governance-only if no route; else same as `inv-*` Gap |
+| `opt-*` | Optimization theme | **Not scheduled by default** in agent config |
+| `sec-*` | Security audit gap | Abuse-case tests + risk register updates; review never skipped |
+
+Agent discovers `sec-*` via `security_gap_discovery.py` and optional `security_auditor` LLM pass. Also follow [backend/AGENTS.md](backend/AGENTS.md) role lenses and agent **security guardrails + review subagents** at implement time.
+
+After agent or manual changes, validate from the agent checkout:
+
+```bash
+cd "../gateway-enhancement-agent"
+TARGET_REPO="/Users/sk/Desktop/untitled folder/new design" gateway-agent validate
+```
+
+**Governance-only** diffs (all files under `backend/docs/governance/`) skip `gateway_pytest` and `control_coverage` in agent validation; frontend gates skip when no `frontend/` files changed.
+
 Before beginning any task, confirm that [backend/AGENTS.md](backend/AGENTS.md) and the governance documents listed under Primary Sources of Truth are present in your context. If any are missing, halt and notify the user. Do not proceed on the assumption that their contents are known.
 
 ## Primary Sources of Truth
@@ -9,6 +46,9 @@ Before beginning any task, confirm that [backend/AGENTS.md](backend/AGENTS.md) a
 - [backend/docs/governance/documentation-source-of-truth.md](backend/docs/governance/documentation-source-of-truth.md)
 - [backend/docs/governance/api-inventory-and-ui-map.md](backend/docs/governance/api-inventory-and-ui-map.md)
 - [backend/docs/governance/ui-api-design-coverage-map.md](backend/docs/governance/ui-api-design-coverage-map.md)
+- [backend/docs/governance/product-completion-status.md](backend/docs/governance/product-completion-status.md) (designed-lane completion + non-goals)
+- [architecture-document.md](architecture-document.md) §0 (architecture delivery sync)
+- [backend/docs/governance/enterprise-ai-identity-competitive-positioning.md](backend/docs/governance/enterprise-ai-identity-competitive-positioning.md) (IGA vs inference plane; no competitor UI branding)
 - [backend/AGENTS.md](backend/AGENTS.md)
 
 ## Current UI Priorities

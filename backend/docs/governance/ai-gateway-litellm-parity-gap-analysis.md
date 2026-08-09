@@ -8,11 +8,12 @@ Status: Current-state parity depth closed for the tracked backlog slices
 This document provides a competitive parity view focused on AI-gateway and AI-ops capabilities.
 It is a comparative analysis artifact, not the active backlog tracker.
 
-Active planning and closure tracking live in:
+Active sustainment tracking (parity backlog Closed):
 
-1. backend/docs/governance/litellm-parity-roadmap.md
-2. backend/docs/governance/api-inventory-and-ui-map.md
-3. backend/docs/governance/ui-api-design-coverage-map.md
+1. `backend/docs/governance/litellm-parity-roadmap.md` (closure + sustainment)
+2. `backend/docs/governance/api-inventory-and-ui-map.md`
+3. `backend/docs/governance/ui-api-design-coverage-map.md`
+4. `backend/docs/governance/product-completion-status.md` (designed-lane verdict)
 
 ## Current Outcome
 

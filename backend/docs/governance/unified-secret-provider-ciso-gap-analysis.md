@@ -103,7 +103,7 @@ flowchart TB
 | GAP-USP-R02 | Lease renew is platform metadata only (not Vault lease API) | Low | Health/lease inventory + operator docs | Cloud Engineering | 2026-08-01 |
 | GAP-USP-R03 | Legacy `/gateway/cursor-token` still callable | Low | Deprecation headers + migration to v3 on write | IAM Governance | Remove after 2026-09-01 |
 | GAP-USP-R04 | No automated encryption-key rotation for `SECRET_ENCRYPTION_KEY` | Medium | Key management runbook (day-0 hardening doc) | PAM Operations | 2026-07-30 |
-| GAP-USP-R05 | SIEM alert rules not yet wired for `secret_provider.value.*` volume spikes | Low | Audit export + manual review | SecOps | 2026-07-15 |
+| GAP-USP-R05 | SIEM default rule + audit dispatch wired for `secret_provider.value.*`; volume-threshold correlation remains SIEM-side | Low | Default rule `siem-secret-provider-value-mutations` + `test_siem_alert_rules` | SecOps | 2026-08-02 |
 
 ## API and UI Coverage Matrix
 

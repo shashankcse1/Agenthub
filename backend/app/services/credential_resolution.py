@@ -26,6 +26,17 @@ _RUNTIME_VENDOR_PREFIXES = {
     "groq": "GROQ",
     "azure-openai": "AZURE_OPENAI",
     "azure_openai": "AZURE_OPENAI",
+    "azure": "AZURE_OPENAI",
+    "google": "GOOGLE",
+    "vertex": "VERTEX",
+    "xai": "XAI",
+    "deepseek": "DEEPSEEK",
+    "together": "TOGETHER",
+    "fireworks": "FIREWORKS",
+    "perplexity": "PERPLEXITY",
+    "cursor": "CURSOR",
+    "aws": "AWS_BEDROCK",
+    "bedrock": "AWS_BEDROCK",
 }
 
 
@@ -241,22 +252,24 @@ def load_active_binding_by_id(db: Session, binding_id: str) -> ProviderCredentia
     return row
 
 
-def find_agent_binding_by_scope(
+def find_binding_by_scope(
     db: Session,
     *,
+    consumer_type: str,
     consumer_key: str,
     provider_type: str,
     environment: str,
 ) -> Optional[ProviderCredentialBinding]:
+    normalized_type = str(consumer_type or "").strip().lower()
     normalized_key = str(consumer_key or "").strip()
     normalized_provider = str(provider_type or "").strip().lower()
     normalized_environment = str(environment or "dev").strip().lower() or "dev"
-    if not normalized_key or not normalized_provider:
+    if not normalized_type or not normalized_key or not normalized_provider:
         return None
     return (
         db.query(ProviderCredentialBinding)
         .filter_by(
-            consumer_type="agent",
+            consumer_type=normalized_type,
             consumer_key=normalized_key,
             provider_type=normalized_provider,
             environment=normalized_environment,
@@ -264,6 +277,27 @@ def find_agent_binding_by_scope(
         )
         .first()
     )
+
+
+def find_agent_binding_by_scope(
+    db: Session,
+    *,
+    consumer_key: str,
+    provider_type: str,
+    environment: str,
+) -> Optional[ProviderCredentialBinding]:
+    # Prefer agent-scoped binding, then route/gateway consumers (closes CC-026 residual).
+    for consumer_type in ("agent", "route", "gateway"):
+        row = find_binding_by_scope(
+            db,
+            consumer_type=consumer_type,
+            consumer_key=consumer_key,
+            provider_type=provider_type,
+            environment=environment,
+        )
+        if row is not None:
+            return row
+    return None
 
 
 def resolve_agent_config_credential(

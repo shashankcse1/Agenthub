@@ -12,8 +12,8 @@ This tracker converts residual-risk and release-gate pending actions into owner-
 
 | Item ID | Risk/Control Focus | Owner | Target Date | Required Evidence Artifact | Verification Command | Status |
 |---|---|---|---|---|---|---|
-| CL-001 | Session signing key rotation automation and expiration alerting (RSK-004) | Security Engineering | 2026-06-20 | Rotation policy artifact + alert rule export + test log evidence | python3 -m pytest -q backend/tests/test_security_config_warnings.py | In Progress |
-| CL-002 | Redis-backed rate-limit rollout monitoring thresholds (RSK-005) | SecOps | 2026-06-20 | Threshold config, dashboard screenshot/export, alert test evidence | python3 -m pytest -q backend/tests/test_rate_limit_backend.py | In Progress |
+| CL-001 | Session signing key rotation automation and expiration alerting (RSK-004) | Security Engineering | 2026-08-02 | `/health.session_signing_rotation` + VK `rotation-schedules/tick` + webhook alert evidence | python3 -m pytest -q backend/tests/test_security_config_warnings.py backend/tests/test_competitive_hardening.py -k rotation | Mitigated (ops webhook/cron remain) |
+| CL-002 | Redis-backed rate-limit rollout monitoring thresholds (RSK-005) | SecOps | 2026-08-02 | `/health.rate_limit.degraded` + throttled `_emit_security_alert` evidence | python3 -m pytest -q backend/tests/test_rate_limit_backend.py | Mitigated (dashboard baselines remain) |
 | CL-003 | Ingress/load-balancer HTTPS + HSTS validation in stage/prod (RSK-006 operational carryover) | Platform / SecOps | 2026-06-21 | Ingress config snapshot + validation report | bash backend/scripts/validate_ingress_security_headers.sh | Open |
 | CL-004 | SIEM routing for insecure startup posture events (CC-002 operationalization) | SecOps + Security Architecture | 2026-06-21 | Webhook config evidence + alert route test output | bash scripts/full_stack_expert_review.sh --strict | Open |
 | CL-005 | Account-unlock abuse alerting per actor and target user (RSK-007 monitoring) | IAM Engineering + SecOps | 2026-06-24 | Detection query + alert policy evidence + sampled events | python3 -m pytest -q backend/tests/test_audit_events_api.py | Open |
@@ -23,7 +23,7 @@ This tracker converts residual-risk and release-gate pending actions into owner-
 | CL-009 | Unified secret provider CISO sign-off and legacy API sunset plan (RSK-016 / GAP-USP-R03) | CISO Delegate + IAM Governance | 2026-09-01 | Signed CISO gap analysis + deprecation removal PR | python3 -m pytest -q backend/tests/test_secret_provider_db_values.py | Open |
 | CL-010 | Remote secret-provider rotation execution (GAP-USP-R01) | Security Engineering | 2026-07-15 | Adapter implementation evidence + rotation integration test | python3 -m pytest -q backend/tests/test_phase0_phase1.py -k rotate_via_secret_provider | Open |
 | CL-011 | `SECRET_ENCRYPTION_KEY` rotation automation (GAP-USP-R04) | PAM Operations | 2026-07-30 | Key rotation runbook + re-encryption test evidence | bash backend/scripts/validate_day0_secrets.sh | Open |
-| CL-012 | SIEM detection for anomalous `secret_provider.value.upsert` rates (GAP-USP-R05) | SecOps | 2026-07-15 | Alert rule export + sampled audit correlation | python3 -m pytest -q backend/tests/test_secret_provider_db_values.py | Open |
+| CL-012 | SIEM detection for anomalous `secret_provider.value.upsert` rates (GAP-USP-R05) | SecOps | 2026-08-02 | Default SIEM rule `siem-secret-provider-value-mutations` + audit dispatch prefix | python3 -m pytest -q backend/tests/test_siem_alert_rules.py -k secret_provider | Mitigated (volume-threshold correlation still SIEM-side) |
 | CL-013 | Vault/AWS lease API integration depth (GAP-USP-R02) | Cloud Engineering | 2026-08-01 | Lease renew adapter design + integration test plan | python3 -m pytest -q backend/tests/test_phase0_phase1.py -k secret_provider_lease | Open |
 
 ## Release Gate Sign-off Tracker

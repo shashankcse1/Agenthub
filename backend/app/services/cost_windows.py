@@ -216,10 +216,16 @@ def _sum_cost_between(
     owner_scope: str,
     start_ts: datetime | None,
     end_ts: datetime | None,
+    owner_scopes: list[str] | None = None,
 ) -> int:
-    query = db.query(func.coalesce(func.sum(CostEvent.estimated_cost_cents), 0)).filter(
-        CostEvent.owner_scope == owner_scope
-    )
+    scopes = [str(item).strip() for item in (owner_scopes or []) if str(item).strip()]
+    if not scopes and owner_scope:
+        scopes = [str(owner_scope).strip()]
+    query = db.query(func.coalesce(func.sum(CostEvent.estimated_cost_cents), 0))
+    if len(scopes) == 1:
+        query = query.filter(CostEvent.owner_scope == scopes[0])
+    elif len(scopes) > 1:
+        query = query.filter(CostEvent.owner_scope.in_(scopes))
     if start_ts is not None:
         query = query.filter(CostEvent.timestamp >= start_ts)
     if end_ts is not None:
@@ -280,6 +286,7 @@ def _historical_window_spend(
     budget: BudgetPolicy,
     window_type: str,
     now_utc: datetime | None = None,
+    owner_scopes: list[str] | None = None,
 ) -> tuple[int, int]:
     now_utc = now_utc or datetime.utcnow()
     resolved_window = normalize_window_type(window_type or budget.window_type)
@@ -289,7 +296,13 @@ def _historical_window_spend(
         if start is None:
             return 0, 0
         lookback_start = max(start, now_utc - timedelta(days=7))
-        total = _sum_cost_between(db, owner_scope=owner_scope, start_ts=lookback_start, end_ts=now_utc)
+        total = _sum_cost_between(
+            db,
+            owner_scope=owner_scope,
+            start_ts=lookback_start,
+            end_ts=now_utc,
+            owner_scopes=owner_scopes,
+        )
         days = max((now_utc - lookback_start).total_seconds() / 86400.0, 1.0)
         return int(total), 0
 
@@ -299,7 +312,15 @@ def _historical_window_spend(
         prev_start, prev_end = _previous_period_bounds(budget, resolved_window, now_utc=cursor_now)
         if prev_start is None or prev_end is None:
             break
-        samples.append(_sum_cost_between(db, owner_scope=owner_scope, start_ts=prev_start, end_ts=prev_end))
+        samples.append(
+            _sum_cost_between(
+                db,
+                owner_scope=owner_scope,
+                start_ts=prev_start,
+                end_ts=prev_end,
+                owner_scopes=owner_scopes,
+            )
+        )
         cursor_now = prev_start
 
     if not samples:
@@ -315,6 +336,7 @@ def project_window_spend(
     window_type: str,
     current_spend_cents: int,
     now_utc: datetime | None = None,
+    owner_scopes: list[str] | None = None,
 ) -> CostWindowProjection:
     now_utc = now_utc or datetime.utcnow()
     resolved_window = normalize_window_type(window_type or budget.window_type)
@@ -329,6 +351,7 @@ def project_window_spend(
         budget=budget,
         window_type=resolved_window,
         now_utc=now_utc,
+        owner_scopes=owner_scopes,
     )
 
     if resolved_window == "adhoc":
@@ -507,6 +530,8 @@ def _sum_cost_events(
     dimension: str = "all",
     scope_filter: str | None = None,
 ) -> tuple[int, int]:
+    from app.services.cost_limits import build_user_membership_index, event_matches_hierarchy_dimension
+
     query = db.query(CostEvent).filter(CostEvent.timestamp >= start_ts, CostEvent.timestamp < end_ts)
 
     if owner_scope:
@@ -520,11 +545,42 @@ def _sum_cost_events(
     scope_filter_text = str(scope_filter or "").strip().lower()
     spend_cents = 0
     event_count = 0
+    user_teams = None
+    user_groups = None
+    if normalized_dimension in {"user", "team", "group", "actor", "owner"}:
+        user_teams, user_groups = build_user_membership_index(db)
 
     for event in query.all():
         if normalized_dimension == "request_tag":
             normalized_tag = str(event.request_tag or "untagged").strip().lower()
             if scope_filter_text and scope_filter_text not in normalized_tag:
+                continue
+        elif normalized_dimension == "cache_hit":
+            label = "cache_hit" if bool(getattr(event, "cache_hit", False)) else "cache_miss"
+            if scope_filter_text and scope_filter_text not in label:
+                continue
+        elif normalized_dimension == "session_path":
+            path_label = "unknown-session-path"
+            try:
+                import json
+
+                parsed = json.loads(getattr(event, "properties_json", None) or "{}")
+            except Exception:  # noqa: BLE001 — tolerate malformed properties
+                parsed = {}
+            if isinstance(parsed, dict):
+                path_value = str(parsed.get("session_path") or "").strip()
+                if path_value:
+                    path_label = path_value[:128]
+            if scope_filter_text and scope_filter_text not in path_label.lower():
+                continue
+        elif normalized_dimension in {"user", "team", "group", "actor", "owner"}:
+            if not event_matches_hierarchy_dimension(
+                str(event.owner_scope or ""),
+                dimension=normalized_dimension,
+                scope_filter=scope_filter_text or None,
+                user_teams=user_teams,
+                user_groups=user_groups,
+            ):
                 continue
         elif normalized_dimension != "all":
             raw_scope = str(event.owner_scope or "")

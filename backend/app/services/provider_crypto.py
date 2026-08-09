@@ -78,6 +78,13 @@ def decrypt_value(value: str) -> str:
     try:
         return _fernet().decrypt(text.encode("utf-8")).decode("utf-8")
     except InvalidToken:
-        # Fail-open for legacy plaintext rows created before encryption rollout.
-        logger.warning("provider_crypto_legacy_plaintext_fallback_detected")
-        return text
+        # Fail-open only in local/dev/test for pre-encryption rows (closes RSK-016 / GAP-USP).
+        # Production/staging reject unencrypted provider secrets.
+        env = _runtime_environment()
+        if env in {"dev", "test", "local"}:
+            logger.warning("provider_crypto_legacy_plaintext_fallback_detected env=%s", env)
+            return text
+        logger.error("provider_crypto_legacy_plaintext_rejected env=%s", env)
+        raise RuntimeError(
+            "Encrypted provider secret required outside local environments; migrate plaintext rows"
+        )

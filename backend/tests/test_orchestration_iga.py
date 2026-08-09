@@ -342,3 +342,57 @@ def test_orchestration_iga_superseded_certification_blocks_prod_run():
     )
     assert denied.status_code == 403
     assert response_error_code(denied) == "AUTHZ_IGA_CERTIFICATION_EXPIRED"
+
+
+def test_orchestration_jit_access_requests_list_endpoint():
+    owner_id = f"orch-jit-list-{uuid4().hex[:8]}"
+    owner_headers = {**RELEASE_HEADERS, "X-Actor-Id": owner_id}
+    flow = _create_flow(headers=owner_headers, graph_json=_sample_graph(include_http=False))
+    created = client.post(
+        f"/orchestration/flows/{flow['flow_id']}/jit-access-requests",
+        json={
+            "requested_actions": ["run"],
+            "duration_minutes": 30,
+            "justification": "leadership-loop-l3-list-coverage",
+            "environment": "dev",
+        },
+        headers=owner_headers,
+    )
+    assert created.status_code == 200, created.text
+    listed = client.get(
+        "/orchestration/jit-access-requests",
+        params={"flow_id": flow["flow_id"], "limit": 20},
+        headers=ADMIN_HEADERS,
+    )
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body.get("total", 0) >= 1
+    assert any(row.get("flow_id") == flow["flow_id"] for row in body.get("data") or [])
+
+
+def test_orchestration_access_certifications_due_endpoint():
+    owner_id = f"orch-due-list-{uuid4().hex[:8]}"
+    owner_headers = {**RELEASE_HEADERS, "X-Actor-Id": owner_id}
+    flow = _create_flow(headers=owner_headers, environment="prod", graph_json=_sample_graph(include_http=False))
+    db: Session = SessionLocal()
+    try:
+        db.add(
+            OrchestrationFlowAccessCertification(
+                certification_id=f"ocert-due-{uuid4().hex[:8]}",
+                flow_id=flow["flow_id"],
+                certified_by=owner_id,
+                certified_at=datetime.utcnow() - timedelta(days=100),
+                next_due_at=datetime.utcnow() - timedelta(hours=1),
+                attestation_notes="due for leadership loop",
+                status="active",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    due = client.get("/orchestration/access-certifications/due", params={"limit": 200}, headers=ADMIN_HEADERS)
+    assert due.status_code == 200, due.text
+    body = due.json()
+    assert body.get("total", 0) >= 1
+    assert any(row.get("flow_id") == flow["flow_id"] for row in body.get("data") or [])

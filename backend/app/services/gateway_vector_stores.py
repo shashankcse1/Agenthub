@@ -180,20 +180,21 @@ def _probe_mcp_bridge_live(db: Session, store: dict) -> tuple[bool, str]:
 
 
 def _probe_custom_http_live(connection_url: str) -> tuple[bool, str]:
-    import httpx
+    from app.services.pinned_outbound_http import pinned_request
 
     url = str(connection_url or "").strip()
     if not url:
         return False, "connection_url missing for live probe."
     try:
-        resp = httpx.head(url, timeout=5.0, follow_redirects=True)
+        resp = pinned_request("HEAD", url, timeout=5.0)
         if resp.status_code >= 400:
             return False, f"HEAD {url} returned HTTP {resp.status_code}"
         return True, f"HEAD {url} returned HTTP {resp.status_code}"
-    except httpx.TimeoutException:
-        return False, f"HEAD {url} timed out"
-    except httpx.HTTPError as exc:
-        return False, f"HEAD {url} failed: {exc}"
+    except Exception as exc:
+        detail = getattr(exc, "detail", None) or str(exc)
+        if "blocked" in str(detail).lower() or "webhook_url" in str(detail).lower():
+            return False, f"live probe blocked by SSRF guard: {detail}"
+        return False, f"HEAD {url} failed: {detail}"
 
 
 def _secret_status_for_store(db: Session, store: dict) -> tuple[Optional[bool], Optional[str], Optional[str]]:

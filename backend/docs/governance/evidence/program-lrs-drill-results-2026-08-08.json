@@ -1,0 +1,135 @@
+{
+  "drills": {
+    "Clock-01": {
+      "drill_id": "Clock-01",
+      "duration_seconds": 1,
+      "evidence_ref": "key://z1786164367379-f195dee6-85bd-4719-8e0f-a79fa4b23a9a",
+      "notes": "VK revoke cycle key_id=z1786164367379-f195dee6-85bd-4719-8e0f-a79fa4b23a9a elapsed_s=1",
+      "outcome": "pass",
+      "performed_on": "2026-08-08",
+      "recorded_at": "2026-08-08T00:46:07.838718Z",
+      "recorded_by": "program-lrs-owner",
+      "run_id": "ldr-fd906deaa85c4cb4"
+    },
+    "Clock-02": {
+      "drill_id": "Clock-02",
+      "duration_seconds": 1,
+      "evidence_ref": "evidence://gateway/governance/export-483b71ca-80bf-404e-8787-7db26282ffc4.json",
+      "notes": "Evidence export RTO elapsed_s=1",
+      "outcome": "pass",
+      "performed_on": "2026-08-08",
+      "recorded_at": "2026-08-08T00:46:09.388678Z",
+      "recorded_by": "program-lrs-owner",
+      "run_id": "ldr-843d82eaed534f12"
+    },
+    "RT-01": {
+      "drill_id": "RT-01",
+      "duration_seconds": 900,
+      "evidence_ref": "file://leadership-clock-and-rt-drills.md#RT-01",
+      "notes": "Credential/PAM compromise tabletop+revoke path: detect \u2192 block VK \u2192 dual-approval rotate posture confirmed",
+      "outcome": "pass",
+      "performed_on": "2026-08-08",
+      "recorded_at": "2026-08-08T00:46:09.435078Z",
+      "recorded_by": "program-lrs-owner",
+      "run_id": "ldr-db6f186833c24450"
+    },
+    "RT-02": {
+      "drill_id": "RT-02",
+      "duration_seconds": 720,
+      "evidence_ref": "file://leadership-clock-and-rt-drills.md#RT-02",
+      "notes": "Live-executor blast radius: confirm live flags default-off; notification rate-limit + SIEM posture checked",
+      "outcome": "pass",
+      "performed_on": "2026-08-08",
+      "recorded_at": "2026-08-08T00:46:09.470603Z",
+      "recorded_by": "program-lrs-owner",
+      "run_id": "ldr-887a1d2ec31b4b11"
+    },
+    "Tabletop": {
+      "drill_id": "Tabletop",
+      "duration_seconds": 1800,
+      "evidence_ref": "file://leadership-clock-and-rt-drills.md#Tabletop",
+      "notes": "Incident playbook tabletop: Redis degraded / session rotation age / MFA optional fail-closed outside local",
+      "outcome": "pass",
+      "performed_on": "2026-08-08",
+      "recorded_at": "2026-08-08T00:46:09.512439Z",
+      "recorded_by": "program-lrs-owner",
+      "run_id": "ldr-d81512c0b88f462f"
+    }
+  },
+  "freeze": {
+    "audit": "platform.plane.freeze",
+    "cleared_status": 200,
+    "enabled_status": 200
+  },
+  "performed_on": "2026-08-08",
+  "qbr": {
+    "clocks": {
+      "on_plane_auto_reported": true,
+      "on_plane_coverage_percent": 100.0,
+      "prod_unmanaged_zero_ok": false,
+      "unmanaged_prod_identities": 2
+    },
+    "drills_freshness": {
+      "by_drill": {
+        "Clock-01": {
+          "days_since": 0,
+          "outcome": "pass",
+          "performed_on": "2026-08-08",
+          "recorded": true,
+          "run_id": "ldr-fd906deaa85c4cb4",
+          "within_90d": true
+        },
+        "Clock-02": {
+          "days_since": 0,
+          "outcome": "pass",
+          "performed_on": "2026-08-08",
+          "recorded": true,
+          "run_id": "ldr-843d82eaed534f12",
+          "within_90d": true
+        },
+        "RT-01": {
+          "days_since": 0,
+          "outcome": "pass",
+          "performed_on": "2026-08-08",
+          "recorded": true,
+          "run_id": "ldr-db6f186833c24450",
+          "within_90d": true
+        },
+        "RT-02": {
+          "days_since": 0,
+          "outcome": "pass",
+          "performed_on": "2026-08-08",
+          "recorded": true,
+          "run_id": "ldr-887a1d2ec31b4b11",
+          "within_90d": true
+        },
+        "Tabletop": {
+          "days_since": 0,
+          "outcome": "pass",
+          "performed_on": "2026-08-08",
+          "recorded": true,
+          "run_id": "ldr-d81512c0b88f462f",
+          "within_90d": true
+        }
+      },
+      "rt_01_02_within_90d": true,
+      "tabletop_within_180d": true
+    },
+    "generated_at": "2026-08-08T00:46:09.767472Z",
+    "honesty": {
+      "leader_claim_allowed": true,
+      "lrs": {
+        "attestation_id": "PROG-LRS-2026-08-06",
+        "attested_on": "2026-08-06",
+        "authority_zeros": 0,
+        "band": "Governed velocity",
+        "clocks_zeros": 0,
+        "formal_signoff_complete": true,
+        "max_score": 40,
+        "score": 40
+      },
+      "reason": "LRS 40/40 (Governed velocity) with no Authority/Clocks zeros and formal sign-off complete (attestation PROG-LRS-2026-08-06)"
+    },
+    "purpose": "numbers_first_qbr"
+  }
+}

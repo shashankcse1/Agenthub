@@ -24,7 +24,39 @@ OPENAI_COMPATIBLE_PROVIDERS = {
     "cohere",
     "azure-openai",
     "azure_openai",
+    "azure",
     "cursor",
+    "google",
+    "vertex",
+    "xai",
+    "deepseek",
+    "together",
+    "fireworks",
+    "perplexity",
+}
+
+# Native (non-OpenAI-compatible) chat providers handled by dedicated invoke paths.
+NATIVE_CHAT_PROVIDERS = {
+    "anthropic",
+    "aws",
+    "bedrock",
+    "aws-bedrock",
+}
+
+_PROVIDER_TYPE_ALIASES: dict[str, str] = {
+    "azure": "azure-openai",
+    "azure_openai": "azure-openai",
+    "gcp": "google",
+    "gemini": "google",
+    "google-ai": "google",
+    "google-cloud": "google",
+    "x-ai": "xai",
+    "grok": "xai",
+    "bedrock": "aws",
+    "aws-bedrock": "aws",
+    "amazon-bedrock": "aws",
+    "vertex-ai": "vertex",
+    "vertex_ai": "vertex",
 }
 
 _PROVIDER_ENV_PREFIXES: dict[str, str] = {
@@ -35,7 +67,17 @@ _PROVIDER_ENV_PREFIXES: dict[str, str] = {
     "groq": "GROQ",
     "azure-openai": "AZURE_OPENAI",
     "azure_openai": "AZURE_OPENAI",
+    "azure": "AZURE_OPENAI",
     "cursor": "CURSOR",
+    "google": "GOOGLE",
+    "vertex": "VERTEX",
+    "xai": "XAI",
+    "deepseek": "DEEPSEEK",
+    "together": "TOGETHER",
+    "fireworks": "FIREWORKS",
+    "perplexity": "PERPLEXITY",
+    "aws": "AWS_BEDROCK",
+    "bedrock": "AWS_BEDROCK",
 }
 
 _PROVIDER_DEFAULT_BASE_URLS: dict[str, str] = {
@@ -45,11 +87,63 @@ _PROVIDER_DEFAULT_BASE_URLS: dict[str, str] = {
     "mistral": "https://api.mistral.ai/v1",
     "cohere": "https://api.cohere.com/v2",
     "cursor": "http://127.0.0.1:8765/v1",
+    "google": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "vertex": "",  # Built dynamically from VERTEX_PROJECT / VERTEX_LOCATION
+    "xai": "https://api.x.ai/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "together": "https://api.together.xyz/v1",
+    "fireworks": "https://api.fireworks.ai/inference/v1",
+    "perplexity": "https://api.perplexity.ai",
+    "azure-openai": "",  # Requires AZURE_OPENAI_API_BASE
+    "aws": "bedrock-runtime",
 }
 
 _OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o2", "o3", "o4", "chatgpt", "text-embedding", "whisper", "tts-", "dall-e")
 _ANTHROPIC_MODEL_PREFIXES = ("claude",)
 _CURSOR_MODEL_PREFIXES = ("composer", "cursor-")
+_GOOGLE_MODEL_PREFIXES = ("gemini-", "gemini", "text-embedding-004", "gemini-embedding", "imagen-")
+_XAI_MODEL_PREFIXES = ("grok-", "grok")
+_DEEPSEEK_MODEL_PREFIXES = ("deepseek-", "deepseek")
+_COHERE_MODEL_PREFIXES = ("command-", "command")
+_MISTRAL_MODEL_PREFIXES = ("mistral-", "codestral", "mixtral", "pixtral", "ministral")
+_PERPLEXITY_MODEL_PREFIXES = ("sonar",)
+_BEDROCK_FOUNDATION_PREFIXES = (
+    "amazon.",
+    "anthropic.",
+    "meta.",
+    "mistral.",
+    "cohere.",
+    "ai21.",
+    "deepseek.",
+    "stability.",
+    "qwen.",
+    "writer.",
+    "nvidia.",
+    "openai.gpt-oss",
+)
+_BEDROCK_PROFILE_PREFIXES = ("us.", "eu.", "ap.", "global.", "us-gov.")
+_VERTEX_PUBLISHER_PREFIX = "publishers/"
+
+
+def normalize_inference_provider_type(provider_type: str) -> str:
+    normalized = str(provider_type or "").strip().lower()
+    return _PROVIDER_TYPE_ALIASES.get(normalized, normalized)
+
+
+def _looks_like_bedrock_model_id(model_id: str) -> bool:
+    lower = str(model_id or "").strip().lower()
+    if not lower:
+        return False
+    if any(lower.startswith(prefix) for prefix in _BEDROCK_PROFILE_PREFIXES):
+        return True
+    if any(lower.startswith(prefix) for prefix in _BEDROCK_FOUNDATION_PREFIXES):
+        return True
+    return False
+
+
+def _looks_like_vertex_model_id(model_id: str) -> bool:
+    lower = str(model_id or "").strip().lower()
+    return lower.startswith(_VERTEX_PUBLISHER_PREFIX) or lower.startswith("projects/")
 
 # Lightweight factual answers for simulation/dev when no upstream credential is configured.
 _CAPITAL_ANSWERS: dict[str, str] = {
@@ -251,40 +345,100 @@ def inference_timeout_seconds() -> float:
 
 
 def infer_provider_type_from_model(model_name: str) -> tuple[str, str]:
-    provider_prefix, normalized_model = split_provider_model(model_name)
+    raw = str(model_name or "").strip()
+    # Vertex publisher / project resource paths contain slashes — do not split as provider/model.
+    if _looks_like_vertex_model_id(raw):
+        return "vertex", raw
+    if _looks_like_bedrock_model_id(raw):
+        return "aws", raw
+
+    provider_prefix, normalized_model = split_provider_model(raw)
     if provider_prefix:
-        return provider_prefix, normalized_model
+        return normalize_inference_provider_type(provider_prefix), normalized_model
 
     lower = normalized_model.lower()
     if any(lower.startswith(prefix) for prefix in _ANTHROPIC_MODEL_PREFIXES):
         return "anthropic", normalized_model
     if any(lower.startswith(prefix) for prefix in _CURSOR_MODEL_PREFIXES):
         return "cursor", normalized_model
+    if any(lower.startswith(prefix) for prefix in _GOOGLE_MODEL_PREFIXES):
+        return "google", normalized_model
+    if any(lower.startswith(prefix) for prefix in _XAI_MODEL_PREFIXES):
+        return "xai", normalized_model
+    if any(lower.startswith(prefix) for prefix in _DEEPSEEK_MODEL_PREFIXES):
+        return "deepseek", normalized_model
+    if any(lower.startswith(prefix) for prefix in _COHERE_MODEL_PREFIXES):
+        return "cohere", normalized_model
+    if any(lower.startswith(prefix) for prefix in _MISTRAL_MODEL_PREFIXES):
+        return "mistral", normalized_model
+    if any(lower.startswith(prefix) for prefix in _PERPLEXITY_MODEL_PREFIXES):
+        return "perplexity", normalized_model
     if any(lower.startswith(prefix) for prefix in _OPENAI_MODEL_PREFIXES):
         return "openai", normalized_model
 
-    default_provider = str(os.getenv("GATEWAY_DEFAULT_INFERENCE_PROVIDER", "openai") or "openai").strip().lower()
+    default_provider = normalize_inference_provider_type(
+        str(os.getenv("GATEWAY_DEFAULT_INFERENCE_PROVIDER", "openai") or "openai")
+    )
     return default_provider or "openai", normalized_model
 
 
+def _vertex_default_base_url() -> str:
+    project = str(os.getenv("VERTEX_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip()
+    location = str(os.getenv("VERTEX_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1").strip() or "us-central1"
+    if not project:
+        return ""
+    return (
+        f"https://{location}-aiplatform.googleapis.com/v1/"
+        f"projects/{project}/locations/{location}/endpoints/openapi"
+    )
+
+
 def _provider_base_url(provider_type: str) -> str:
-    normalized = str(provider_type or "").strip().lower()
+    normalized = normalize_inference_provider_type(provider_type)
     prefix = _PROVIDER_ENV_PREFIXES.get(normalized, normalized.upper().replace("-", "_"))
     env_key = f"{prefix}_API_BASE"
     configured = str(os.getenv(env_key) or os.getenv(f"{prefix}_BASE_URL") or "").strip()
     if configured:
         return configured.rstrip("/")
-    return _PROVIDER_DEFAULT_BASE_URLS.get(normalized, "https://api.openai.com/v1").rstrip("/")
+    if normalized == "vertex":
+        return _vertex_default_base_url().rstrip("/")
+    if normalized == "azure-openai":
+        # Resource endpoint only; chat path is composed in invoke.
+        return str(os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip().rstrip("/")
+    default = _PROVIDER_DEFAULT_BASE_URLS.get(normalized, "https://api.openai.com/v1")
+    return str(default or "").rstrip("/")
 
 
 def _provider_env_api_key(provider_type: str) -> str:
-    normalized = str(provider_type or "").strip().lower()
+    normalized = normalize_inference_provider_type(provider_type)
+    if normalized == "aws":
+        # Prefer explicit Bedrock API key / bearer; otherwise signal default AWS chain.
+        for env_key in ("AWS_BEDROCK_API_KEY", "BEDROCK_API_KEY", "AWS_BEARER_TOKEN_BEDROCK"):
+            value = str(os.getenv(env_key) or "").strip()
+            if value:
+                return value
+        if str(os.getenv("AWS_ACCESS_KEY_ID") or "").strip() or str(os.getenv("AWS_PROFILE") or "").strip():
+            return "aws-default"
+        # Still allow default chain (instance role / SSO) when operators opt in.
+        if str(os.getenv("AWS_BEDROCK_USE_DEFAULT_CHAIN") or "").strip().lower() in {"1", "true", "yes", "on"}:
+            return "aws-default"
+        return ""
+    if normalized == "vertex":
+        for env_key in ("VERTEX_API_KEY", "GOOGLE_API_KEY", "VERTEX_ACCESS_TOKEN", "GOOGLE_OAUTH_ACCESS_TOKEN"):
+            value = str(os.getenv(env_key) or "").strip()
+            if value:
+                return value
+        return ""
     prefix = _PROVIDER_ENV_PREFIXES.get(normalized, normalized.upper().replace("-", "_"))
     for env_key in (f"{prefix}_API_KEY", f"{prefix}_WORKLOAD_IDENTITY_ACCESS_TOKEN"):
         value = str(os.getenv(env_key) or "").strip()
         if value:
             return value
     return ""
+
+
+def provider_env_credential_configured(provider_type: str) -> bool:
+    return bool(_provider_env_api_key(provider_type))
 
 
 def _credential_from_binding(db: Session, binding: ProviderCredentialBinding) -> ResolvedInferenceCredential | None:
@@ -296,7 +450,9 @@ def _credential_from_binding(db: Session, binding: ProviderCredentialBinding) ->
         raise
     if not resolved.secret_value:
         return None
-    provider_type = str(binding.provider_type or resolved.provider_type or "").strip().lower()
+    provider_type = normalize_inference_provider_type(
+        str(binding.provider_type or resolved.provider_type or "")
+    )
     return ResolvedInferenceCredential(
         provider_type=provider_type,
         api_key=resolved.secret_value,
@@ -307,12 +463,25 @@ def _credential_from_binding(db: Session, binding: ProviderCredentialBinding) ->
 
 
 def _consumer_binding_lookup_order(provider_type: str) -> list[tuple[str, str]]:
-    normalized = str(provider_type or "").strip().lower()
+    normalized = normalize_inference_provider_type(provider_type)
     ordered: list[tuple[str, str]] = [("platform", "default"), ("platform", normalized)]
     if normalized == "cursor":
         ordered.insert(0, ("gateway", "cursor"))
     else:
         ordered.append(("gateway", normalized))
+        # Legacy UI id for Azure OpenAI bindings.
+        if normalized == "azure-openai":
+            ordered.append(("gateway", "azure"))
+            ordered.append(("platform", "azure"))
+        if normalized == "aws":
+            ordered.append(("gateway", "bedrock"))
+            ordered.append(("platform", "bedrock"))
+        if normalized == "google":
+            ordered.append(("gateway", "gcp"))
+            ordered.append(("platform", "gcp"))
+        if normalized == "vertex":
+            ordered.append(("gateway", "google"))
+            ordered.append(("platform", "google"))
     return ordered
 
 
@@ -371,16 +540,27 @@ def should_attempt_upstream(credential: ResolvedInferenceCredential) -> bool:
 
 
 def _should_attempt_upstream(credential: ResolvedInferenceCredential) -> bool:
-    if not str(credential.api_key or "").strip():
+    provider = normalize_inference_provider_type(credential.provider_type)
+    token = str(credential.api_key or "").strip()
+    if provider == "aws":
+        if token and token.lower() not in {"aws-default", "default", "use_default_chain"}:
+            return True
+        return token.lower() in {"aws-default", "default", "use_default_chain"} or bool(
+            os.getenv("AWS_ACCESS_KEY_ID") or os.getenv("AWS_PROFILE") or os.getenv("AWS_BEDROCK_USE_DEFAULT_CHAIN")
+        )
+    if not token:
         return False
-    if credential.provider_type == "cursor":
+    if provider == "cursor":
         configured_base = str(os.getenv("CURSOR_API_BASE") or os.getenv("CURSOR_BASE_URL") or "").strip()
         if not configured_base and credential.base_url.startswith("http://127.0.0.1"):
             return False
-    if credential.provider_type == "openai" and credential.credential_source == "gateway_cursor_token":
-        token = str(credential.api_key or "").strip()
+    if provider == "openai" and credential.credential_source == "gateway_cursor_token":
         if not token.startswith("sk-"):
             return False
+    if provider == "azure-openai" and not str(credential.base_url or "").strip():
+        return False
+    if provider == "vertex" and not str(credential.base_url or "").strip():
+        return False
     return True
 
 
@@ -407,6 +587,20 @@ def resolve_inference_credential(
     normalized_environment = str(environment or "dev").strip().lower() or "dev"
     provider_type, upstream_model = infer_provider_type_from_model(model_name)
     agent_key = str(agent_id or "").strip()
+
+    # Flow Studio may pass a Providers credential binding id (binding_id override).
+    if db is not None and agent_key:
+        binding = db.query(ProviderCredentialBinding).filter_by(binding_id=agent_key).first()
+        if binding is not None:
+            credential = _optional_credential_from_binding(db, binding)
+            if credential:
+                return ResolvedInferenceCredential(
+                    provider_type=credential.provider_type or provider_type,
+                    api_key=credential.api_key,
+                    base_url=credential.base_url or _provider_base_url(provider_type),
+                    upstream_model=upstream_model,
+                    credential_source=credential.credential_source,
+                )
 
     if db is not None and agent_key and not agent_key.startswith("gateway-"):
         config = db.query(AgentConfig).filter_by(agent_key=agent_key).first()
@@ -553,17 +747,208 @@ def simulate_responses_output(model_name: str, effective_prompt: str) -> str:
 
 
 def _auth_headers(credential: ResolvedInferenceCredential) -> dict[str, str]:
-    provider_type = credential.provider_type
+    provider_type = normalize_inference_provider_type(credential.provider_type)
     if provider_type == "anthropic":
         return {
             "x-api-key": credential.api_key,
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         }
+    if provider_type == "azure-openai":
+        return {
+            "api-key": credential.api_key,
+            "Authorization": f"Bearer {credential.api_key}",
+            "Content-Type": "application/json",
+        }
     return {
         "Authorization": f"Bearer {credential.api_key}",
         "Content-Type": "application/json",
     }
+
+
+def _azure_api_version() -> str:
+    return str(os.getenv("AZURE_OPENAI_API_VERSION") or "2024-10-21").strip() or "2024-10-21"
+
+
+def _chat_completions_url(credential: ResolvedInferenceCredential) -> str:
+    provider = normalize_inference_provider_type(credential.provider_type)
+    base = str(credential.base_url or "").rstrip("/")
+    if provider != "azure-openai":
+        return f"{base}/chat/completions"
+
+    if not base:
+        raise HTTPException(
+            status_code=422,
+            detail="Azure OpenAI requires AZURE_OPENAI_API_BASE or AZURE_OPENAI_ENDPOINT (resource URL).",
+        )
+    # Newer OpenAI v1-compatible Azure resource paths.
+    if base.endswith("/v1") or "/openai/v1" in base:
+        return f"{base}/chat/completions"
+    api_version = _azure_api_version()
+    deployment = str(credential.upstream_model or "").strip()
+    if not deployment:
+        raise HTTPException(status_code=422, detail="Azure OpenAI deployment (model) name is required.")
+    # Classic deployment path: {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=...
+    root = base
+    if root.endswith("/openai"):
+        root = root[: -len("/openai")]
+    return f"{root}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
+
+
+def _parse_aws_bedrock_credentials(api_key: str) -> dict[str, Any]:
+    raw = str(api_key or "").strip()
+    if not raw or raw.lower() in {"aws-default", "default", "use_default_chain"}:
+        return {}
+    if raw.startswith("{"):
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid AWS Bedrock credential JSON: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=422, detail="AWS Bedrock credential JSON must be an object")
+        return payload
+    # Opaque bearer / API key for Bedrock (when configured by AWS).
+    return {"bearer_token": raw}
+
+
+def _bedrock_client(credential: ResolvedInferenceCredential):
+    try:
+        import boto3
+        from botocore.config import Config as BotoConfig
+    except ImportError as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail="boto3 is required for AWS Bedrock inference") from exc
+
+    parsed = _parse_aws_bedrock_credentials(credential.api_key)
+    region = str(
+        parsed.get("region")
+        or parsed.get("region_name")
+        or os.getenv("AWS_BEDROCK_REGION")
+        or os.getenv("AWS_REGION")
+        or os.getenv("AWS_DEFAULT_REGION")
+        or "us-east-1"
+    ).strip() or "us-east-1"
+
+    session_kwargs: dict[str, Any] = {}
+    access_key = str(parsed.get("access_key_id") or parsed.get("aws_access_key_id") or "").strip()
+    secret_key = str(parsed.get("secret_access_key") or parsed.get("aws_secret_access_key") or "").strip()
+    session_token = str(parsed.get("session_token") or parsed.get("aws_session_token") or "").strip()
+    profile = str(parsed.get("profile") or parsed.get("aws_profile") or "").strip()
+    if access_key and secret_key:
+        session_kwargs = {
+            "aws_access_key_id": access_key,
+            "aws_secret_access_key": secret_key,
+        }
+        if session_token:
+            session_kwargs["aws_session_token"] = session_token
+    elif profile:
+        session_kwargs = {"profile_name": profile}
+
+    session = boto3.Session(**session_kwargs) if session_kwargs else boto3.Session()
+    return session.client(
+        "bedrock-runtime",
+        region_name=region,
+        config=BotoConfig(retries={"max_attempts": 2, "mode": "standard"}),
+    )
+
+
+def _message_text_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                if item.get("type") == "text" or "text" in item:
+                    parts.append(str(item.get("text") or ""))
+                elif "content" in item:
+                    parts.append(str(item.get("content") or ""))
+        return "\n".join(part for part in parts if part).strip()
+    return str(content or "")
+
+
+def _invoke_bedrock_chat_completion(
+    credential: ResolvedInferenceCredential,
+    *,
+    messages: list[dict[str, Any]],
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+    stop: list[str] | None = None,
+) -> ChatCompletionInferenceResult:
+    client = _bedrock_client(credential)
+    system_blocks: list[dict[str, str]] = []
+    converse_messages: list[dict[str, Any]] = []
+    for message in messages:
+        role = str(message.get("role") or "user").strip().lower()
+        text = _message_text_content(message.get("content"))
+        if not text:
+            continue
+        if role == "system":
+            system_blocks.append({"text": text})
+            continue
+        mapped_role = "assistant" if role == "assistant" else "user"
+        # Bedrock requires alternating user/assistant turns; merge consecutive same-role turns.
+        if converse_messages and converse_messages[-1]["role"] == mapped_role:
+            prev = converse_messages[-1]["content"][0]["text"]
+            converse_messages[-1]["content"][0]["text"] = f"{prev}\n{text}".strip()
+        else:
+            converse_messages.append({"role": mapped_role, "content": [{"text": text}]})
+
+    if not converse_messages:
+        raise HTTPException(status_code=422, detail="Bedrock converse requires at least one user/assistant message")
+    if converse_messages[0]["role"] != "user":
+        converse_messages.insert(0, {"role": "user", "content": [{"text": "(continue)"}]})
+
+    inference_config: dict[str, Any] = {}
+    if max_tokens is not None:
+        inference_config["maxTokens"] = int(max_tokens)
+    if temperature is not None:
+        inference_config["temperature"] = float(temperature)
+    if top_p is not None:
+        inference_config["topP"] = float(top_p)
+    if stop:
+        inference_config["stopSequences"] = [str(item) for item in stop[:4]]
+
+    request: dict[str, Any] = {
+        "modelId": credential.upstream_model,
+        "messages": converse_messages,
+    }
+    if system_blocks:
+        request["system"] = system_blocks
+    if inference_config:
+        request["inferenceConfig"] = inference_config
+
+    try:
+        response = client.converse(**request)
+    except Exception as exc:  # noqa: BLE001 - surface AWS errors as 502
+        raise HTTPException(status_code=502, detail=f"aws bedrock upstream error: {exc}") from exc
+
+    output = response.get("output") if isinstance(response, dict) else {}
+    message = output.get("message") if isinstance(output, dict) else {}
+    content_blocks = message.get("content") if isinstance(message, dict) else []
+    text_parts: list[str] = []
+    if isinstance(content_blocks, list):
+        for block in content_blocks:
+            if isinstance(block, dict) and block.get("text"):
+                text_parts.append(str(block["text"]))
+    completion_text = "\n".join(part for part in text_parts if part).strip()
+    usage_raw = response.get("usage") if isinstance(response, dict) else {}
+    prompt_tokens = int((usage_raw or {}).get("inputTokens") or 1)
+    completion_tokens = int((usage_raw or {}).get("outputTokens") or max(1, len(completion_text.split()) if completion_text else 1))
+    stop_reason = str(response.get("stopReason") or "end_turn").strip() or "end_turn"
+    finish_reason = "stop" if stop_reason in {"end_turn", "stop_sequence"} else stop_reason
+    return ChatCompletionInferenceResult(
+        content=completion_text,
+        finish_reason=finish_reason,
+        usage=InferenceUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+        ),
+        tool_calls=None,
+    )
 
 
 def _parse_usage(raw_usage: object, *, prompt_fallback: int, completion_fallback: int) -> InferenceUsage:
@@ -628,7 +1013,8 @@ def invoke_chat_completion(
     stop: list[str] | None = None,
     response_format: dict[str, object] | None = None,
 ) -> ChatCompletionInferenceResult:
-    if credential.provider_type == "anthropic":
+    provider_type = normalize_inference_provider_type(credential.provider_type)
+    if provider_type == "anthropic":
         return _invoke_anthropic_chat_completion(
             credential,
             messages=messages,
@@ -637,14 +1023,28 @@ def invoke_chat_completion(
             max_tokens=max_tokens,
             stop=stop,
         )
+    if provider_type == "aws":
+        return _invoke_bedrock_chat_completion(
+            credential,
+            messages=messages,
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            stop=stop,
+        )
 
-    if credential.provider_type not in OPENAI_COMPATIBLE_PROVIDERS:
+    if provider_type not in OPENAI_COMPATIBLE_PROVIDERS:
         raise HTTPException(status_code=422, detail=f"Unsupported inference provider_type: {credential.provider_type}")
 
     body: dict[str, Any] = {
         "model": credential.upstream_model,
         "messages": _serialize_chat_messages(messages),
     }
+    # Classic Azure deployment path already encodes the deployment in the URL.
+    if provider_type == "azure-openai":
+        base = str(credential.base_url or "")
+        if base and not (base.endswith("/v1") or "/openai/v1" in base):
+            body.pop("model", None)
     if temperature is not None:
         body["temperature"] = temperature
     if top_p is not None:
@@ -657,7 +1057,7 @@ def invoke_chat_completion(
         body["response_format"] = response_format
 
     response = httpx.post(
-        f"{credential.base_url}/chat/completions",
+        _chat_completions_url(credential),
         headers=_auth_headers(credential),
         json=body,
         timeout=inference_timeout_seconds(),
@@ -830,7 +1230,10 @@ def invoke_embeddings(
     inputs: list[str],
     dimensions: int | None = None,
 ) -> EmbeddingsInferenceResult:
-    if credential.provider_type not in OPENAI_COMPATIBLE_PROVIDERS:
+    provider = normalize_inference_provider_type(credential.provider_type)
+    if provider == "aws":
+        return _invoke_bedrock_embeddings(credential, inputs=inputs, dimensions=dimensions)
+    if provider not in OPENAI_COMPATIBLE_PROVIDERS:
         raise HTTPException(status_code=422, detail=f"Embeddings unsupported for provider_type: {credential.provider_type}")
 
     body: dict[str, Any] = {
@@ -840,8 +1243,19 @@ def invoke_embeddings(
     if dimensions is not None:
         body["dimensions"] = dimensions
 
+    # Classic Azure embeddings deployment path.
+    url = f"{credential.base_url}/embeddings"
+    if provider == "azure-openai":
+        base = str(credential.base_url or "").rstrip("/")
+        if base and not (base.endswith("/v1") or "/openai/v1" in base):
+            api_version = _azure_api_version()
+            deployment = str(credential.upstream_model or "").strip()
+            root = base[:-len("/openai")] if base.endswith("/openai") else base
+            url = f"{root}/openai/deployments/{deployment}/embeddings?api-version={api_version}"
+            body.pop("model", None)
+
     response = httpx.post(
-        f"{credential.base_url}/embeddings",
+        url,
         headers=_auth_headers(credential),
         json=body,
         timeout=inference_timeout_seconds(),
@@ -859,12 +1273,76 @@ def invoke_embeddings(
     return EmbeddingsInferenceResult(embeddings=vectors, usage=usage)
 
 
+def _invoke_bedrock_embeddings(
+    credential: ResolvedInferenceCredential,
+    *,
+    inputs: list[str],
+    dimensions: int | None = None,
+) -> EmbeddingsInferenceResult:
+    client = _bedrock_client(credential)
+    model_id = str(credential.upstream_model or "").strip()
+    if not model_id:
+        raise HTTPException(status_code=422, detail="Bedrock embedding modelId is required")
+
+    vectors: list[list[float]] = []
+    prompt_tokens = 0
+    lower = model_id.lower()
+    for text in inputs:
+        body: dict[str, Any]
+        if "cohere.embed" in lower:
+            body = {"texts": [text], "input_type": "search_document"}
+        elif "titan-embed" in lower or "amazon.titan-embed" in lower:
+            body = {"inputText": text}
+            if dimensions is not None:
+                body["dimensions"] = int(dimensions)
+        else:
+            # Generic Bedrock embedding-style payload used by several providers.
+            body = {"inputText": text}
+
+        try:
+            response = client.invoke_model(
+                modelId=model_id,
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps(body).encode("utf-8"),
+            )
+            raw = response.get("body")
+            payload_bytes = raw.read() if hasattr(raw, "read") else raw
+            payload = json.loads(payload_bytes.decode("utf-8") if isinstance(payload_bytes, (bytes, bytearray)) else payload_bytes)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"aws bedrock embeddings error: {exc}") from exc
+
+        embedding: list[float] | None = None
+        if isinstance(payload, dict):
+            if isinstance(payload.get("embedding"), list):
+                embedding = [float(v) for v in payload["embedding"]]
+            elif isinstance(payload.get("embeddings"), list) and payload["embeddings"]:
+                first = payload["embeddings"][0]
+                if isinstance(first, list):
+                    embedding = [float(v) for v in first]
+                elif isinstance(first, dict) and isinstance(first.get("embedding"), list):
+                    embedding = [float(v) for v in first["embedding"]]
+            prompt_tokens += int(payload.get("inputTextTokenCount") or max(1, len(text.split())))
+        if embedding is None:
+            raise HTTPException(status_code=502, detail="Bedrock embeddings response missing embedding vector")
+        vectors.append(embedding)
+
+    return EmbeddingsInferenceResult(
+        embeddings=vectors,
+        usage=InferenceUsage(
+            prompt_tokens=max(1, prompt_tokens),
+            completion_tokens=0,
+            total_tokens=max(1, prompt_tokens),
+        ),
+    )
+
+
 def invoke_responses_create(
     credential: ResolvedInferenceCredential,
     *,
     request_body: dict[str, Any],
 ) -> ResponsesInferenceResult:
-    if credential.provider_type not in OPENAI_COMPATIBLE_PROVIDERS:
+    if normalize_inference_provider_type(credential.provider_type) not in OPENAI_COMPATIBLE_PROVIDERS:
         raise HTTPException(status_code=422, detail=f"Responses API unsupported for provider_type: {credential.provider_type}")
 
     body = dict(request_body)
@@ -930,7 +1408,7 @@ def invoke_image_generation(
     size: str | None,
     n: int,
 ) -> list[dict[str, Any]]:
-    if credential.provider_type not in OPENAI_COMPATIBLE_PROVIDERS:
+    if normalize_inference_provider_type(credential.provider_type) not in OPENAI_COMPATIBLE_PROVIDERS:
         raise HTTPException(status_code=422, detail=f"Image generation unsupported for provider_type: {credential.provider_type}")
 
     body: dict[str, Any] = {

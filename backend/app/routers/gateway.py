@@ -23,9 +23,11 @@ from app.logging_utils import get_logger, sanitize_fields
 from app.models import (
     AgentConfig,
     AuditEvent,
+    BrowserShadowAiApp,
     BudgetPolicy,
     CacheDecisionEvent,
     CachePolicy,
+    DiscoveryRecord,
     GatewayAssistantRecord,
     GatewayResponseCacheEntry,
     CostEvent,
@@ -139,14 +141,58 @@ from app.schemas import (
     GatewayJitAccessRequestListResponse,
     GatewayJitAccessRequestResponse,
     GatewayJitAccessRevokeRequest,
+    GatewayJitActionConfirmPreviewResponse,
+    GatewayJitActionDecideRequest,
     GatewayJitActionDecideResponse,
+    GatewayJitActionLinksPreviewResponse,
     GatewayJitDecisionNotifyConfig,
     GatewayJitDecisionNotifyResult,
     GatewayJitExpireTickResponse,
+    GatewayJitNotifyHistoryResponse,
+    GatewayJitNotifyTickResponse,
+    GatewayJitPendingNotifySummary,
     GatewayLeastPrivilegeRecommendationApplyRequest,
     GatewayLeastPrivilegeRecommendationResponse,
+    GatewayNhiAccessMapResponse,
+    GatewayNhiExportRequest,
+    GatewayNhiExportResponse,
+    GatewayNhiGovernanceConfig,
     GatewayNhiHygieneResponse,
+    GatewayNhiAccessAuthorizeRequest,
+    GatewayNhiAccessAuthorizeResponse,
+    GatewayNhiAccessConfig,
+    GatewayNhiAgentsResponse,
+    GatewayRuntimeRiskConfig,
+    GatewayRuntimeRiskEvaluateRequest,
+    GatewayRuntimeRiskEvaluateResponse,
+    GatewayNhiCorrelationIngestRequest,
+    GatewayNhiCorrelationResponse,
+    GatewayNhiCorrelationUpdateRequest,
+    GatewayNhiEvidenceExportRequest,
+    GatewayNhiEvidenceExportResponse,
+    GatewayNhiShadowActionRequest,
+    GatewayNhiShadowActionResponse,
+    GatewayNhiIgaDenyConfig,
+    GatewayNhiIgaDenyEvaluateRequest,
+    GatewayNhiIgaDenyEvaluateResponse,
+    GatewayNhiIgaDenyEventsResponse,
+    GatewayNhiIgaDenyIngestRequest,
+    GatewayNhiIgaDenyIngestResponse,
+    GatewayNhiIgaDenyRevokeRequest,
+    GatewayNhiIgaExportConfig,
+    GatewayNhiIgaExportTestRequest,
+    GatewayNhiInsightItem,
+    GatewayNhiInsightsResponse,
+    GatewayNhiIntentCheckRequest,
+    GatewayNhiIntentCheckResponse,
+    GatewayNhiIntentsUpdateRequest,
     GatewayNhiInventoryRecordResponse,
+    GatewayNhiLifecycleRequest,
+    GatewayNhiOrphansAssignRequest,
+    GatewayNhiOrphansAssignResponse,
+    GatewayNhiOrphansResponse,
+    GatewayNhiOwnerUpdateRequest,
+    GatewayNhiTimelineResponse,
     GatewayAnalyticsSummaryResponse,
     GatewayLeadershipQbrSnapshotResponse,
     GatewayLeadershipDrillRunCreateRequest,
@@ -204,6 +250,74 @@ from app.schemas import (
     RouteOutputGuardrailsResponse,
     RouteFallbackPolicyRequest,
     RouteFallbackPolicyResponse,
+    GatewayBestPracticesPostureResponse,
+    GatewayFallbackSuggestRequest,
+    GatewayFallbackSuggestResponse,
+    GatewayLeadershipBootstrapRequest,
+    GatewayLeadershipBootstrapResponse,
+    GatewayAutoRouteRequest,
+    GatewayAutoRouteResponse,
+    GatewayAttributionAnalyticsResponse,
+    GatewayLeadershipIndexResponse,
+    GatewayModelRankingsResponse,
+    GatewayLeadershipWarmupRequest,
+    GatewayLeadershipWarmupResponse,
+    GatewayAutoRouteCompareRequest,
+    GatewayAutoRouteBatchRequest,
+    GatewayLiveJudgeRefineRequest,
+    GatewayOpenRouterLiquidityImportRequest,
+    GatewayAutoRouteExperimentCreateRequest,
+    GatewayFallbackQualityGateRequest,
+    GatewayAutoRouteStreamFramesRequest,
+    GatewayAutoRouteExplainRequest,
+    GatewayPromptAutoRouteBindRequest,
+    GatewayVirtualKeyAutoRoutePolicyRequest,
+    GatewayAlertChannelsRequest,
+    GatewayAlertDispatchRequest,
+    GatewayOtelAttributesRequest,
+    GatewayCanaryAutoRouteExplainRequest,
+    GatewayResidencyFilterRequest,
+    GatewayReplayStrategyRequest,
+    GatewayCsvClassifyRequest,
+    GatewayWarmupRetentionRequest,
+    GatewayWarmupPurgeRequest,
+    GatewayRankingWeightsRequest,
+    GatewayJudgeThresholdsRequest,
+    GatewayRouteStrategyPolicyRequest,
+    GatewayRequestTagStrategyPolicyRequest,
+    GatewayWhyModelCardRequest,
+    GatewayCiFloorRequest,
+    GatewayChaosDrillRequest,
+    GatewayShareLinkRequest,
+    GatewayAlertDeliverRequest,
+    GatewayAlertAllowlistRequest,
+    GatewayApplyRankedFallbackRequest,
+    GatewayResolveStrategyRequest,
+    GatewaySimulationJudgeRequest,
+    GatewayEvidenceDiffRequest,
+    GatewayEnforcementFlagsRequest,
+    GatewayModelRoutePolicyRequest,
+    GatewayCanaryPromoteGateRequest,
+    GatewayCircuitAnnotateRequest,
+    GatewayCanaryAnnotateComboRequest,
+    GatewayShadowCompareRequest,
+    GatewayOperatorChecklistRequest,
+    GatewayRouteHealthRequest,
+    GatewayLeadershipIncidentRequest,
+    GatewayLeadershipIncidentCloseRequest,
+    GatewayScoreTrendMuteRequest,
+    GatewayLeadershipFloorGateRequest,
+    GatewayCompositeGateRequest,
+    GatewayPreferredModelRequest,
+    GatewayIncidentEscalateRequest,
+    GatewayDeleteTagStrategyRequest,
+    GatewayDeleteRouteStrategyRequest,
+    GatewayFloorGateAutoIncidentRequest,
+    GatewayShadowTrafficRequest,
+    GatewayCanaryAutoRollbackRequest,
+    GatewayLatencyBudgetRequest,
+    GatewayFailoverSimulationRequest,
+    GatewayCrossEnvSyncDryRunRequest,
     RouteSimulateFallbackRequest,
     RouteSimulateFallbackResponse,
     RouteTrafficMirroringRequest,
@@ -232,7 +346,14 @@ from app.schemas import (
     GatewayPassthroughRequest,
     GatewayPassthroughResponse,
 )
-from app.security import ActorContext, get_actor_context, require_dual_approval, require_role, resolve_actor_role_for_actor
+from app.security import (
+    ActorContext,
+    get_actor_context,
+    require_dual_approval,
+    require_mfa,
+    require_role,
+    resolve_actor_role_for_actor,
+)
 from app.policy_constants import (
     COST_SCOPE_ACTOR,
     COST_SCOPE_AGENT,
@@ -337,6 +458,7 @@ ALLOWED_EXTERNAL_CALLBACK_EVENTS = {
     "gateway.mcp.tools.call",
     "gateway.key.rotate",
     "gateway.jit.request.create",
+    "gateway.jit.request.reminder",
     "gateway.jit.request.approve",
     "gateway.jit.request.deny",
     "gateway.jit.request.revoke",
@@ -361,6 +483,23 @@ GATEWAY_GOVERNANCE_EVIDENCE_ACTION_TYPES = [
     "gateway.entitlement.update",
     "gateway.nhi.inventory.read",
     "gateway.nhi.hygiene.read",
+    "gateway.nhi.export",
+    "gateway.nhi.iga_export.config.update",
+    "gateway.nhi.iga_export.test",
+    "gateway.nhi.iga_export.deliver",
+    "gateway.nhi.iga_deny.config.update",
+    "gateway.nhi.iga_deny.ingest",
+    "gateway.nhi.iga_deny.revoke",
+    "gateway.nhi.iga_deny.enforce",
+    "gateway.nhi.iga_deny.evaluate",
+    "gateway.nhi.insights.read",
+    "gateway.nhi.access_map.read",
+    "gateway.nhi.timeline.read",
+    "gateway.nhi.owner.update",
+    "gateway.nhi.lifecycle.update",
+    "gateway.nhi.intents.update",
+    "gateway.nhi.intent_check",
+    "gateway.nhi.governance.config.update",
     "gateway.leadership.qbr.read",
     "gateway.leadership.drill_run.read",
     "gateway.leadership.drill_run.create",
@@ -375,6 +514,13 @@ GATEWAY_GOVERNANCE_EVIDENCE_ACTION_TYPES = [
     "gateway.jit.decision_notify.config.update",
     "gateway.jit.decision_notify.send",
     "gateway.jit.decision_notify.action",
+    "gateway.jit.decision_notify.test",
+    "gateway.jit.decision_notify.key_email",
+    "gateway.jit.decision_notify.preview",
+    "gateway.jit.decision_notify.retry",
+    "gateway.jit.decision_notify.history",
+    "gateway.jit.decision_notify.tick",
+    "gateway.jit.decision_notify.pending_summary",
     "gateway.jit.virtual_key.mint",
     "gateway.jit.virtual_key.revoke",
     "gateway.least_privilege.read",
@@ -442,11 +588,14 @@ GATEWAY_AUTHZ_PROD_DUAL_APPROVAL_ACTIONS = {
 
 
 def _validate_callback_url(raw: str) -> str:
-    value = str(raw or "").strip()
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise HTTPException(status_code=422, detail="callback_url must be an absolute http(s) URL")
-    return value
+    from app.services.url_ssrf_guard import validate_outbound_webhook_url
+
+    return validate_outbound_webhook_url(
+        str(raw or "").strip(),
+        allow_empty=False,
+        resolve_dns=False,
+        allow_loopback_outside_prod=True,
+    )
 
 
 def _normalize_callback_events(raw: object) -> list[str]:
@@ -3214,7 +3363,37 @@ def _serialize_realtime_session_record(record: RealtimeSessionRecord) -> dict[st
 
 
 def _is_prod_environment(value: str) -> bool:
-    return value.strip().lower() == "prod"
+    return value.strip().lower() in {"prod", "production"}
+
+
+def _runtime_is_production() -> bool:
+    from app.services.runtime_env import is_production_runtime
+
+    return is_production_runtime()
+
+
+def _leadership_bootstrap_requires_dual_approval(*, request_environment: str) -> bool:
+    """Dual approval when request targets prod OR the process APP_ENV is production."""
+    return _is_prod_environment(request_environment) or _runtime_is_production()
+
+
+def _resolve_leadership_bootstrap_probe_peer(
+    requested: Optional[bool],
+    *,
+    enhance_cpli: bool,
+) -> bool:
+    """Auto-enable peer probe for CPLI enhance on production or split planes."""
+    if requested is not None:
+        return bool(requested)
+    if not enhance_cpli:
+        return False
+    from app.plane_mode import resolve_app_plane
+
+    if _runtime_is_production():
+        return True
+    if resolve_app_plane() in {"control", "data"}:
+        return True
+    return False
 
 
 def _require_prod_dual_approval_audited(
@@ -3292,42 +3471,53 @@ def _assess_gateway_inference_risk(
     environment: str,
     has_tool_calls: bool,
     selected_provider_id: Optional[str],
+    *,
+    endpoint_family: str = "chat.completions",
+    has_agent_id: bool = False,
+    input_chars: int = 0,
 ) -> tuple[str, list[str]]:
-    score = 0
-    reasons: list[str] = []
-    normalized_model = str(model_name or "").strip().lower()
+    from app.services.gateway_runtime_risk import assess_inference_risk
 
-    if _is_prod_environment(environment):
-        score += 2
-        reasons.append("production_environment")
+    return assess_inference_risk(
+        model_name=model_name,
+        environment=environment,
+        has_tool_calls=has_tool_calls,
+        selected_provider_id=selected_provider_id,
+        endpoint_family=endpoint_family,
+        has_agent_id=has_agent_id,
+        input_chars=input_chars,
+    )
 
-    if has_tool_calls:
-        score += 2
-        reasons.append("tool_call_execution_path")
 
-    if str(selected_provider_id or "").strip():
-        score += 1
-        reasons.append("provider_routed")
+def _enforce_runtime_risk_before_inference(
+    db: Session,
+    ctx: ActorContext,
+    *,
+    model_name: str,
+    environment: str,
+    has_tool_calls: bool,
+    selected_provider_id: Optional[str],
+    request_id: str,
+    endpoint_family: str,
+    trace_id: Optional[str] = None,
+    has_agent_id: bool = False,
+    input_chars: int = 0,
+) -> dict:
+    from app.services.gateway_runtime_risk import assess_and_enforce_inference_risk
 
-    if "/" in normalized_model:
-        score += 1
-        reasons.append("provider_prefixed_model")
-
-    if normalized_model.startswith(("gpt-4", "claude", "gemini-", "o1", "o3")):
-        score += 1
-        reasons.append("frontier_model_family")
-
-    if score >= 4:
-        risk_tier = "high"
-    elif score >= 2:
-        risk_tier = "medium"
-    else:
-        risk_tier = "low"
-
-    if not reasons:
-        reasons.append("baseline_policy_controls")
-
-    return risk_tier, reasons
+    return assess_and_enforce_inference_risk(
+        db,
+        actor_id=ctx.actor_id,
+        model_name=model_name,
+        environment=environment,
+        has_tool_calls=has_tool_calls,
+        selected_provider_id=selected_provider_id,
+        request_id=request_id,
+        endpoint_family=endpoint_family,
+        trace_id=trace_id,
+        has_agent_id=has_agent_id,
+        input_chars=input_chars,
+    )
 
 
 def _parse_json_object(raw: str, field_name: str) -> dict:
@@ -3487,7 +3677,12 @@ def _upsert_gateway_nhi_record(
     last_used_at: Optional[datetime],
     status: str,
     max_credential_age_days: int,
+    owner_scope_type: Optional[str] = None,
+    owner_scope_id: Optional[str] = None,
+    lifecycle_status: Optional[str] = None,
 ) -> GatewayNhiInventory:
+    from app.services.gateway_nhi_insights import effective_nhi_status_from_source
+
     row = db.query(GatewayNhiInventory).filter_by(source_type=source_type, source_id=source_id).first()
     if row is None:
         row = GatewayNhiInventory(nhi_record_id=f"nhi-{uuid4().hex[:16]}", source_type=source_type, source_id=source_id)
@@ -3500,7 +3695,15 @@ def _upsert_gateway_nhi_record(
     row.credential_last_rotated_at = credential_last_rotated_at
     row.credential_expires_at = credential_expires_at
     row.last_used_at = last_used_at
-    row.status = str(status or "active").strip().lower() or "active"
+    row.status = effective_nhi_status_from_source(
+        source_status=str(status or "active"),
+        lifecycle_status=lifecycle_status,
+        source_type=source_type,
+    )
+    if owner_scope_type is not None:
+        row.owner_scope_type = str(owner_scope_type or "").strip() or None
+    if owner_scope_id is not None:
+        row.owner_scope_id = str(owner_scope_id or "").strip() or None
 
     findings = _build_nhi_findings(
         owner_scope_id=row.owner_scope_id,
@@ -3513,7 +3716,31 @@ def _upsert_gateway_nhi_record(
     return row
 
 
+def _nhi_lifecycle_status_lookup(db: Session) -> dict[str, str]:
+    """Map nhi_record_id → operator lifecycle_status from governance (no duplicate status plane)."""
+    from app.services.gateway_nhi_insights import load_nhi_governance
+
+    gov = load_nhi_governance(db)
+    records = gov.get("records") if isinstance(gov.get("records"), dict) else {}
+    out: dict[str, str] = {}
+    for nhi_id, meta in records.items():
+        if not isinstance(meta, dict):
+            continue
+        status = str(meta.get("lifecycle_status") or "").strip().lower()
+        if status:
+            out[str(nhi_id)] = status
+    return out
+
+
 def _sync_gateway_nhi_inventory(db: Session, max_credential_age_days: int) -> None:
+    lifecycle_by_nhi = _nhi_lifecycle_status_lookup(db)
+
+    def _lifecycle_for(source_type: str, source_id: str) -> Optional[str]:
+        existing = db.query(GatewayNhiInventory).filter_by(source_type=source_type, source_id=source_id).first()
+        if existing is None:
+            return None
+        return lifecycle_by_nhi.get(existing.nhi_record_id)
+
     workload_profiles = db.query(WorkloadIdentityFederationProfile).all()
     for profile in workload_profiles:
         _upsert_gateway_nhi_record(
@@ -3529,6 +3756,7 @@ def _sync_gateway_nhi_inventory(db: Session, max_credential_age_days: int) -> No
             last_used_at=profile.last_token_exchange_at,
             status=profile.status,
             max_credential_age_days=max_credential_age_days,
+            lifecycle_status=_lifecycle_for("workload_identity_profile", profile.workload_identity_profile_id),
         )
 
     provider_configs = db.query(SecretProviderConfig).all()
@@ -3546,7 +3774,147 @@ def _sync_gateway_nhi_inventory(db: Session, max_credential_age_days: int) -> No
             last_used_at=provider.last_health_check_at,
             status=provider.status,
             max_credential_age_days=max_credential_age_days,
+            lifecycle_status=_lifecycle_for("secret_provider", provider.secret_provider_id),
         )
+
+    virtual_keys = db.query(VirtualKey).limit(500).all()
+    for key in virtual_keys:
+        owner_id = str(key.owner_scope_id or "").strip()
+        _upsert_gateway_nhi_record(
+            db=db,
+            source_type="virtual_key",
+            source_id=key.key_id,
+            identity_type="virtual_key",
+            tenant_id=owner_id or "unknown",
+            environment="prod" if "prod" in owner_id.lower() else "dev",
+            provider_type="gateway",
+            credential_last_rotated_at=None,
+            credential_expires_at=key.expires_at,
+            last_used_at=None,
+            status=key.status,
+            max_credential_age_days=max_credential_age_days,
+            owner_scope_type=key.owner_scope_type,
+            owner_scope_id=key.owner_scope_id,
+            lifecycle_status=_lifecycle_for("virtual_key", key.key_id),
+        )
+
+    try:
+        from app.services.mcp_gateway import list_mcp_servers
+
+        for server in list_mcp_servers(db)[:200]:
+            server_id = str(server.get("server_id") or "").strip()
+            if not server_id:
+                continue
+            _upsert_gateway_nhi_record(
+                db=db,
+                source_type="mcp_server",
+                source_id=server_id,
+                identity_type="mcp_server",
+                tenant_id="platform",
+                environment="dev",
+                provider_type="mcp",
+                credential_last_rotated_at=None,
+                credential_expires_at=None,
+                last_used_at=None,
+                status="active" if bool(server.get("enabled", True)) else "inactive",
+                max_credential_age_days=max_credential_age_days,
+                lifecycle_status=_lifecycle_for("mcp_server", server_id),
+            )
+    except Exception:
+        # MCP registry parse failures must not break NHI inventory readback.
+        pass
+
+    # Gateway-native Discovery/Shadow sources (not SaaS OAuth crawl)
+    for record in db.query(DiscoveryRecord).limit(500).all():
+        status_raw = str(record.discovery_status or "discovered").strip().lower()
+        status = "active" if status_raw in {"discovered", "reviewed", "promoted", "active"} else "inactive"
+        _upsert_gateway_nhi_record(
+            db=db,
+            source_type="discovered_agent",
+            source_id=record.discovered_agent_id,
+            identity_type="ai_agent",
+            tenant_id="platform",
+            environment="dev",
+            provider_type=str(record.source_system or "discovery").strip().lower() or "discovery",
+            credential_last_rotated_at=record.last_discovered_at,
+            credential_expires_at=None,
+            last_used_at=record.last_discovered_at,
+            status=status,
+            max_credential_age_days=max_credential_age_days,
+            lifecycle_status=_lifecycle_for("discovered_agent", record.discovered_agent_id),
+        )
+
+    for app in db.query(BrowserShadowAiApp).limit(500).all():
+        shadow_status = str(app.status or "unsanctioned").strip().lower()
+        if shadow_status == "blocked":
+            nhi_status = "suspended"
+        elif shadow_status in {"sanctioned", "reviewed"}:
+            nhi_status = "active"
+        else:
+            nhi_status = "active"
+        _upsert_gateway_nhi_record(
+            db=db,
+            source_type="shadow_ai_app",
+            source_id=app.app_id,
+            identity_type="shadow_ai",
+            tenant_id="platform",
+            environment="prod" if int(app.risk_score or 0) >= 70 else "dev",
+            provider_type=str(app.domain or "shadow-ai").strip().lower()[:64] or "shadow-ai",
+            credential_last_rotated_at=app.first_seen_at,
+            credential_expires_at=None,
+            last_used_at=app.last_seen_at,
+            status=nhi_status,
+            max_credential_age_days=max_credential_age_days,
+            lifecycle_status=_lifecycle_for("shadow_ai_app", app.app_id),
+        )
+
+
+def _build_nhi_hygiene_summary(
+    response_rows: list[GatewayNhiInventoryRecordResponse],
+    *,
+    max_credential_age_days: int,
+) -> dict[str, object]:
+    """Single hygiene aggregation used by GET /hygiene and export embedding (no duplicate counters)."""
+    findings_counter: dict[str, int] = {}
+    source_counter: dict[str, int] = {}
+    stale_count = 0
+    missing_owner_count = 0
+    inactive_count = 0
+    high_risk_count = 0
+    unmanaged_prod_count = 0
+    for row in response_rows:
+        source_counter[row.source_type] = source_counter.get(row.source_type, 0) + 1
+        if row.stale_credential:
+            stale_count += 1
+        if row.missing_owner:
+            missing_owner_count += 1
+        if str(row.status or "").strip().lower() != "active":
+            inactive_count += 1
+        findings = _parse_string_list(row.findings, "findings")
+        if "high_risk" in findings:
+            high_risk_count += 1
+        for finding in findings:
+            findings_counter[finding] = findings_counter.get(finding, 0) + 1
+        if str(row.environment or "").strip().lower() == "prod" and (
+            row.missing_owner or "high_risk" in findings
+        ):
+            unmanaged_prod_count += 1
+    return {
+        "max_credential_age_days": max_credential_age_days,
+        "total_identities": len(response_rows),
+        "stale_credentials": stale_count,
+        "missing_owner": missing_owner_count,
+        "inactive_identities": inactive_count,
+        "high_risk_identities": high_risk_count,
+        "unmanaged_prod_identities": unmanaged_prod_count,
+        "prod_unmanaged_zero_ok": unmanaged_prod_count == 0,
+        "findings_distribution": [
+            {"key": key, "count": count} for key, count in sorted(findings_counter.items(), key=lambda item: item[0])
+        ],
+        "source_distribution": [
+            {"key": key, "count": count} for key, count in sorted(source_counter.items(), key=lambda item: item[0])
+        ],
+    }
 
 
 def _gateway_nhi_record_to_response(
@@ -3880,7 +4248,9 @@ def _resolve_virtual_key_for_inference(
     if auth.lower().startswith("bearer "):
         token = auth[7:].strip()
         if token:
-            key = db.query(VirtualKey).filter_by(key_hash=token).first()
+            from app.services.virtual_key_secrets import lookup_virtual_key_by_bearer
+
+            key = lookup_virtual_key_by_bearer(db, token)
             if key is not None:
                 return key
     return None
@@ -4751,7 +5121,9 @@ def _guardrail_decision(
     require_mfa_for_prod = bool(policy.get("require_mfa_for_prod", False))
     if require_mfa_for_prod and stage_allowed("input"):
         applied.append("require_mfa_for_prod")
-        if environment == "prod" and not payload.mfa_verified:
+        from app.services.runtime_env import is_prod_target_environment
+
+        if is_prod_target_environment(environment) and not payload.mfa_verified:
             reasons.append("mfa must be verified for prod usage")
 
     deny_on_weekends = bool(policy.get("deny_on_weekends", False))
@@ -5154,9 +5526,12 @@ def create_key(
     authn_method = str(getattr(payload, "authn_method", None) or "token").strip().lower() or "token"
     if authn_method not in {"token", "oidc", "workload_identity"}:
         authn_method = "token"
+    from app.services.virtual_key_secrets import mint_virtual_key_bearer
+
+    _bearer, key_hash = mint_virtual_key_bearer()
     key = VirtualKey(
         key_id=key_id,
-        key_hash=str(uuid4()),
+        key_hash=key_hash,
         owner_scope_type=owner_scope_type,
         owner_scope_id=owner_scope_id,
         allowed_endpoint_families=payload.allowed_endpoint_families,
@@ -5176,6 +5551,7 @@ def create_key(
         resource_type="virtual_key",
         resource_id=key.key_id,
         trace_id=f"trace-{key.key_id}",
+        action_context={"bearer_returned": False, "key_hash_alg": "vkh1"},
     )
     db.commit()
     db.refresh(key)
@@ -5476,7 +5852,10 @@ def rotate_key(
     if not key:
         raise HTTPException(status_code=404, detail="Key not found")
 
-    key.key_hash = str(uuid4())
+    from app.services.virtual_key_secrets import mint_virtual_key_bearer
+
+    bearer, key_hash = mint_virtual_key_bearer()
+    key.key_hash = key_hash
     create_audit_event(
         db,
         actor_id=ctx.actor_id,
@@ -5484,6 +5863,7 @@ def rotate_key(
         resource_type="virtual_key",
         resource_id=key.key_id,
         trace_id=f"trace-{key.key_id}",
+        action_context={"key_hash_alg": "vkh1"},
     )
     db.commit()
     logger.info(
@@ -5497,7 +5877,7 @@ def rotate_key(
             }
         ),
     )
-    return {"key_id": key_id, "rotation_status": "rotated"}
+    return {"key_id": key_id, "rotation_status": "rotated", "issued_virtual_key_token": bearer}
 
 
 @router.post(
@@ -5736,8 +6116,11 @@ def execute_key_rotation_schedule_now(
     if _is_prod_environment(environment):
         require_dual_approval(ctx)
 
+    from app.services.virtual_key_secrets import mint_virtual_key_bearer
+
     now = datetime.utcnow()
-    key.key_hash = str(uuid4())
+    _bearer, key_hash = mint_virtual_key_bearer()
+    key.key_hash = key_hash
     target["last_run_at"] = now.isoformat() + "Z"
     target["next_run_at"] = (now + timedelta(hours=int(target.get("interval_hours") or 24))).isoformat() + "Z"
     target["updated_at"] = now.isoformat() + "Z"
@@ -5751,6 +6134,7 @@ def execute_key_rotation_schedule_now(
         resource_type="virtual_key",
         resource_id=key.key_id,
         trace_id=f"trace-{key.key_id}",
+        action_context={"key_hash_alg": "vkh1"},
     )
     create_audit_event(
         db,
@@ -5759,6 +6143,7 @@ def execute_key_rotation_schedule_now(
         resource_type="virtual_key",
         resource_id=key.key_id,
         trace_id=f"trace-{key.key_id}",
+        action_context={"key_hash_alg": "vkh1", "source": "rotation_schedule"},
     )
     db.commit()
     return {
@@ -5768,6 +6153,7 @@ def execute_key_rotation_schedule_now(
         "environment": environment,
         "executed_at": now.isoformat() + "Z",
         "next_run_at": target["next_run_at"],
+        "issued_virtual_key_token": _bearer,
     }
 
 
@@ -5810,7 +6196,10 @@ def tick_due_key_rotation_schedules(
                     skipped_prod += 1
                     continue
                 require_dual_approval(ctx)
-            key.key_hash = str(uuid4())
+            from app.services.virtual_key_secrets import mint_virtual_key_bearer
+
+            _bearer, key_hash = mint_virtual_key_bearer()
+            key.key_hash = key_hash
             target["last_run_at"] = now.isoformat() + "Z"
             target["next_run_at"] = (now + timedelta(hours=int(target.get("interval_hours") or 24))).isoformat() + "Z"
             target["updated_at"] = now.isoformat() + "Z"
@@ -6320,6 +6709,3467 @@ def get_route_fallbacks(
 ):
     result = get_route_provider_priority(route_policy_id=route_policy_id, request_tag=request_tag, db=db, ctx=ctx)
     return RouteFallbackPolicyResponse(**result)
+
+
+@router.get(
+    "/gateway/best-practices/posture",
+    response_model=GatewayBestPracticesPostureResponse,
+    summary="AI gateway market best-practices posture scorecard",
+    description=(
+        "Scores the control plane against 2026 AI-gateway market practices: multi-provider catalog, "
+        "live credential readiness, ordered failover, health-check routing, virtual keys, budgets, "
+        "and inference cache. Returns prioritized operator next actions."
+    ),
+)
+def get_gateway_best_practices_posture(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_best_practices import build_gateway_best_practices_posture
+
+    payload = build_gateway_best_practices_posture(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.posture.read",
+        resource_type="gateway_best_practices",
+        resource_id="posture",
+        trace_id=f"trace-gateway-best-practices-{uuid4()}",
+        action_context={
+            "score": payload.get("score"),
+            "band": payload.get("band"),
+            "gap_count": len(payload.get("top_gaps") or []),
+        },
+    )
+    db.commit()
+    return payload
+
+
+@router.post(
+    "/gateway/best-practices/leadership-bootstrap",
+    response_model=GatewayLeadershipBootstrapResponse,
+    summary="Raise best-practices posture + optional CPLI enhance",
+    description=(
+        "Idempotently seeds fallback chain + health-check route, cache policy, virtual key, and budget "
+        "when missing. With enhance_cpli=true (default), also Force Reconciles and attests CPLI. "
+        "Does not forge live provider credentials. Production requires dual approval."
+    ),
+)
+def post_gateway_leadership_bootstrap(
+    payload: GatewayLeadershipBootstrapRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    if _leadership_bootstrap_requires_dual_approval(request_environment=payload.environment):
+        try:
+            require_dual_approval(ctx)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                create_audit_event(
+                    db,
+                    actor_id=ctx.actor_id,
+                    action_type="gateway.best_practices.leadership_bootstrap",
+                    resource_type="gateway_best_practices",
+                    resource_id="leadership-bootstrap",
+                    trace_id=f"trace-gateway-leadership-bootstrap-deny-{uuid4()}",
+                    decision_outcome="deny",
+                    environment=payload.environment,
+                    action_context={
+                        "reason": "dual_approval_required",
+                        "app_env_production": _runtime_is_production(),
+                        "request_environment": payload.environment,
+                    },
+                )
+                db.commit()
+            raise
+
+    enhance_cpli = bool(payload.enhance_cpli)
+    if enhance_cpli:
+        from app.services.control_plane_contract import resolve_control_readonly
+
+        if resolve_control_readonly(db):
+            create_audit_event(
+                db,
+                actor_id=ctx.actor_id,
+                action_type="gateway.best_practices.leadership_bootstrap",
+                resource_type="gateway_best_practices",
+                resource_id="leadership-bootstrap",
+                trace_id=f"trace-gateway-leadership-bootstrap-freeze-{uuid4()}",
+                decision_outcome="deny",
+                environment=payload.environment,
+                action_context={"reason": "PLANE_CONTROL_READONLY", "enhance_cpli": True},
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error_code": "PLANE_CONTROL_READONLY",
+                    "message": "Control-plane mutations are frozen (PLANE_CONTROL_READONLY or runtime freeze).",
+                    "hint": "Clear runtime freeze via POST /platform/control-plane/freeze, or unset PLANE_CONTROL_READONLY.",
+                },
+            )
+
+    probe_peer = _resolve_leadership_bootstrap_probe_peer(
+        payload.probe_peer,
+        enhance_cpli=enhance_cpli,
+    )
+    from app.services.gateway_best_practices import raise_engineering_leadership_scores
+
+    result = raise_engineering_leadership_scores(
+        db,
+        actor_id=ctx.actor_id,
+        tenant_id=payload.tenant_id,
+        environment=payload.environment,
+        max_hops=payload.max_hops,
+        enhance_cpli=enhance_cpli,
+        probe_peer=probe_peer,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.leadership_bootstrap",
+        resource_type="gateway_best_practices",
+        resource_id=result.get("route_policy_id") or "leadership-bootstrap",
+        trace_id=f"trace-gateway-leadership-bootstrap-{uuid4()}",
+        action_context={
+            "before_score": (result.get("before") or {}).get("score"),
+            "after_score": (result.get("after") or {}).get("score"),
+            "delta": result.get("delta"),
+            "environment": payload.environment,
+            "app_env_production": _runtime_is_production(),
+            "enhance_cpli": enhance_cpli,
+            "probe_peer": probe_peer,
+            "probe_peer_requested": payload.probe_peer,
+            "cpli_delta": ((result.get("cpli") or {}).get("delta")),
+            "actions": [row.get("action") for row in (result.get("actions") or [])],
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post(
+    "/gateway/best-practices/fallback-suggest",
+    response_model=GatewayFallbackSuggestResponse,
+    summary="Suggest readiness-aware multi-provider fallback chain",
+    description=(
+        "Builds an ordered priority_order using live-ready providers and preferred catalog models "
+        "(Datadog/Portkey-style reliability practice). Does not mutate route policies; operators "
+        "review and save via Route Priority / Fallbacks APIs."
+    ),
+)
+def post_gateway_fallback_suggest(
+    payload: GatewayFallbackSuggestRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_best_practices import suggest_readiness_aware_fallback_chain
+
+    suggestion = suggest_readiness_aware_fallback_chain(
+        db,
+        max_hops=payload.max_hops,
+        prefer_live_only=payload.prefer_live_only,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.fallback_suggest",
+        resource_type="gateway_best_practices",
+        resource_id="fallback-suggest",
+        trace_id=f"trace-gateway-fallback-suggest-{uuid4()}",
+        action_context={
+            "target_count": len(suggestion.get("priority_order") or []),
+            "live_ready_count": suggestion.get("live_ready_count"),
+            "max_hops": payload.max_hops,
+            "prefer_live_only": payload.prefer_live_only,
+        },
+    )
+    db.commit()
+    return suggestion
+
+
+@router.post(
+    "/gateway/best-practices/auto-route",
+    response_model=GatewayAutoRouteResponse,
+    summary="Classify prompt complexity and suggest tier model",
+    description=(
+        "LiteLLM Auto Router / OpenRouter-style heuristic: score prompt complexity "
+        "(simple|standard|complex) and select a preferred catalog model, preferring live-ready providers."
+    ),
+)
+def post_gateway_auto_route(
+    payload: GatewayAutoRouteRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import build_auto_route_with_pack11
+
+    decision = build_auto_route_with_pack11(
+        db,
+        prompt_text=payload.prompt_text,
+        prefer_live_only=payload.prefer_live_only,
+        max_candidates_per_tier=payload.max_candidates_per_tier,
+        strategy=payload.strategy,
+        has_tools=payload.has_tools,
+        json_response_format=payload.json_response_format,
+        message_count=payload.message_count,
+        refine_with_judge=payload.refine_with_judge,
+        use_telemetry_ranking=payload.use_telemetry_ranking,
+        route_policy_id=payload.route_policy_id,
+        request_tag=payload.request_tag,
+        use_cache=payload.use_cache,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.auto_route",
+        resource_type="gateway_best_practices",
+        resource_id="auto-route",
+        trace_id=f"trace-gateway-auto-route-{uuid4()}",
+        action_context={
+            "tier": (decision.get("complexity") or {}).get("tier"),
+            "score": (decision.get("complexity") or {}).get("score"),
+            "selected_model": decision.get("selected_model"),
+            "strategy": decision.get("strategy"),
+            "refine_with_judge": decision.get("refine_with_judge"),
+            "telemetry_enabled": bool((decision.get("telemetry_ranking") or {}).get("enabled")),
+            "cache_hit": decision.get("cache_hit"),
+            "strategy_policy_source": (decision.get("strategy_policy") or {}).get("source"),
+        },
+    )
+    db.commit()
+    return decision
+
+
+@router.get(
+    "/gateway/best-practices/attribution-analytics",
+    response_model=GatewayAttributionAnalyticsResponse,
+    summary="Intended→actual model attribution analytics",
+    description=(
+        "Long-window rollup of intended vs actual model usage from CostEvent attribution properties "
+        "(switch rate, top pairs, auto-route tier mix). Leadership differentiator vs proxy-only gateways."
+    ),
+)
+def get_gateway_attribution_analytics(
+    hours: int = Query(default=24, ge=1, le=168),
+    environment: Optional[str] = Query(default=None),
+    exclude_warmup: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import build_attribution_analytics
+
+    payload = build_attribution_analytics(
+        db,
+        hours=hours,
+        environment=environment,
+        exclude_warmup=exclude_warmup,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.attribution_analytics.read",
+        resource_type="gateway_best_practices",
+        resource_id="attribution-analytics",
+        trace_id=f"trace-gateway-attribution-{uuid4()}",
+        action_context={
+            "hours": hours,
+            "attributed_events": payload.get("attributed_events"),
+            "switch_rate_percent": payload.get("switch_rate_percent"),
+        },
+    )
+    db.commit()
+    return payload
+
+
+@router.get(
+    "/gateway/best-practices/leadership-index",
+    response_model=GatewayLeadershipIndexResponse,
+    summary="AI gateway market leadership index",
+    description=(
+        "Composite leadership score from best-practices posture, live readiness, "
+        "attribution analytics coverage, and auto-router catalog coverage."
+    ),
+)
+def get_gateway_leadership_index(
+    hours: int = Query(default=24, ge=1, le=168),
+    exclude_warmup: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import build_gateway_leadership_index
+
+    payload = build_gateway_leadership_index(db, hours=hours, exclude_warmup=exclude_warmup)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.leadership_index.read",
+        resource_type="gateway_best_practices",
+        resource_id="leadership-index",
+        trace_id=f"trace-gateway-leadership-index-{uuid4()}",
+        action_context={"score": payload.get("score"), "band": payload.get("band")},
+    )
+    db.commit()
+    return payload
+
+
+@router.get(
+    "/gateway/best-practices/model-rankings",
+    response_model=GatewayModelRankingsResponse,
+    summary="Telemetry model liquidity rankings",
+    description=(
+        "Ranks models from local CostEvent telemetry (volume, stability, cost, latency, auto-route hits). "
+        "Used to steer balanced/quality auto-route selection."
+    ),
+)
+def get_gateway_model_rankings(
+    hours: int = Query(default=168, ge=1, le=168),
+    environment: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import build_model_liquidity_ranking
+
+    payload = build_model_liquidity_ranking(db, hours=hours, environment=environment)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.model_rankings.read",
+        resource_type="gateway_best_practices",
+        resource_id="model-rankings",
+        trace_id=f"trace-gateway-model-rankings-{uuid4()}",
+        action_context={
+            "hours": hours,
+            "ranked_models": len(payload.get("models") or []),
+            "leader_signal": payload.get("leader_signal"),
+        },
+    )
+    db.commit()
+    return payload
+
+
+@router.post(
+    "/gateway/best-practices/leadership-warmup",
+    response_model=GatewayLeadershipWarmupResponse,
+    summary="Bootstrap attributed traffic for leadership analytics",
+    description=(
+        "Creates attributed CostEvents from auto-route decisions over sample prompts so leadership "
+        "index and model rankings can leave needs_traffic. Explicit operator action; audited."
+    ),
+)
+def post_gateway_leadership_warmup(
+    payload: GatewayLeadershipWarmupRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    # Item 60: production dual-approval for leadership warmup.
+    if _is_prod_environment(payload.environment):
+        require_dual_approval(ctx)
+    # Pack 10 item 109: warmup rate-limit guard.
+    from app.services.gateway_leadership_pack10 import run_guarded_warmup
+
+    guarded = run_guarded_warmup(
+        db,
+        samples=payload.samples,
+        environment=payload.environment,
+        actor_id=ctx.actor_id,
+        strategy=payload.strategy,
+        max_per_hour=3,
+    )
+    if guarded.get("blocked"):
+        raise HTTPException(status_code=429, detail=guarded.get("message") or "Warmup rate limited")
+    result = guarded.get("result") or {}
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.leadership_warmup",
+        resource_type="gateway_best_practices",
+        resource_id="leadership-warmup",
+        trace_id=f"trace-gateway-leadership-warmup-{uuid4()}",
+        action_context={
+            "created_events": result.get("created_events"),
+            "environment": result.get("environment"),
+            "strategy": result.get("strategy"),
+            "rate_guard": guarded.get("guard"),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/auto-route-compare")
+def post_gateway_auto_route_compare(
+    payload: GatewayAutoRouteCompareRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import compare_auto_route_strategies
+
+    result = compare_auto_route_strategies(
+        db,
+        prompt_text=payload.prompt_text,
+        prefer_live_only=payload.prefer_live_only,
+        refine_with_judge=payload.refine_with_judge,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.auto_route_compare",
+        resource_type="gateway_best_practices",
+        resource_id="auto-route-compare",
+        trace_id=f"trace-gateway-auto-route-compare-{uuid4()}",
+        action_context={"distinct_model_count": result.get("distinct_model_count")},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/auto-route-batch")
+def post_gateway_auto_route_batch(
+    payload: GatewayAutoRouteBatchRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import batch_auto_route_classify
+
+    result = batch_auto_route_classify(
+        db,
+        prompts=payload.prompts,
+        strategy=payload.strategy,
+        prefer_live_only=payload.prefer_live_only,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.auto_route_batch",
+        resource_type="gateway_best_practices",
+        resource_id="auto-route-batch",
+        trace_id=f"trace-gateway-auto-route-batch-{uuid4()}",
+        action_context={"count": result.get("count")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/savings-estimate")
+def get_gateway_savings_estimate(
+    hours: int = Query(default=168, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import estimate_tier_savings
+
+    return estimate_tier_savings(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/circuit-breaker-recommendations")
+def get_gateway_circuit_breaker_recommendations(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import build_circuit_breaker_recommendations
+
+    return build_circuit_breaker_recommendations(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/fallback-suggest-ranked")
+def post_gateway_fallback_suggest_ranked(
+    max_hops: int = Query(default=3, ge=1, le=8),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership import ranking_aware_fallback_suggest
+
+    suggestion = ranking_aware_fallback_suggest(db, max_hops=max_hops)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.fallback_suggest_ranked",
+        resource_type="gateway_best_practices",
+        resource_id="fallback-suggest-ranked",
+        trace_id=f"trace-gateway-fallback-ranked-{uuid4()}",
+        action_context={"target_count": len(suggestion.get("priority_order") or [])},
+    )
+    db.commit()
+    return suggestion
+
+
+@router.get("/gateway/best-practices/sdk-presets")
+def get_gateway_sdk_presets(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import list_sdk_instrumentation_presets
+
+    return list_sdk_instrumentation_presets()
+
+
+@router.get("/gateway/best-practices/evidence-export")
+def get_gateway_leadership_evidence_export(
+    hours: int = Query(default=24, ge=1, le=168),
+    exclude_warmup: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import export_leadership_evidence_pack
+
+    pack = export_leadership_evidence_pack(db, hours=hours, exclude_warmup=exclude_warmup)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.evidence_export",
+        resource_type="gateway_best_practices",
+        resource_id="evidence-export",
+        trace_id=f"trace-gateway-leadership-evidence-{uuid4()}",
+        action_context={"hours": hours, "score": (pack.get("leadership_index") or {}).get("score")},
+    )
+    db.commit()
+    return pack
+
+
+@router.post("/gateway/best-practices/leadership-snapshot")
+def post_gateway_leadership_snapshot(
+    hours: int = Query(default=24, ge=1, le=168),
+    exclude_warmup: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership import record_leadership_snapshot
+
+    result = record_leadership_snapshot(db, hours=hours, exclude_warmup=exclude_warmup)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.leadership_snapshot",
+        resource_type="gateway_best_practices",
+        resource_id="leadership-snapshot",
+        trace_id=f"trace-gateway-leadership-snapshot-{uuid4()}",
+        action_context={"score": (result.get("snapshot") or {}).get("score")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/leadership-history")
+def get_gateway_leadership_history(
+    limit: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import list_leadership_history
+
+    return list_leadership_history(db, limit=limit)
+
+
+@router.get("/gateway/best-practices/leadership-alerts")
+def get_gateway_leadership_alerts(
+    hours: int = Query(default=24, ge=1, le=168),
+    floor_score: float = Query(default=70.0, ge=0, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership import build_leadership_alerts
+
+    return build_leadership_alerts(db, hours=hours, floor_score=floor_score)
+
+
+@router.post("/gateway/best-practices/live-judge-refine")
+def post_gateway_live_judge_refine(
+    payload: GatewayLiveJudgeRefineRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack6 import live_judge_refine
+
+    result = live_judge_refine(db, prompt_text=payload.prompt_text, force_live=payload.force_live)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.live_judge_refine",
+        resource_type="gateway_best_practices",
+        resource_id="live-judge-refine",
+        trace_id=f"trace-gateway-live-judge-{uuid4()}",
+        action_context={"mode": result.get("mode"), "live_attempted": result.get("live_attempted")},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/openrouter-liquidity-import")
+def post_gateway_openrouter_liquidity_import(
+    payload: GatewayOpenRouterLiquidityImportRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack6 import import_openrouter_liquidity
+
+    result = import_openrouter_liquidity(db, use_seed=payload.use_seed, models=payload.models)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.openrouter_liquidity_import",
+        resource_type="gateway_best_practices",
+        resource_id="openrouter-liquidity-import",
+        trace_id=f"trace-gateway-openrouter-liquidity-{uuid4()}",
+        action_context={"count": result.get("count"), "source": result.get("source")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/openrouter-liquidity")
+def get_gateway_openrouter_liquidity(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack6 import get_openrouter_liquidity
+
+    return get_openrouter_liquidity(db)
+
+
+@router.get("/gateway/best-practices/binding-readiness-inventory")
+def get_gateway_binding_readiness_inventory(
+    tenant_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack6 import build_binding_readiness_inventory
+
+    return build_binding_readiness_inventory(db, tenant_id=tenant_id)
+
+
+@router.get("/gateway/best-practices/attribution-timeseries")
+def get_gateway_attribution_timeseries(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack6 import build_attribution_timeseries
+
+    return build_attribution_timeseries(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/auto-route-experiments")
+def post_gateway_auto_route_experiment(
+    payload: GatewayAutoRouteExperimentCreateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack6 import create_auto_route_experiment
+
+    result = create_auto_route_experiment(
+        db,
+        name=payload.name,
+        strategies=payload.strategies,
+        traffic_split=payload.traffic_split,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.auto_route_experiment_create",
+        resource_type="gateway_best_practices",
+        resource_id=(result.get("experiment") or {}).get("experiment_id") or "auto-route-experiment",
+        trace_id=f"trace-gateway-auto-route-experiment-{uuid4()}",
+        action_context={"strategies": payload.strategies},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/auto-route-experiments")
+def get_gateway_auto_route_experiments(
+    limit: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack6 import list_auto_route_experiments
+
+    return list_auto_route_experiments(db, limit=limit)
+
+
+@router.post("/gateway/best-practices/fallback-quality-gate")
+def post_gateway_fallback_quality_gate(
+    payload: GatewayFallbackQualityGateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack6 import evaluate_fallback_quality_gate
+
+    result = evaluate_fallback_quality_gate(
+        db,
+        min_live_ready=payload.min_live_ready,
+        min_leadership_score=payload.min_leadership_score,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.fallback_quality_gate",
+        resource_type="gateway_best_practices",
+        resource_id="fallback-quality-gate",
+        trace_id=f"trace-gateway-fallback-quality-gate-{uuid4()}",
+        action_context={"passed": result.get("passed"), "decision": result.get("decision")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/provider-health-scores")
+def get_gateway_provider_health_scores(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack6 import build_provider_health_scores
+
+    return build_provider_health_scores(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/auto-route-stream-frames")
+def post_gateway_auto_route_stream_frames(
+    payload: GatewayAutoRouteStreamFramesRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack6 import build_streaming_auto_route_frames
+
+    return build_streaming_auto_route_frames(db, prompt_text=payload.prompt_text, strategy=payload.strategy)
+
+
+@router.post("/gateway/best-practices/auto-route-explain")
+def post_gateway_auto_route_explain(
+    payload: GatewayAutoRouteExplainRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack6 import explain_auto_route_decision
+
+    return explain_auto_route_decision(
+        db,
+        prompt_text=payload.prompt_text,
+        strategy=payload.strategy,
+        max_budget_tier=payload.max_budget_tier,
+        latency_slo_ms=payload.latency_slo_ms,
+        allowed_regions=payload.allowed_regions,
+        tools_json=payload.tools_json,
+        attachment_types=payload.attachment_types,
+    )
+
+
+@router.get("/gateway/best-practices/modality-advisor")
+def get_gateway_modality_advisor(
+    modality: str = Query(default="embeddings", min_length=1, max_length=32),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack6 import advise_modality_models
+
+    return advise_modality_models(db, modality=modality)
+
+
+@router.post("/gateway/best-practices/prompt-auto-route-bind")
+def post_gateway_prompt_auto_route_bind(
+    payload: GatewayPromptAutoRouteBindRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack7 import bind_prompt_registry_auto_route
+
+    result = bind_prompt_registry_auto_route(
+        db,
+        prompt_registry_id=payload.prompt_registry_id,
+        strategy=payload.strategy,
+        prefer_live_only=payload.prefer_live_only,
+        max_budget_tier=payload.max_budget_tier,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.prompt_auto_route_bind",
+        resource_type="gateway_best_practices",
+        resource_id=payload.prompt_registry_id,
+        trace_id=f"trace-gateway-prompt-auto-route-bind-{uuid4()}",
+        action_context={"bound": result.get("bound")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/prompt-auto-route-bindings")
+def get_gateway_prompt_auto_route_bindings(
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import list_prompt_auto_route_bindings
+
+    return list_prompt_auto_route_bindings(db, limit=limit)
+
+
+@router.get("/gateway/best-practices/route-draft-auto-route-recommend")
+def get_gateway_route_draft_auto_route_recommend(
+    draft_id: str = Query(min_length=1, max_length=128),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import recommend_route_draft_auto_route
+
+    return recommend_route_draft_auto_route(db, draft_id=draft_id)
+
+
+@router.post("/gateway/best-practices/canary-auto-route-explain")
+def post_gateway_canary_auto_route_explain(
+    payload: GatewayCanaryAutoRouteExplainRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import explain_canary_auto_route_interaction
+
+    return explain_canary_auto_route_interaction(
+        db,
+        route_policy_id=payload.route_policy_id,
+        prompt_text=payload.prompt_text,
+    )
+
+
+@router.get("/gateway/best-practices/mirror-attribution-tags")
+def get_gateway_mirror_attribution_tags(
+    hours: int = Query(default=24, ge=1, le=168),
+    route_policy_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import build_mirror_attribution_tags
+
+    return build_mirror_attribution_tags(db, route_policy_id=route_policy_id, hours=hours)
+
+
+@router.get("/gateway/best-practices/cache-auto-route-metrics")
+def get_gateway_cache_auto_route_metrics(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import build_cache_auto_route_metrics
+
+    return build_cache_auto_route_metrics(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/virtual-key-auto-route-policy")
+def post_gateway_virtual_key_auto_route_policy(
+    payload: GatewayVirtualKeyAutoRoutePolicyRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack7 import upsert_virtual_key_auto_route_policy
+
+    result = upsert_virtual_key_auto_route_policy(
+        db,
+        virtual_key_id=payload.virtual_key_id,
+        strategy=payload.strategy,
+        prefer_live_only=payload.prefer_live_only,
+        max_budget_tier=payload.max_budget_tier,
+        enabled=payload.enabled,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.virtual_key_auto_route_policy",
+        resource_type="gateway_best_practices",
+        resource_id=payload.virtual_key_id,
+        trace_id=f"trace-gateway-vk-auto-route-policy-{uuid4()}",
+        action_context={"enabled": payload.enabled, "strategy": payload.strategy},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/virtual-key-auto-route-policies")
+def get_gateway_virtual_key_auto_route_policies(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import list_virtual_key_auto_route_policies
+
+    return list_virtual_key_auto_route_policies(db, limit=limit)
+
+
+@router.get("/gateway/best-practices/team-ranking-leaderboards")
+def get_gateway_team_ranking_leaderboards(
+    hours: int = Query(default=168, ge=1, le=168),
+    owner_scope_prefix: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import build_team_ranking_leaderboard
+
+    return build_team_ranking_leaderboard(
+        db, hours=hours, owner_scope_prefix=owner_scope_prefix, limit=limit
+    )
+
+
+@router.get("/gateway/best-practices/environment-diff-leadership")
+def get_gateway_environment_diff_leadership(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import build_environment_diff_leadership
+
+    return build_environment_diff_leadership(db, hours=hours)
+
+
+@router.put("/gateway/best-practices/alert-channels")
+def put_gateway_alert_channels(
+    payload: GatewayAlertChannelsRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack7 import upsert_alert_channels
+
+    result = upsert_alert_channels(
+        db,
+        webhook_url=payload.webhook_url,
+        slack_webhook_url=payload.slack_webhook_url,
+        email_to=payload.email_to,
+        enabled=payload.enabled,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.alert_channels_upsert",
+        resource_type="gateway_best_practices",
+        resource_id="alert-channels",
+        trace_id=f"trace-gateway-alert-channels-{uuid4()}",
+        action_context={"enabled": payload.enabled},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/alert-channels")
+def get_gateway_alert_channels(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import get_alert_channels
+
+    return get_alert_channels(db)
+
+
+@router.post("/gateway/best-practices/alert-dispatch")
+def post_gateway_alert_dispatch(
+    payload: GatewayAlertDispatchRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack7 import evaluate_and_queue_leadership_alerts
+
+    result = evaluate_and_queue_leadership_alerts(
+        db,
+        hours=payload.hours,
+        floor_score=payload.floor_score,
+        dry_run=payload.dry_run,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.alert_dispatch",
+        resource_type="gateway_best_practices",
+        resource_id=result.get("dispatch_id") or "alert-dispatch",
+        trace_id=f"trace-gateway-alert-dispatch-{uuid4()}",
+        action_context={"dry_run": payload.dry_run, "alert_count": result.get("alert_count")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/qbr-embed")
+def get_gateway_qbr_embed(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import build_qbr_leadership_embed
+
+    return build_qbr_leadership_embed(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/compliance-leadership-evidence")
+def get_gateway_compliance_leadership_evidence(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import build_compliance_leadership_evidence
+
+    return build_compliance_leadership_evidence(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/sdk-auto-route-helpers")
+def get_gateway_sdk_auto_route_helpers(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import sdk_auto_route_helper_contract
+
+    return sdk_auto_route_helper_contract()
+
+
+@router.post("/gateway/best-practices/otel-attribution-attributes")
+def post_gateway_otel_attribution_attributes(
+    payload: GatewayOtelAttributesRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import build_otel_attribution_attributes
+
+    return build_otel_attribution_attributes(
+        intended_model=payload.intended_model,
+        actual_model=payload.actual_model,
+        auto_route_tier=payload.auto_route_tier,
+        strategy=payload.strategy,
+        trace_id=payload.trace_id,
+    )
+
+
+@router.get("/gateway/best-practices/prometheus-metrics")
+def get_gateway_prometheus_metrics(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import build_prometheus_leadership_metrics
+    from fastapi.responses import PlainTextResponse
+
+    payload = build_prometheus_leadership_metrics(db, hours=hours)
+    return PlainTextResponse(
+        content=str(payload.get("metrics_text") or ""),
+        media_type=str(payload.get("content_type") or "text/plain; version=0.0.4"),
+    )
+
+
+@router.get("/gateway/best-practices/grafana-dashboard")
+def get_gateway_grafana_dashboard(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import build_grafana_dashboard_json
+
+    return build_grafana_dashboard_json(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/datadog-tile-notes")
+def get_gateway_datadog_tile_notes(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack7 import build_datadog_marketplace_notes
+
+    return build_datadog_marketplace_notes()
+
+
+@router.get("/gateway/best-practices/model-deprecation-advisor")
+def get_gateway_model_deprecation_advisor(
+    hours: int = Query(default=168, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import advise_model_deprecations
+
+    return advise_model_deprecations(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/shadow-ranking-validation")
+def get_gateway_shadow_ranking_validation(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import validate_shadow_traffic_rankings
+
+    return validate_shadow_traffic_rankings(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/why-this-model-card")
+def post_gateway_why_this_model_card(
+    payload: GatewayWhyModelCardRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import explain_why_this_model_card
+
+    return explain_why_this_model_card(db, prompt_text=payload.prompt_text, strategy=payload.strategy)
+
+
+@router.post("/gateway/best-practices/residency-model-filter")
+def post_gateway_residency_model_filter(
+    payload: GatewayResidencyFilterRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import filter_models_by_residency
+
+    return filter_models_by_residency(db, allowed_regions=payload.allowed_regions)
+
+
+@router.get("/gateway/best-practices/cost-switch-correlation")
+def get_gateway_cost_switch_correlation(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import correlate_cost_anomaly_model_switches
+
+    return correlate_cost_anomaly_model_switches(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/replay-strategies")
+def post_gateway_replay_strategies(
+    payload: GatewayReplayStrategyRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import replay_auto_route_alternate_strategy
+
+    return replay_auto_route_alternate_strategy(
+        db, prompt_text=payload.prompt_text, strategies=payload.strategies
+    )
+
+
+@router.post("/gateway/best-practices/csv-classify")
+def post_gateway_csv_classify(
+    payload: GatewayCsvClassifyRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import batch_csv_auto_route_classify
+
+    result = batch_csv_auto_route_classify(db, csv_text=payload.csv_text, strategy=payload.strategy)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.csv_classify",
+        resource_type="gateway_best_practices",
+        resource_id="csv-classify",
+        trace_id=f"trace-gateway-csv-classify-{uuid4()}",
+        action_context={"count": result.get("count")},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/nightly-snapshot")
+def post_gateway_nightly_snapshot(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import run_nightly_leadership_snapshot
+
+    result = run_nightly_leadership_snapshot(db, hours=hours)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.nightly_snapshot",
+        resource_type="gateway_best_practices",
+        resource_id="nightly-snapshot",
+        trace_id=f"trace-gateway-nightly-snapshot-{uuid4()}",
+        action_context={"score": ((result.get("result") or {}).get("snapshot") or {}).get("score")},
+    )
+    db.commit()
+    return result
+
+
+@router.put("/gateway/best-practices/warmup-retention")
+def put_gateway_warmup_retention(
+    payload: GatewayWarmupRetentionRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import upsert_warmup_retention_policy
+
+    result = upsert_warmup_retention_policy(
+        db, retain_hours=payload.retain_hours, max_events=payload.max_events
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.warmup_retention",
+        resource_type="gateway_best_practices",
+        resource_id="warmup-retention",
+        trace_id=f"trace-gateway-warmup-retention-{uuid4()}",
+        action_context={"retain_hours": payload.retain_hours},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/warmup-purge")
+def post_gateway_warmup_purge(
+    payload: GatewayWarmupPurgeRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import purge_warmup_events
+
+    result = purge_warmup_events(db, dry_run=payload.dry_run)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.warmup_purge",
+        resource_type="gateway_best_practices",
+        resource_id="warmup-purge",
+        trace_id=f"trace-gateway-warmup-purge-{uuid4()}",
+        action_context={"dry_run": payload.dry_run, "matched": result.get("matched"), "deleted": result.get("deleted")},
+    )
+    db.commit()
+    return result
+
+
+@router.put("/gateway/best-practices/ranking-weights")
+def put_gateway_ranking_weights(
+    payload: GatewayRankingWeightsRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import upsert_ranking_weights
+
+    result = upsert_ranking_weights(
+        db,
+        weights={
+            "volume": payload.volume,
+            "stability": payload.stability,
+            "cost": payload.cost,
+            "latency": payload.latency,
+        },
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.ranking_weights",
+        resource_type="gateway_best_practices",
+        resource_id="ranking-weights",
+        trace_id=f"trace-gateway-ranking-weights-{uuid4()}",
+        action_context=result.get("weights") or {},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/ranking-weights")
+def get_gateway_ranking_weights(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import get_ranking_weights
+
+    return get_ranking_weights(db)
+
+
+@router.put("/gateway/best-practices/judge-thresholds")
+def put_gateway_judge_thresholds(
+    payload: GatewayJudgeThresholdsRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import upsert_judge_thresholds
+
+    result = upsert_judge_thresholds(
+        db, near_standard=payload.near_standard, near_complex=payload.near_complex
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.judge_thresholds",
+        resource_type="gateway_best_practices",
+        resource_id="judge-thresholds",
+        trace_id=f"trace-gateway-judge-thresholds-{uuid4()}",
+        action_context=result.get("thresholds") or {},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/judge-thresholds")
+def get_gateway_judge_thresholds(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import get_judge_thresholds
+
+    return get_judge_thresholds(db)
+
+
+@router.post("/gateway/best-practices/route-strategy-policy")
+def post_gateway_route_strategy_policy(
+    payload: GatewayRouteStrategyPolicyRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import upsert_route_strategy_policy
+
+    result = upsert_route_strategy_policy(
+        db,
+        route_policy_id=payload.route_policy_id,
+        strategy=payload.strategy,
+        prefer_live_only=payload.prefer_live_only,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.route_strategy_policy",
+        resource_type="gateway_best_practices",
+        resource_id=payload.route_policy_id,
+        trace_id=f"trace-gateway-route-strategy-{uuid4()}",
+        action_context={"strategy": payload.strategy},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/request-tag-strategy-policy")
+def post_gateway_request_tag_strategy_policy(
+    payload: GatewayRequestTagStrategyPolicyRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import upsert_request_tag_strategy_policy
+
+    result = upsert_request_tag_strategy_policy(
+        db, request_tag=payload.request_tag, strategy=payload.strategy
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.request_tag_strategy_policy",
+        resource_type="gateway_best_practices",
+        resource_id=payload.request_tag,
+        trace_id=f"trace-gateway-tag-strategy-{uuid4()}",
+        action_context={"strategy": payload.strategy},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/owner-scope-rankings")
+def get_gateway_owner_scope_rankings(
+    owner_scope: str = Query(min_length=1, max_length=128),
+    hours: int = Query(default=168, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import build_owner_scope_ranking_isolation
+
+    return build_owner_scope_ranking_isolation(db, owner_scope=owner_scope, hours=hours)
+
+
+@router.get("/gateway/best-practices/tenant-ranking-federation")
+def get_gateway_tenant_ranking_federation(
+    hours: int = Query(default=168, ge=1, le=168),
+    limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import build_multi_tenant_ranking_federation
+
+    return build_multi_tenant_ranking_federation(db, hours=hours, limit=limit)
+
+
+@router.get("/gateway/best-practices/model-cards")
+def get_gateway_model_cards(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import enrich_model_cards_from_catalog
+
+    return enrich_model_cards_from_catalog(db, limit=limit)
+
+
+@router.get("/gateway/best-practices/rankings-outage-overlay")
+def get_gateway_rankings_outage_overlay(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import overlay_provider_outages_on_rankings
+
+    return overlay_provider_outages_on_rankings(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/auto-apply-rankings-proposal")
+def post_gateway_auto_apply_rankings_proposal(
+    max_hops: int = Query(default=3, ge=1, le=8),
+    environment: str = Query(default="dev", min_length=1, max_length=32),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    if _is_prod_environment(environment):
+        require_dual_approval(ctx)
+    from app.services.gateway_leadership_pack8 import auto_apply_ranking_to_active_routes
+
+    result = auto_apply_ranking_to_active_routes(db, max_hops=max_hops)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.auto_apply_rankings_proposal",
+        resource_type="gateway_best_practices",
+        resource_id="auto-apply-rankings-proposal",
+        trace_id=f"trace-gateway-auto-apply-rankings-{uuid4()}",
+        action_context={"proposal_count": result.get("proposal_count"), "environment": environment},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/leadership-snapshot-diff")
+def get_gateway_leadership_snapshot_diff(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import diff_leadership_snapshots
+
+    return diff_leadership_snapshots(db)
+
+
+@router.get("/gateway/best-practices/signed-evidence")
+def get_gateway_signed_evidence(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import export_signed_leadership_evidence
+
+    return export_signed_leadership_evidence(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/auditor-share-link")
+def post_gateway_auditor_share_link(
+    payload: GatewayShareLinkRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import create_auditor_share_link
+
+    result = create_auditor_share_link(db, hours=payload.hours, ttl_seconds=payload.ttl_seconds)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.auditor_share_link",
+        resource_type="gateway_best_practices",
+        resource_id=result.get("share_id") or "auditor-share",
+        trace_id=f"trace-gateway-auditor-share-{uuid4()}",
+        action_context={"expires_at": result.get("expires_at")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/browser-extension-preset")
+def get_gateway_browser_extension_preset(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import browser_extension_instrumentation_preset
+
+    return browser_extension_instrumentation_preset()
+
+
+@router.post("/gateway/best-practices/ci-leadership-floor")
+def post_gateway_ci_leadership_floor(
+    payload: GatewayCiFloorRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import evaluate_ci_leadership_floor
+
+    return evaluate_ci_leadership_floor(db, floor_score=payload.floor_score)
+
+
+@router.post("/gateway/best-practices/release-gate-attestation")
+def post_gateway_release_gate_attestation(
+    payload: GatewayCiFloorRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import attest_release_gate_leadership
+
+    result = attest_release_gate_leadership(db, floor_score=payload.floor_score)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.release_gate_attestation",
+        resource_type="gateway_best_practices",
+        resource_id=result.get("attestation_id") or "release-gate",
+        trace_id=f"trace-gateway-release-gate-{uuid4()}",
+        action_context={"decision": result.get("decision")},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/chaos-provider-fail-drill")
+def post_gateway_chaos_provider_fail_drill(
+    payload: GatewayChaosDrillRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import run_chaos_provider_fail_drill
+
+    result = run_chaos_provider_fail_drill(db, provider_id=payload.provider_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.chaos_provider_fail_drill",
+        resource_type="gateway_best_practices",
+        resource_id=payload.provider_id,
+        trace_id=f"trace-gateway-chaos-drill-{uuid4()}",
+        action_context={"created_events": result.get("created_events")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/board-one-pager")
+def get_gateway_board_one_pager(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import export_board_one_pager
+
+    return export_board_one_pager(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/competitive-scorecard-refresh")
+def post_gateway_competitive_scorecard_refresh(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack8 import refresh_competitive_scorecard
+
+    result = refresh_competitive_scorecard(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.competitive_scorecard_refresh",
+        resource_type="gateway_best_practices",
+        resource_id="competitive-scorecard",
+        trace_id=f"trace-gateway-scorecard-refresh-{uuid4()}",
+        action_context={"leadership_score": result.get("leadership_score")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/competitive-scorecard")
+def get_gateway_competitive_scorecard(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack8 import get_competitive_scorecard
+
+    return get_competitive_scorecard(db)
+
+
+@router.get("/gateway/best-practices/traffic-light")
+def get_gateway_traffic_light(
+    hours: int = Query(default=24, ge=1, le=168),
+    floor_score: float = Query(default=70.0, ge=0, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack10 import build_traffic_light
+
+    return build_traffic_light(db, hours=hours, floor_score=floor_score)
+
+
+@router.get("/gateway/best-practices/healthz")
+def get_gateway_leadership_healthz(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack10 import leadership_healthz
+
+    return leadership_healthz(db)
+
+
+@router.put("/gateway/best-practices/alert-webhook-allowlist")
+def put_gateway_alert_webhook_allowlist(
+    payload: GatewayAlertAllowlistRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack10 import upsert_alert_webhook_allowlist
+
+    result = upsert_alert_webhook_allowlist(db, hosts=payload.hosts)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.alert_webhook_allowlist",
+        resource_type="gateway_best_practices",
+        resource_id="alert-webhook-allowlist",
+        trace_id=f"trace-gateway-alert-allowlist-{uuid4()}",
+        action_context={"count": result.get("count")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/alert-webhook-allowlist")
+def get_gateway_alert_webhook_allowlist(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack10 import get_alert_webhook_allowlist
+
+    return get_alert_webhook_allowlist(db)
+
+
+@router.post("/gateway/best-practices/alert-deliver")
+def post_gateway_alert_deliver(
+    payload: GatewayAlertDeliverRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack10 import deliver_leadership_alerts
+
+    result = deliver_leadership_alerts(
+        db, hours=payload.hours, floor_score=payload.floor_score, dry_run=payload.dry_run
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.alert_deliver",
+        resource_type="gateway_best_practices",
+        resource_id=result.get("dispatch_id") or "alert-deliver",
+        trace_id=f"trace-gateway-alert-deliver-{uuid4()}",
+        action_context={"dry_run": payload.dry_run, "deliveries": len(result.get("deliveries") or [])},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/apply-ranked-fallback")
+def post_gateway_apply_ranked_fallback(
+    payload: GatewayApplyRankedFallbackRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    if _is_prod_environment(payload.environment):
+        require_dual_approval(ctx)
+    from app.services.gateway_leadership_pack10 import apply_ranked_fallback_to_route
+
+    result = apply_ranked_fallback_to_route(
+        db, route_policy_id=payload.route_policy_id, max_hops=payload.max_hops
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.apply_ranked_fallback",
+        resource_type="route_policy",
+        resource_id=payload.route_policy_id,
+        trace_id=f"trace-gateway-apply-ranked-fallback-{uuid4()}",
+        action_context={"applied": result.get("applied")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/sla-burn-rate")
+def get_gateway_sla_burn_rate(
+    hours: int = Query(default=24, ge=1, le=168),
+    floor_score: float = Query(default=70.0, ge=0, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack10 import build_sla_burn_rate
+
+    return build_sla_burn_rate(db, hours=hours, floor_score=floor_score)
+
+
+@router.post("/gateway/best-practices/chaos-cleanup")
+def post_gateway_chaos_cleanup(
+    dry_run: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack10 import cleanup_chaos_drill_events
+
+    result = cleanup_chaos_drill_events(db, dry_run=dry_run)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.chaos_cleanup",
+        resource_type="gateway_best_practices",
+        resource_id="chaos-cleanup",
+        trace_id=f"trace-gateway-chaos-cleanup-{uuid4()}",
+        action_context={"dry_run": dry_run, "matched": result.get("matched")},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/evidence-diff")
+def post_gateway_evidence_diff(
+    payload: GatewayEvidenceDiffRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack10 import diff_evidence_packs
+
+    return diff_evidence_packs(db, hours_a=payload.hours_a, hours_b=payload.hours_b)
+
+
+@router.get("/gateway/best-practices/openapi-fragment")
+def get_gateway_leadership_openapi_fragment(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack10 import leadership_openapi_fragment
+
+    return leadership_openapi_fragment()
+
+
+@router.post("/gateway/best-practices/scorecard-digest")
+def post_gateway_scorecard_digest(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack10 import build_scorecard_digest
+
+    result = build_scorecard_digest(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.scorecard_digest",
+        resource_type="gateway_best_practices",
+        resource_id=result.get("digest_id") or "scorecard-digest",
+        trace_id=f"trace-gateway-scorecard-digest-{uuid4()}",
+        action_context={},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/credential-warnings")
+def get_gateway_credential_warnings(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack10 import credential_binding_warnings
+
+    return credential_binding_warnings(db)
+
+
+@router.post("/gateway/best-practices/resolve-strategy-policy")
+def post_gateway_resolve_strategy_policy(
+    payload: GatewayResolveStrategyRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack10 import resolve_strategy_policy
+
+    return resolve_strategy_policy(
+        db,
+        route_policy_id=payload.route_policy_id,
+        request_tag=payload.request_tag,
+        default_strategy=payload.default_strategy,
+    )
+
+
+@router.post("/gateway/best-practices/simulation-judge-transcript")
+def post_gateway_simulation_judge_transcript(
+    payload: GatewaySimulationJudgeRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_auto_router import classify_prompt_complexity
+    from app.services.gateway_leadership_pack10 import simulation_live_judge_transcript
+
+    complexity = classify_prompt_complexity(payload.prompt_text)
+    return simulation_live_judge_transcript(payload.prompt_text, complexity)
+
+
+@router.get("/gateway/best-practices/ops-activity")
+def get_gateway_ops_activity(
+    limit: int = Query(default=30, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack10 import list_ops_activity
+
+    return list_ops_activity(db, limit=limit)
+
+
+@router.get("/gateway/best-practices/pack10-manifest")
+def get_gateway_pack10_manifest(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack10 import pack10_manifest
+
+    return pack10_manifest()
+
+
+@router.get("/gateway/best-practices/enforcement-flags")
+def get_gateway_enforcement_flags(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import get_enforcement_flags
+
+    return get_enforcement_flags(db)
+
+
+@router.put("/gateway/best-practices/enforcement-flags")
+def put_gateway_enforcement_flags(
+    payload: GatewayEnforcementFlagsRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack11 import upsert_enforcement_flags
+
+    flags = {k: v for k, v in payload.model_dump().items() if v is not None}
+    result = upsert_enforcement_flags(db, flags=flags)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.enforcement_flags",
+        resource_type="gateway_best_practices",
+        resource_id="enforcement-flags",
+        trace_id=f"trace-gateway-enforcement-flags-{uuid4()}",
+        action_context={"keys": list(flags.keys())},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/model-route-policy")
+def get_gateway_model_route_policy(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import get_model_route_policy
+
+    return get_model_route_policy(db)
+
+
+@router.put("/gateway/best-practices/model-route-policy")
+def put_gateway_model_route_policy(
+    payload: GatewayModelRoutePolicyRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack11 import upsert_model_route_policy
+
+    result = upsert_model_route_policy(db, allowlist=payload.allowlist, denylist=payload.denylist)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.model_route_policy",
+        resource_type="gateway_best_practices",
+        resource_id="model-route-policy",
+        trace_id=f"trace-gateway-model-route-policy-{uuid4()}",
+        action_context={"allow": len(result.get("allowlist") or []), "deny": len(result.get("denylist") or [])},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/dashboard-summary")
+def get_gateway_dashboard_summary(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import build_dashboard_summary
+
+    return build_dashboard_summary(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/sparkline")
+def get_gateway_leadership_sparkline(
+    points: int = Query(default=12, ge=2, le=50),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import build_leadership_sparkline
+
+    return build_leadership_sparkline(db, points=points)
+
+
+@router.get("/gateway/best-practices/operator-runbook")
+def get_gateway_operator_runbook(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import export_operator_runbook
+
+    return export_operator_runbook(db)
+
+
+@router.get("/gateway/best-practices/alert-retries")
+def get_gateway_alert_retries(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import list_alert_retries
+
+    return list_alert_retries(db, limit=limit)
+
+
+@router.post("/gateway/best-practices/alert-retries/process")
+def post_gateway_alert_retries_process(
+    dry_run: bool = Query(default=True),
+    limit: int = Query(default=5, ge=1, le=20),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack11 import process_alert_retry_queue
+
+    result = process_alert_retry_queue(db, dry_run=dry_run, limit=limit)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.alert_retries_process",
+        resource_type="gateway_best_practices",
+        resource_id="alert-retries",
+        trace_id=f"trace-gateway-alert-retries-{uuid4()}",
+        action_context={"count": result.get("count"), "dry_run": dry_run},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/failover-drill-verify")
+def get_gateway_failover_drill_verify(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import verify_failover_drill
+
+    return verify_failover_drill(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/latency-histogram")
+def get_gateway_latency_histogram(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import build_latency_histogram
+
+    return build_latency_histogram(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/history-archive")
+def post_gateway_history_archive(
+    keep: int = Query(default=20, ge=5, le=40),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack11 import archive_leadership_history
+
+    result = archive_leadership_history(db, keep=keep)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.history_archive",
+        resource_type="gateway_best_practices",
+        resource_id="history-archive",
+        trace_id=f"trace-gateway-history-archive-{uuid4()}",
+        action_context=result,
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/budget-autoroute-correlation")
+def get_gateway_budget_autoroute_correlation(
+    hours: int = Query(default=168, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import correlate_budget_auto_route
+
+    return correlate_budget_auto_route(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/canary-promote-gate")
+def post_gateway_canary_promote_gate(
+    payload: GatewayCanaryPromoteGateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack11 import evaluate_canary_promote_gate
+
+    return evaluate_canary_promote_gate(
+        db, route_policy_id=payload.route_policy_id, floor_score=payload.floor_score
+    )
+
+
+@router.get("/gateway/best-practices/weekly-ops-report")
+def get_gateway_weekly_ops_report(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import build_weekly_ops_report
+
+    return build_weekly_ops_report(db)
+
+
+@router.post("/gateway/best-practices/circuit-breaker-annotate")
+def post_gateway_circuit_breaker_annotate(
+    payload: GatewayCircuitAnnotateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    if _is_prod_environment(payload.environment):
+        require_dual_approval(ctx)
+    from app.services.gateway_leadership_pack11 import annotate_route_circuit_breaker_notes
+
+    result = annotate_route_circuit_breaker_notes(db, route_policy_id=payload.route_policy_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.circuit_breaker_annotate",
+        resource_type="route_policy",
+        resource_id=payload.route_policy_id,
+        trace_id=f"trace-gateway-circuit-annotate-{uuid4()}",
+        action_context={"annotated": result.get("annotated")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/pack11-manifest")
+def get_gateway_pack11_manifest(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack11 import pack11_manifest
+
+    return pack11_manifest()
+
+
+@router.post("/gateway/best-practices/decision-cache-invalidate")
+def post_gateway_decision_cache_invalidate(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack12 import invalidate_decision_cache
+
+    result = invalidate_decision_cache(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.decision_cache_invalidate",
+        resource_type="gateway_best_practices",
+        resource_id="decision-cache",
+        trace_id=f"trace-gateway-decision-cache-{uuid4()}",
+        action_context={"invalidated": True},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/decision-cache-stats")
+def get_gateway_decision_cache_stats(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack12 import get_decision_cache_stats
+
+    return get_decision_cache_stats(db)
+
+
+@router.get("/gateway/best-practices/traffic-light-floors")
+def get_gateway_traffic_light_floors(
+    floors: str = Query(default="50,70,85"),
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack12 import compare_traffic_light_floors
+
+    parsed = []
+    for part in str(floors or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            parsed.append(float(part))
+        except ValueError:
+            continue
+    return compare_traffic_light_floors(db, floors=parsed or None, hours=hours)
+
+
+@router.get("/gateway/best-practices/readiness-leadership-delta")
+def get_gateway_readiness_leadership_delta(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack12 import readiness_leadership_delta
+
+    return readiness_leadership_delta(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/ops-activity-filtered")
+def get_gateway_ops_activity_filtered(
+    action_prefix: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack12 import filter_ops_activity
+
+    return filter_ops_activity(db, action_prefix=action_prefix, limit=limit)
+
+
+@router.get("/gateway/best-practices/budget-correlation-warning")
+def get_gateway_budget_correlation_warning(
+    hours: int = Query(default=168, ge=1, le=168),
+    warn_avg_cents: float = Query(default=50.0, ge=0, le=100000),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack12 import budget_correlation_warning
+
+    return budget_correlation_warning(db, hours=hours, warn_avg_cents=warn_avg_cents)
+
+
+@router.post("/gateway/best-practices/canary-annotate-combo")
+def post_gateway_canary_annotate_combo(
+    payload: GatewayCanaryAnnotateComboRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    if _is_prod_environment(payload.environment):
+        require_dual_approval(ctx)
+    from app.services.gateway_leadership_pack12 import canary_annotate_combo
+
+    result = canary_annotate_combo(
+        db,
+        route_policy_id=payload.route_policy_id,
+        floor_score=payload.floor_score,
+        annotate_if_passed=payload.annotate_if_passed,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.canary_annotate_combo",
+        resource_type="route_policy",
+        resource_id=payload.route_policy_id,
+        trace_id=f"trace-gateway-canary-combo-{uuid4()}",
+        action_context={"passed": (result.get("gate") or {}).get("passed")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/route-circuit-notes")
+def get_gateway_route_circuit_notes(
+    route_policy_id: str = Query(..., min_length=1, max_length=128),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack12 import read_route_circuit_notes
+
+    return read_route_circuit_notes(db, route_policy_id=route_policy_id)
+
+
+@router.get("/gateway/best-practices/leadership-posture-digest")
+def get_gateway_leadership_posture_digest(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack12 import leadership_posture_digest
+
+    return leadership_posture_digest(db)
+
+
+@router.get("/gateway/best-practices/operator-runbook.md")
+def get_gateway_operator_runbook_markdown(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack12 import export_runbook_markdown
+    from fastapi.responses import PlainTextResponse
+
+    payload = export_runbook_markdown(db)
+    return PlainTextResponse(
+        content=str(payload.get("markdown") or ""),
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{payload.get("filename")}"'},
+    )
+
+
+@router.get("/gateway/best-practices/pack12-manifest")
+def get_gateway_pack12_manifest(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack12 import pack12_manifest
+
+    return pack12_manifest()
+
+
+@router.post("/gateway/best-practices/auto-route-explain")
+def post_gateway_auto_route_explain(
+    payload: GatewayAutoRouteExplainRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import explain_auto_route_decision
+
+    return explain_auto_route_decision(
+        db,
+        prompt_text=payload.prompt_text,
+        strategy=payload.strategy,
+        prefer_live_only=payload.prefer_live_only,
+        request_tag=payload.request_tag,
+        route_policy_id=payload.route_policy_id,
+    )
+
+
+@router.post("/gateway/best-practices/shadow-compare-strategies")
+def post_gateway_shadow_compare_strategies(
+    payload: GatewayShadowCompareRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import shadow_compare_strategies
+
+    return shadow_compare_strategies(
+        db, prompt_text=payload.prompt_text, prefer_live_only=payload.prefer_live_only
+    )
+
+
+@router.get("/gateway/best-practices/score-trend")
+def get_gateway_score_trend(
+    points: int = Query(default=6, ge=2, le=30),
+    decline_points: int = Query(default=3, ge=1, le=10),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import detect_score_trend
+
+    return detect_score_trend(db, points=points, decline_points=decline_points)
+
+
+@router.post("/gateway/best-practices/model-route-policy/reset")
+def post_gateway_model_route_policy_reset(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack13 import reset_model_route_policy
+
+    result = reset_model_route_policy(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.model_route_policy_reset",
+        resource_type="gateway_best_practices",
+        resource_id="model-route-policy",
+        trace_id=f"trace-gateway-model-policy-reset-{uuid4()}",
+        action_context={"reset": True},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/model-route-policy/clear-denylist")
+def post_gateway_model_route_policy_clear_denylist(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack13 import clear_model_denylist
+
+    result = clear_model_denylist(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.model_denylist_clear",
+        resource_type="gateway_best_practices",
+        resource_id="model-route-policy",
+        trace_id=f"trace-gateway-denylist-clear-{uuid4()}",
+        action_context={"cleared": True},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/posture-digest-export")
+def get_gateway_posture_digest_export(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import export_posture_digest
+
+    return export_posture_digest(db)
+
+
+@router.get("/gateway/best-practices/multi-window-summary")
+def get_gateway_multi_window_summary(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import multi_window_leadership_summary
+
+    return multi_window_leadership_summary(db)
+
+
+@router.post("/gateway/best-practices/route-health-score")
+def post_gateway_route_health_score(
+    payload: GatewayRouteHealthRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import route_health_score
+
+    return route_health_score(db, route_policy_id=payload.route_policy_id)
+
+
+@router.get("/gateway/best-practices/operator-checklist")
+def get_gateway_operator_checklist(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import get_operator_checklist
+
+    return get_operator_checklist(db)
+
+
+@router.put("/gateway/best-practices/operator-checklist")
+def put_gateway_operator_checklist(
+    payload: GatewayOperatorChecklistRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack13 import upsert_operator_checklist
+
+    result = upsert_operator_checklist(db, completed=payload.completed)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.operator_checklist",
+        resource_type="gateway_best_practices",
+        resource_id="operator-checklist",
+        trace_id=f"trace-gateway-operator-checklist-{uuid4()}",
+        action_context={"completed_count": result.get("completed_count")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/latency-estimate")
+def get_gateway_latency_estimate(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import estimate_auto_route_latency
+
+    return estimate_auto_route_latency(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/pack-registry")
+def get_gateway_pack_registry(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import pack_capability_registry
+
+    return pack_capability_registry()
+
+
+@router.post("/gateway/best-practices/on-demand-snapshot")
+def post_gateway_on_demand_snapshot(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack13 import on_demand_leadership_snapshot
+
+    result = on_demand_leadership_snapshot(db, hours=hours)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.on_demand_snapshot",
+        resource_type="gateway_best_practices",
+        resource_id="on-demand-snapshot",
+        trace_id=f"trace-gateway-on-demand-snapshot-{uuid4()}",
+        action_context={"score": result.get("score"), "hours": hours},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/enforcement-flags-diff")
+def get_gateway_enforcement_flags_diff(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import enforcement_flags_diff
+
+    return enforcement_flags_diff(db)
+
+
+@router.get("/gateway/best-practices/warmup-eligibility")
+def get_gateway_warmup_eligibility(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import warmup_eligibility_probe
+
+    return warmup_eligibility_probe(db)
+
+
+@router.get("/gateway/best-practices/strategy-policies")
+def get_gateway_strategy_policies(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import list_strategy_policies
+
+    return list_strategy_policies(db)
+
+
+@router.get("/gateway/best-practices/pack13-manifest")
+def get_gateway_pack13_manifest(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack13 import pack13_manifest
+
+    return pack13_manifest()
+
+
+@router.get("/gateway/best-practices/auto-route-audit")
+def get_gateway_auto_route_audit(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import list_auto_route_audit
+
+    return list_auto_route_audit(db, limit=limit)
+
+
+@router.post("/gateway/best-practices/incidents")
+def post_gateway_leadership_incident(
+    payload: GatewayLeadershipIncidentRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack14 import open_leadership_incident
+
+    result = open_leadership_incident(
+        db, title=payload.title, severity=payload.severity, detail=payload.detail
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.incident_open",
+        resource_type="gateway_best_practices",
+        resource_id=result.get("incident_id"),
+        trace_id=f"trace-gateway-incident-open-{uuid4()}",
+        action_context={"severity": payload.severity},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/incidents/close")
+def post_gateway_leadership_incident_close(
+    payload: GatewayLeadershipIncidentCloseRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack14 import close_leadership_incident
+
+    result = close_leadership_incident(db, incident_id=payload.incident_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.incident_close",
+        resource_type="gateway_best_practices",
+        resource_id=payload.incident_id,
+        trace_id=f"trace-gateway-incident-close-{uuid4()}",
+        action_context={"closed": result.get("closed")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/incidents")
+def get_gateway_leadership_incidents(
+    limit: int = Query(default=20, ge=1, le=100),
+    status: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import list_leadership_incidents
+
+    return list_leadership_incidents(db, limit=limit, status=status)
+
+
+@router.post("/gateway/best-practices/leadership-floor-gate")
+def post_gateway_leadership_floor_gate(
+    payload: GatewayLeadershipFloorGateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import leadership_floor_gate
+
+    return leadership_floor_gate(db, floor_score=payload.floor_score, hours=payload.hours)
+
+
+@router.get("/gateway/best-practices/pack-registry.md")
+def get_gateway_pack_registry_markdown(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import pack_registry_markdown
+
+    return pack_registry_markdown()
+
+
+@router.get("/gateway/best-practices/auto-route-cost-estimate")
+def get_gateway_auto_route_cost_estimate(
+    hours: int = Query(default=168, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import estimate_auto_route_cost
+
+    return estimate_auto_route_cost(db, hours=hours)
+
+
+@router.post("/gateway/best-practices/score-trend/mute")
+def post_gateway_score_trend_mute(
+    payload: GatewayScoreTrendMuteRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack14 import mute_score_trend
+
+    result = mute_score_trend(db, minutes=payload.minutes, reason=payload.reason)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.score_trend_mute",
+        resource_type="gateway_best_practices",
+        resource_id="score-trend-mute",
+        trace_id=f"trace-gateway-score-trend-mute-{uuid4()}",
+        action_context={"minutes": payload.minutes},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/score-trend-muted")
+def get_gateway_score_trend_muted(
+    points: int = Query(default=6, ge=2, le=30),
+    decline_points: int = Query(default=3, ge=1, le=10),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import score_trend_with_mute
+
+    return score_trend_with_mute(db, points=points, decline_points=decline_points)
+
+
+@router.post("/gateway/best-practices/enforcement-flags/rollback")
+def post_gateway_enforcement_flags_rollback(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack14 import rollback_enforcement_flags
+
+    result = rollback_enforcement_flags(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.enforcement_flags_rollback",
+        resource_type="gateway_best_practices",
+        resource_id="enforcement-flags",
+        trace_id=f"trace-gateway-flags-rollback-{uuid4()}",
+        action_context={"rolled_back": True},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/route-health-batch")
+def get_gateway_route_health_batch(
+    limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import batch_route_health
+
+    return batch_route_health(db, limit=limit)
+
+
+@router.get("/gateway/best-practices/day-rollup")
+def get_gateway_leadership_day_rollup(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import leadership_day_rollup
+
+    return leadership_day_rollup(db)
+
+
+@router.get("/gateway/best-practices/checklist-gate")
+def get_gateway_checklist_gate(
+    min_percent: float = Query(default=50.0, ge=0, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import checklist_completion_gate
+
+    return checklist_completion_gate(db, min_percent=min_percent)
+
+
+@router.get("/gateway/best-practices/decision-cache-inventory")
+def get_gateway_decision_cache_inventory(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import decision_cache_inventory
+
+    return decision_cache_inventory(db)
+
+
+@router.post("/gateway/best-practices/nightly-trend-report")
+def post_gateway_nightly_trend_report(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack14 import nightly_trend_combo_report
+
+    result = nightly_trend_combo_report(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.nightly_trend_report",
+        resource_type="gateway_best_practices",
+        resource_id=result.get("report_id"),
+        trace_id=f"trace-gateway-nightly-trend-{uuid4()}",
+        action_context={"score": (result.get("snapshot") or {}).get("score")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/pack14-manifest")
+def get_gateway_pack14_manifest(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack14 import pack14_manifest
+
+    return pack14_manifest()
+
+
+@router.post("/gateway/best-practices/composite-go-no-go")
+def post_gateway_composite_go_no_go(
+    payload: GatewayCompositeGateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack15 import composite_go_no_go
+
+    return composite_go_no_go(
+        db,
+        floor_score=payload.floor_score,
+        checklist_min_percent=payload.checklist_min_percent,
+        hours=payload.hours,
+    )
+
+
+@router.post("/gateway/best-practices/score-trend/unmute")
+def post_gateway_score_trend_unmute(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import unmute_score_trend
+
+    result = unmute_score_trend(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.score_trend_unmute",
+        resource_type="gateway_best_practices",
+        resource_id="score-trend-unmute",
+        trace_id=f"trace-gateway-score-trend-unmute-{uuid4()}",
+        action_context={"unmuted": True},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/auto-route-audit-summary")
+def get_gateway_auto_route_audit_summary(
+    limit: int = Query(default=100, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack15 import auto_route_audit_summary
+
+    return auto_route_audit_summary(db, limit=limit)
+
+
+@router.post("/gateway/best-practices/auto-route-audit/purge")
+def post_gateway_auto_route_audit_purge(
+    keep: int = Query(default=20, ge=0, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import purge_auto_route_audit
+
+    result = purge_auto_route_audit(db, keep=keep)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.auto_route_audit_purge",
+        resource_type="gateway_best_practices",
+        resource_id="auto-route-audit",
+        trace_id=f"trace-gateway-audit-purge-{uuid4()}",
+        action_context=result,
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/auto-route-audit-export")
+def get_gateway_auto_route_audit_export(
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack15 import export_auto_route_audit
+
+    return export_auto_route_audit(db, limit=limit)
+
+
+@router.post("/gateway/best-practices/incidents/escalate")
+def post_gateway_leadership_incident_escalate(
+    payload: GatewayIncidentEscalateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import escalate_leadership_incident
+
+    result = escalate_leadership_incident(db, incident_id=payload.incident_id, severity=payload.severity)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.incident_escalate",
+        resource_type="gateway_best_practices",
+        resource_id=payload.incident_id,
+        trace_id=f"trace-gateway-incident-escalate-{uuid4()}",
+        action_context={"escalated": result.get("escalated"), "severity": payload.severity},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/incidents/bulk-close")
+def post_gateway_leadership_incident_bulk_close(
+    limit: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import bulk_close_open_incidents
+
+    result = bulk_close_open_incidents(db, limit=limit)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.incident_bulk_close",
+        resource_type="gateway_best_practices",
+        resource_id="incidents",
+        trace_id=f"trace-gateway-incident-bulk-close-{uuid4()}",
+        action_context={"closed_count": result.get("closed_count")},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/floor-gate-auto-incident")
+def post_gateway_floor_gate_auto_incident(
+    payload: GatewayFloorGateAutoIncidentRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import floor_gate_with_auto_incident
+
+    result = floor_gate_with_auto_incident(
+        db,
+        floor_score=payload.floor_score,
+        hours=payload.hours,
+        open_incident_on_fail=payload.open_incident_on_fail,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.floor_gate_auto_incident",
+        resource_type="gateway_best_practices",
+        resource_id="floor-gate",
+        trace_id=f"trace-gateway-floor-gate-auto-{uuid4()}",
+        action_context={"passed": result.get("passed"), "incident": bool(result.get("incident"))},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/red-light-probe")
+def post_gateway_red_light_probe(
+    open_incident: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import probe_red_light_incident
+
+    result = probe_red_light_incident(db, open_incident=open_incident)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.red_light_probe",
+        resource_type="gateway_best_practices",
+        resource_id="red-light-probe",
+        trace_id=f"trace-gateway-red-light-{uuid4()}",
+        action_context={"is_red": result.get("is_red"), "incident": bool(result.get("incident"))},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/preferred-model")
+def get_gateway_preferred_model(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack15 import get_preferred_model_override
+
+    return get_preferred_model_override(db)
+
+
+@router.put("/gateway/best-practices/preferred-model")
+def put_gateway_preferred_model(
+    payload: GatewayPreferredModelRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import upsert_preferred_model_override
+
+    result = upsert_preferred_model_override(
+        db,
+        model_name=payload.model_name,
+        provider_type=payload.provider_type,
+        enabled=payload.enabled,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.preferred_model",
+        resource_type="gateway_best_practices",
+        resource_id="preferred-model",
+        trace_id=f"trace-gateway-preferred-model-{uuid4()}",
+        action_context={"model_name": payload.model_name, "enabled": payload.enabled},
+    )
+    db.commit()
+    return result
+
+
+@router.delete("/gateway/best-practices/preferred-model")
+def delete_gateway_preferred_model(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import clear_preferred_model_override
+
+    result = clear_preferred_model_override(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.preferred_model_clear",
+        resource_type="gateway_best_practices",
+        resource_id="preferred-model",
+        trace_id=f"trace-gateway-preferred-model-clear-{uuid4()}",
+        action_context={"cleared": True},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/day-rollup.md")
+def get_gateway_day_rollup_markdown(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack15 import export_day_rollup_markdown
+
+    return export_day_rollup_markdown(db)
+
+
+@router.post("/gateway/best-practices/strategy-policies/delete-tag")
+def post_gateway_delete_tag_strategy(
+    payload: GatewayDeleteTagStrategyRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import delete_request_tag_strategy_policy
+
+    result = delete_request_tag_strategy_policy(db, request_tag=payload.request_tag)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.request_tag_strategy_delete",
+        resource_type="gateway_best_practices",
+        resource_id=payload.request_tag,
+        trace_id=f"trace-gateway-tag-strategy-delete-{uuid4()}",
+        action_context=result,
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/strategy-policies/delete-route")
+def post_gateway_delete_route_strategy(
+    payload: GatewayDeleteRouteStrategyRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import delete_route_strategy_policy
+
+    result = delete_route_strategy_policy(db, route_policy_id=payload.route_policy_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.route_strategy_delete",
+        resource_type="gateway_best_practices",
+        resource_id=payload.route_policy_id,
+        trace_id=f"trace-gateway-route-strategy-delete-{uuid4()}",
+        action_context=result,
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/digest-webhook-dry-run")
+def post_gateway_digest_webhook_dry_run(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack15 import leadership_digest_webhook_payload
+
+    return leadership_digest_webhook_payload(db, dry_run=True)
+
+
+@router.get("/gateway/best-practices/pack15-manifest")
+def get_gateway_pack15_manifest(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack15 import pack15_manifest
+
+    return pack15_manifest()
+
+
+@router.get("/gateway/best-practices/executive-brief")
+def get_gateway_executive_brief(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import executive_leadership_brief
+
+    return executive_leadership_brief(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/scorecard-delta")
+def get_gateway_scorecard_delta(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import competitive_scorecard_delta
+
+    return competitive_scorecard_delta(db)
+
+
+@router.get("/gateway/best-practices/shadow-traffic")
+def get_gateway_shadow_traffic(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import get_shadow_traffic_percent
+
+    return get_shadow_traffic_percent(db)
+
+
+@router.put("/gateway/best-practices/shadow-traffic")
+def put_gateway_shadow_traffic(
+    payload: GatewayShadowTrafficRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack16 import put_shadow_traffic_percent
+
+    result = put_shadow_traffic_percent(db, percent=payload.percent, enabled=payload.enabled)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.shadow_traffic",
+        resource_type="gateway_best_practices",
+        resource_id="shadow-traffic",
+        trace_id=f"trace-gateway-shadow-traffic-{uuid4()}",
+        action_context={"percent": payload.percent, "enabled": payload.enabled},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/canary-auto-rollback")
+def get_gateway_canary_auto_rollback(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import get_canary_auto_rollback
+
+    return get_canary_auto_rollback(db)
+
+
+@router.put("/gateway/best-practices/canary-auto-rollback")
+def put_gateway_canary_auto_rollback(
+    payload: GatewayCanaryAutoRollbackRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack16 import put_canary_auto_rollback
+
+    result = put_canary_auto_rollback(
+        db,
+        enabled=payload.enabled,
+        on_red_light=payload.on_red_light,
+        on_floor_fail=payload.on_floor_fail,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.canary_auto_rollback",
+        resource_type="gateway_best_practices",
+        resource_id="canary-auto-rollback",
+        trace_id=f"trace-gateway-canary-rollback-{uuid4()}",
+        action_context={"enabled": payload.enabled},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/canary-auto-rollback/evaluate")
+def post_gateway_canary_auto_rollback_evaluate(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack16 import evaluate_canary_auto_rollback
+
+    return evaluate_canary_auto_rollback(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/attribution-anomalies")
+def get_gateway_attribution_anomalies(
+    limit: int = Query(default=100, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import attribution_anomaly_detector
+
+    return attribution_anomaly_detector(db, limit=limit)
+
+
+@router.get("/gateway/best-practices/warmup-budget")
+def get_gateway_warmup_budget(
+    max_per_hour: int = Query(default=3, ge=1, le=12),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import warmup_budget_remaining
+
+    return warmup_budget_remaining(db, max_per_hour=max_per_hour)
+
+
+@router.post("/gateway/best-practices/latency-budget-guard")
+def post_gateway_latency_budget_guard(
+    payload: GatewayLatencyBudgetRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack16 import latency_budget_guard
+
+    result = latency_budget_guard(db, observed_ms=payload.observed_ms, budget_ms=payload.budget_ms)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.latency_budget_guard",
+        resource_type="gateway_best_practices",
+        resource_id="latency-budget",
+        trace_id=f"trace-gateway-latency-budget-{uuid4()}",
+        action_context={"within_budget": result.get("within_budget")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/pareto-frontier")
+def get_gateway_pareto_frontier(
+    limit: int = Query(default=12, ge=3, le=50),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import cost_quality_pareto_frontier
+
+    return cost_quality_pareto_frontier(db, limit=limit)
+
+
+@router.post("/gateway/best-practices/failover-simulation")
+def post_gateway_failover_simulation(
+    payload: GatewayFailoverSimulationRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack16 import failover_simulation_report
+
+    result = failover_simulation_report(db, primary_provider=payload.primary_provider)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.failover_simulation",
+        resource_type="gateway_best_practices",
+        resource_id="failover-simulation",
+        trace_id=f"trace-gateway-failover-sim-{uuid4()}",
+        action_context={"primary_provider": payload.primary_provider, "ready": result.get("fallback_ready")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/best-practices/model-card-freshness")
+def get_gateway_model_card_freshness(
+    max_age_days: int = Query(default=30, ge=1, le=365),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import model_card_freshness_gate
+
+    return model_card_freshness_gate(db, max_age_days=max_age_days)
+
+
+@router.post("/gateway/best-practices/model-card-freshness/refresh")
+def post_gateway_model_card_freshness_refresh(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack16 import refresh_model_card_freshness_marker
+
+    result = refresh_model_card_freshness_marker(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.best_practices.model_card_freshness_refresh",
+        resource_type="gateway_best_practices",
+        resource_id="model-card-freshness",
+        trace_id=f"trace-gateway-model-card-fresh-{uuid4()}",
+        action_context={"refreshed": True},
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/best-practices/composite-with-evidence")
+def post_gateway_composite_with_evidence(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import composite_with_compliance_evidence
+
+    return composite_with_compliance_evidence(db, hours=hours)
+
+
+@router.get("/gateway/best-practices/incident-timeline.md")
+def get_gateway_incident_timeline_markdown(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import incident_timeline_markdown
+
+    return incident_timeline_markdown(db, limit=limit)
+
+
+@router.get("/gateway/best-practices/ops-activity-export")
+def get_gateway_ops_activity_export(
+    limit: int = Query(default=40, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import operator_session_activity_export
+
+    return operator_session_activity_export(db, limit=limit)
+
+
+@router.post("/gateway/best-practices/cross-env-sync-dry-run")
+def post_gateway_cross_env_sync_dry_run(
+    payload: GatewayCrossEnvSyncDryRunRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_ADMIN_OR_AI_OPS_ROLES)
+    from app.services.gateway_leadership_pack16 import cross_env_leadership_sync_dry_run
+
+    return cross_env_leadership_sync_dry_run(
+        db,
+        source_env=payload.source_env,
+        target_env=payload.target_env,
+    )
+
+
+@router.get("/gateway/best-practices/playground-diagnose")
+def get_gateway_playground_diagnose(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import playground_leadership_diagnose
+
+    return playground_leadership_diagnose(db)
+
+
+@router.get("/gateway/best-practices/overview-executive-strip")
+def get_gateway_overview_executive_strip(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import overview_executive_strip
+
+    return overview_executive_strip(db)
+
+
+@router.get("/gateway/best-practices/pack16-manifest")
+def get_gateway_pack16_manifest(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, GATEWAY_READ_ROLES)
+    from app.services.gateway_leadership_pack16 import pack16_manifest
+
+    return pack16_manifest()
 
 
 @router.put(
@@ -7656,10 +11506,12 @@ def execute_route_with_fallback(
     attempted: list[dict] = []
     selected_group_id: str | None = None
     selected_provider_id: str | None = None
+    actual_model_name: str | None = None
     fallback_hops_used = 0
     total_latency_ms = 0
     total_estimated_cost_cents = 0
     model_name = str(payload.model_name or "").strip()
+    intended_model_name = model_name or None
     _, _, owner_scope = normalize_owner_scope(
         db,
         owner_scope=payload.owner_scope,
@@ -7879,6 +11731,9 @@ def execute_route_with_fallback(
                 outcome = "selected"
                 selected_group_id = group_id
                 selected_provider_id = provider_id
+                actual_model_name = resolved_model_name
+                if not intended_model_name:
+                    intended_model_name = resolved_model_name
 
             attempted.append(
                 {
@@ -7887,6 +11742,7 @@ def execute_route_with_fallback(
                     "provider_id": provider_id,
                     "provider_type": provider_type,
                     "model_name": resolved_model_name,
+                    "intended_model": intended_model_name,
                     "outcome": outcome,
                     "latency_ms": simulated_latency_ms,
                     "estimated_cost_cents": hop_cost_cents,
@@ -7910,6 +11766,21 @@ def execute_route_with_fallback(
                     output_tokens=payload.output_tokens,
                     estimated_cost_cents=hop_cost_cents,
                     currency=payload.currency,
+                    properties_json=json.dumps(
+                        {
+                            "intended_model": intended_model_name or resolved_model_name,
+                            "actual_model": resolved_model_name,
+                            "model_switched": bool(
+                                intended_model_name
+                                and str(intended_model_name).strip().lower()
+                                != str(resolved_model_name).strip().lower()
+                            ),
+                            "selected_provider_id": provider_id,
+                            "fallback_hop": index,
+                            "outcome": outcome,
+                        },
+                        separators=(",", ":"),
+                    ),
                 )
             )
 
@@ -8126,6 +11997,13 @@ def execute_route_with_fallback(
         "attempted_providers": json.dumps(attempted, separators=(",", ":")),
         "selected_group_id": selected_group_id,
         "selected_provider_id": selected_provider_id,
+        "intended_model": intended_model_name,
+        "actual_model": actual_model_name,
+        "model_switched": bool(
+            intended_model_name
+            and actual_model_name
+            and str(intended_model_name).strip().lower() != str(actual_model_name).strip().lower()
+        ),
         "fallback_hops_used": fallback_hops_used,
         "provider_attempts": len(attempted),
         "total_latency_ms": total_latency_ms,
@@ -8845,6 +12723,8 @@ def gateway_openai_chat_completions(
     started_at = time.perf_counter()
     trace_id = f"trace-gateway-chat-completions-{uuid4()}"
     model_name = str(payload.model or "").strip() or "unknown"
+    intended_model_name = model_name
+    auto_route_meta: dict[str, object] = {}
     request_id = f"gw-chat-{uuid4().hex[:16]}"
     completion_id = f"chatcmpl-{uuid4().hex[:24]}"
     selected_provider_id: str | None = None
@@ -8861,6 +12741,49 @@ def gateway_openai_chat_completions(
 
     try:
         require_role(ctx, GATEWAY_INFERENCE_ROLES)
+        from app.services.gateway_auto_router import should_auto_route
+
+        if should_auto_route(model_name, bool(getattr(payload, "auto_route", False))):
+            from app.services.gateway_leadership_pack11 import build_auto_route_with_pack11
+
+            auto_prompt = "\n".join(
+                _message_content_to_text(message.content) for message in payload.messages
+            ).strip()
+            response_format_type = str((payload.response_format or {}).get("type") or "").strip().lower()
+            decision = build_auto_route_with_pack11(
+                db,
+                prompt_text=auto_prompt or model_name,
+                prefer_live_only=True,
+                strategy=str(getattr(payload, "auto_route_strategy", None) or "balanced"),
+                json_response_format=response_format_type == "json_object",
+                message_count=len(payload.messages or []),
+                route_policy_id=str(getattr(payload, "route_policy_id", None) or getattr(payload, "config_id", None) or "").strip() or None,
+                request_tag=str(getattr(payload, "request_tag", None) or "").strip() or None,
+            )
+            selected_auto_model = str(decision.get("selected_model") or "").strip()
+            if not selected_auto_model:
+                from app.services.gateway_leadership_pack13 import auto_route_policy_block_detail
+
+                raise HTTPException(
+                    status_code=422,
+                    detail=auto_route_policy_block_detail(decision),
+                )
+            model_name = selected_auto_model
+            from app.services.gateway_leadership_pack14 import explain_snippet_from_decision
+
+            auto_route_meta = {
+                "tier": (decision.get("complexity") or {}).get("tier"),
+                "score": (decision.get("complexity") or {}).get("score"),
+                "rationale": decision.get("rationale"),
+                "selected_provider_type": decision.get("selected_provider_type"),
+                "strategy": decision.get("strategy"),
+                "cache_hit": decision.get("cache_hit"),
+                "strategy_policy_source": (decision.get("strategy_policy") or {}).get("source"),
+                "catalog_policy": decision.get("catalog_policy"),
+                "explain_snippet": explain_snippet_from_decision(decision),
+                "provider_diversity": decision.get("provider_diversity"),
+            }
+
         _ensure_inference_credentials(
             db,
             agent_id=str(getattr(payload, "agent_id", None) or "").strip() or None,
@@ -8886,6 +12809,173 @@ def gateway_openai_chat_completions(
             authorization_header=request.headers.get("Authorization"),
             x_virtual_key_id=x_virtual_key_id,
         )
+        from app.services.gateway_nhi_iga_deny import enforce_iga_deny_or_raise
+
+        enforce_iga_deny_or_raise(
+            db,
+            actor_id=ctx.actor_id,
+            virtual_key_id=(
+                str(getattr(virtual_key, "key_id", "") or "").strip()
+                or str(resolved_virtual_key_id or "").strip()
+                or None
+            ),
+            owner_scope_id=str(owner_scope_for_guardrail or getattr(virtual_key, "owner_scope_id", "") or "").strip()
+            or None,
+            tenant_id=str(getattr(virtual_key, "tenant_id", "") or "").strip() or None,
+            environment=environment,
+            create_audit=create_audit_event,
+            audit_actor_id=ctx.actor_id,
+            trace_id=trace_id,
+        )
+        declared_intent = str(getattr(payload, "declared_intent", None) or "").strip()
+        vk_for_intent = (
+            str(getattr(virtual_key, "key_id", "") or "").strip()
+            or str(resolved_virtual_key_id or "").strip()
+            or None
+        )
+        from app.services.gateway_nhi_insights import blocking_nhi_modes
+
+        _nhi_modes = blocking_nhi_modes(db)
+        if (
+            _nhi_modes.get("intent_mode") == "block" or _nhi_modes.get("access_mode") == "block"
+        ) and not declared_intent:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error_code": "NHI_DECLARED_INTENT_REQUIRED",
+                    "message": (
+                        "declared_intent is required when NHI intent_mode or access_mode is block."
+                    ),
+                    "intent_mode": _nhi_modes.get("intent_mode"),
+                    "access_mode": _nhi_modes.get("access_mode"),
+                    "remediation_hint": (
+                        "Pass declared_intent on the request, or set intent_mode/access_mode to off|warn."
+                    ),
+                },
+            )
+        if declared_intent:
+            from app.services.gateway_nhi_insights import evaluate_nhi_intent
+            from app.services.gateway_nhi_native_access import authorize_nhi_access
+
+            owner_for_intent = (
+                str(owner_scope_for_guardrail or getattr(virtual_key, "owner_scope_id", "") or "").strip()
+                or None
+            )
+            intent_result = evaluate_nhi_intent(
+                db,
+                virtual_key_id=vk_for_intent,
+                owner_scope_id=owner_for_intent,
+                actor_id=str(ctx.actor_id or "").strip() or None,
+                declared_intent=declared_intent,
+                action="chat.completions",
+                missing_ok=True,
+                enforce=True,
+            )
+            if intent_result.get("matched") or intent_result.get("reason") != "no_nhi_binding":
+                create_audit_event(
+                    db,
+                    actor_id=ctx.actor_id,
+                    action_type="gateway.nhi.intent_check",
+                    resource_type="gateway_nhi_inventory",
+                    resource_id=str(intent_result.get("nhi_record_id") or "intent"),
+                    trace_id=trace_id,
+                    decision_outcome="deny" if intent_result.get("decision") == "deny" else "allow",
+                    action_context={
+                        "decision": intent_result.get("decision"),
+                        "declared_intent": declared_intent,
+                        "mode": intent_result.get("mode"),
+                        "endpoint": "chat.completions",
+                        "reason": intent_result.get("reason"),
+                    },
+                )
+            if intent_result.get("decision") in {"deny", "warn"}:
+                from app.services.gateway_nhi_insights import append_nhi_gate_event
+
+                append_nhi_gate_event(
+                    db,
+                    {
+                        "gate": "intent",
+                        "decision": intent_result.get("decision"),
+                        "reason": intent_result.get("reason"),
+                        "declared_intent": declared_intent,
+                        "mode": intent_result.get("mode"),
+                        "endpoint": "chat.completions",
+                        "nhi_record_id": intent_result.get("nhi_record_id") or None,
+                        "actor_id": ctx.actor_id,
+                    },
+                    actor_id=str(ctx.actor_id or "system"),
+                )
+            if intent_result.get("decision") == "deny":
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "NHI_INTENT_DENIED",
+                        "message": "Declared intent is not approved for this gateway NHI.",
+                        "declared_intent": declared_intent,
+                        "approved_intents": intent_result.get("approved_intents") or [],
+                        "nhi_record_id": intent_result.get("nhi_record_id"),
+                        "remediation_hint": "Update approved intents via PUT /gateway/nhi/{id}/intents or set intent_mode=off/warn.",
+                    },
+                )
+            access_resource = str(getattr(payload, "access_resource", None) or f"model:{model_name}").strip()
+            access_result = authorize_nhi_access(
+                db,
+                declared_intent=declared_intent,
+                resource=access_resource,
+                action="chat.completions",
+                virtual_key_id=vk_for_intent,
+                owner_scope_id=owner_for_intent,
+                actor_id=str(ctx.actor_id or "").strip() or None,
+                missing_ok=True,
+                enforce=True,
+            )
+            if access_result.get("decision") in {"deny", "warn"}:
+                create_audit_event(
+                    db,
+                    actor_id=ctx.actor_id,
+                    action_type="gateway.nhi.access.authorize",
+                    resource_type="gateway_nhi_access",
+                    resource_id=str(access_result.get("matched_policy_id") or "access"),
+                    trace_id=trace_id,
+                    decision_outcome="deny" if access_result.get("decision") == "deny" else "allow",
+                    action_context={
+                        "decision": access_result.get("decision"),
+                        "reason": access_result.get("reason"),
+                        "resource": access_resource,
+                        "endpoint": "chat.completions",
+                    },
+                )
+                from app.services.gateway_nhi_insights import append_nhi_gate_event
+
+                append_nhi_gate_event(
+                    db,
+                    {
+                        "gate": "access",
+                        "decision": access_result.get("decision"),
+                        "reason": access_result.get("reason"),
+                        "declared_intent": declared_intent,
+                        "resource": access_resource,
+                        "mode": access_result.get("mode"),
+                        "endpoint": "chat.completions",
+                        "matched_policy_id": access_result.get("matched_policy_id"),
+                        "nhi_record_id": access_result.get("nhi_record_id") or None,
+                        "actor_id": ctx.actor_id,
+                    },
+                    actor_id=str(ctx.actor_id or "system"),
+                )
+            if access_result.get("decision") == "deny":
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "NHI_ACCESS_DENIED",
+                        "message": "IARA-lite access policy denied this intent/resource/action.",
+                        "declared_intent": declared_intent,
+                        "resource": access_resource,
+                        "matched_policy_id": access_result.get("matched_policy_id"),
+                        "reason": access_result.get("reason"),
+                        "remediation_hint": "Update access policies via PUT /gateway/nhi/access/config or set access_mode=off/warn.",
+                    },
+                )
         if virtual_key is not None:
             _enforce_virtual_key_expiry(
                 db,
@@ -9125,21 +13215,41 @@ def gateway_openai_chat_completions(
                     should_store_after_inference=True,
                 )
             if cache_pre.cached_response is not None:
-                risk_tier, risk_reasons = _assess_gateway_inference_risk(
+                runtime_risk_meta = _enforce_runtime_risk_before_inference(
+                    db,
+                    ctx,
                     model_name=model_name,
                     environment=environment,
                     has_tool_calls=False,
                     selected_provider_id=selected_provider_id,
+                    request_id=request_id,
+                    endpoint_family="chat.completions",
+                    trace_id=trace_id,
+                    has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+                    input_chars=len(str(prompt_preview or "")),
                 )
+                risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+                risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
                 refreshed = dict(cache_pre.cached_response)
                 refreshed["request_id"] = request_id
                 refreshed["trace_id"] = trace_id
                 refreshed["cache_short_circuit"] = True
                 refreshed["risk_tier"] = risk_tier
                 refreshed["risk_reasons"] = risk_reasons
+                refreshed["risk_policy_decision"] = str(runtime_risk_meta.get("risk_policy_decision") or "allow")
+                refreshed["risk_policy_mode"] = str(runtime_risk_meta.get("risk_policy_mode") or "off")
                 refreshed["selected_provider_id"] = selected_provider_id
                 refreshed["route_policy_id"] = selected_route_policy_id
                 refreshed["fallback_hops_used"] = fallback_hops_used
+                refreshed["intended_model"] = intended_model_name
+                refreshed["actual_model"] = model_name
+                refreshed["model_switched"] = str(intended_model_name or "").strip().lower() != str(
+                    model_name or ""
+                ).strip().lower()
+                if auto_route_meta:
+                    refreshed["auto_route_tier"] = auto_route_meta.get("tier")
+                    refreshed["auto_route_score"] = auto_route_meta.get("score")
+                    refreshed["auto_route_rationale"] = auto_route_meta.get("rationale")
                 if request_cache_mode != "inherit":
                     refreshed["cache_mode"] = request_cache_mode
                 if canary_routing_decision:
@@ -9155,6 +13265,13 @@ def gateway_openai_chat_completions(
                     "canary_routing_decision": canary_routing_decision,
                     "cache_mode": request_cache_mode,
                     "latency_ms": _elapsed_latency_ms(started_at),
+                    "intended_model": intended_model_name,
+                    "actual_model": model_name,
+                    "model_switched": str(intended_model_name or "").strip().lower()
+                    != str(model_name or "").strip().lower(),
+                    "auto_route_tier": auto_route_meta.get("tier"),
+                    "auto_route_score": auto_route_meta.get("score"),
+                    "auto_route_strategy": auto_route_meta.get("strategy"),
                 }
                 db.add(
                     CostEvent(
@@ -9202,6 +13319,20 @@ def gateway_openai_chat_completions(
                     "skipped_before": 0,
                 }
             ]
+
+        runtime_risk_meta = _enforce_runtime_risk_before_inference(
+            db,
+            ctx,
+            model_name=model_name,
+            environment=environment,
+            has_tool_calls=False,
+            selected_provider_id=selected_provider_id,
+            request_id=request_id,
+            endpoint_family="chat.completions",
+            trace_id=trace_id,
+            has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+            input_chars=len(str(prompt_preview or "")),
+        )
 
         inference_credential = None
         inference_result = None
@@ -9414,6 +13545,13 @@ def gateway_openai_chat_completions(
             "fallback_hops_used": fallback_hops_used,
             "canary_routing_decision": canary_routing_decision,
             "latency_ms": _elapsed_latency_ms(started_at),
+            "intended_model": intended_model_name,
+            "actual_model": model_name,
+            "model_switched": str(intended_model_name or "").strip().lower()
+            != str(model_name or "").strip().lower(),
+            "auto_route_tier": auto_route_meta.get("tier"),
+            "auto_route_score": auto_route_meta.get("score"),
+            "auto_route_strategy": auto_route_meta.get("strategy"),
         }
         db.add(
             CostEvent(
@@ -9530,12 +13668,8 @@ def gateway_openai_chat_completions(
                 response_format=payload.response_format,
             )
 
-        risk_tier, risk_reasons = _assess_gateway_inference_risk(
-            model_name=model_name,
-            environment=environment,
-            has_tool_calls=False,
-            selected_provider_id=selected_provider_id,
-        )
+        risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+        risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
 
         created_ts = int(datetime.utcnow().timestamp())
         if bool(payload.stream):
@@ -9593,6 +13727,8 @@ def gateway_openai_chat_completions(
             "trace_id": trace_id,
             "risk_tier": risk_tier,
             "risk_reasons": risk_reasons,
+            "risk_policy_decision": str(runtime_risk_meta.get("risk_policy_decision") or "allow"),
+            "risk_policy_mode": str(runtime_risk_meta.get("risk_policy_mode") or "off"),
             "selected_provider_id": selected_provider_id,
             "route_policy_id": selected_route_policy_id,
             "config_id": selected_route_policy_id,
@@ -9600,7 +13736,15 @@ def gateway_openai_chat_completions(
             "mirror_events_count": mirror_events_count,
             "content_guard_decision": str(content_guard_meta.get("decision") or "allow"),
             "content_guard_reasons": list(content_guard_meta.get("reasons") or []),
+            "intended_model": intended_model_name,
+            "actual_model": model_name,
+            "model_switched": str(intended_model_name or "").strip().lower()
+            != str(model_name or "").strip().lower(),
         }
+        if auto_route_meta:
+            response_body["auto_route_tier"] = auto_route_meta.get("tier")
+            response_body["auto_route_score"] = auto_route_meta.get("score")
+            response_body["auto_route_rationale"] = auto_route_meta.get("rationale")
         if virtual_key is not None:
             response_body["virtual_key_id"] = virtual_key.key_id
             response_body["guardrail_id"] = virtual_key.key_id
@@ -9722,6 +13866,20 @@ def gateway_openai_embeddings(
         instruction_text = ""
         dimensions = int(payload.dimensions or 16)
 
+        runtime_risk_meta = _enforce_runtime_risk_before_inference(
+            db,
+            ctx,
+            model_name=model_name,
+            environment=environment,
+            has_tool_calls=False,
+            selected_provider_id=selected_provider_id,
+            request_id=request_id,
+            endpoint_family="embeddings",
+            trace_id=trace_id,
+            has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+            input_chars=len(effective_prompt or ""),
+        )
+
         inference_credential = resolve_inference_credential(
             db,
             agent_id=str(getattr(payload, "agent_id", None) or "").strip() or None,
@@ -9841,12 +13999,8 @@ def gateway_openai_embeddings(
         )
         db.commit()
 
-        risk_tier, risk_reasons = _assess_gateway_inference_risk(
-            model_name=model_name,
-            environment=environment,
-            has_tool_calls=False,
-            selected_provider_id=selected_provider_id,
-        )
+        risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+        risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
 
         return {
             "object": "list",
@@ -9860,6 +14014,8 @@ def gateway_openai_embeddings(
             "trace_id": trace_id,
             "risk_tier": risk_tier,
             "risk_reasons": risk_reasons,
+            "risk_policy_decision": str(runtime_risk_meta.get("risk_policy_decision") or "allow"),
+            "risk_policy_mode": str(runtime_risk_meta.get("risk_policy_mode") or "off"),
             "selected_provider_id": selected_provider_id,
             "route_policy_id": selected_route_policy_id,
         }
@@ -9920,6 +14076,20 @@ def gateway_openai_audio_transcriptions(
         if prompt_text:
             transcript = f"{prompt_text}: {audio_text}".strip()
 
+        runtime_risk_meta = _enforce_runtime_risk_before_inference(
+            db,
+            ctx,
+            model_name=model_name,
+            environment=environment,
+            has_tool_calls=False,
+            selected_provider_id=selected_provider_id,
+            request_id=request_id,
+            endpoint_family="audio.transcriptions",
+            trace_id=trace_id,
+            has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+            input_chars=len(audio_text) + len(prompt_text),
+        )
+
         prompt_tokens = _estimate_token_count(audio_text + "\n" + prompt_text)
         model_rates, default_model_rates = _load_model_token_rates(db)
         provider_multipliers, endpoint_multipliers = _load_cloud_component_multipliers(db)
@@ -9971,12 +14141,8 @@ def gateway_openai_audio_transcriptions(
         )
         db.commit()
 
-        risk_tier, risk_reasons = _assess_gateway_inference_risk(
-            model_name=model_name,
-            environment=environment,
-            has_tool_calls=False,
-            selected_provider_id=selected_provider_id,
-        )
+        risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+        risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
 
         return {
             "text": transcript,
@@ -9987,6 +14153,8 @@ def gateway_openai_audio_transcriptions(
             "trace_id": trace_id,
             "risk_tier": risk_tier,
             "risk_reasons": risk_reasons,
+            "risk_policy_decision": str(runtime_risk_meta.get("risk_policy_decision") or "allow"),
+            "risk_policy_mode": str(runtime_risk_meta.get("risk_policy_mode") or "off"),
             "selected_provider_id": selected_provider_id,
             "route_policy_id": selected_route_policy_id,
         }
@@ -10047,6 +14215,20 @@ def gateway_openai_audio_translations(
             translated_text = f"{prompt_text}: {translated_text}"
         duration_seconds = max(1.0, round(len(source_text) / 12.0, 2))
 
+        runtime_risk_meta = _enforce_runtime_risk_before_inference(
+            db,
+            ctx,
+            model_name=model_name,
+            environment=environment,
+            has_tool_calls=False,
+            selected_provider_id=selected_provider_id,
+            request_id=request_id,
+            endpoint_family="audio.translations",
+            trace_id=trace_id,
+            has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+            input_chars=len(source_text) + len(prompt_text),
+        )
+
         prompt_tokens = _estimate_token_count(source_text + "\n" + prompt_text + "\n" + payload.target_language)
         model_rates, default_model_rates = _load_model_token_rates(db)
         provider_multipliers, endpoint_multipliers = _load_cloud_component_multipliers(db)
@@ -10098,12 +14280,8 @@ def gateway_openai_audio_translations(
         )
         db.commit()
 
-        risk_tier, risk_reasons = _assess_gateway_inference_risk(
-            model_name=model_name,
-            environment=environment,
-            has_tool_calls=False,
-            selected_provider_id=selected_provider_id,
-        )
+        risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+        risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
 
         return {
             "text": translated_text,
@@ -10114,6 +14292,8 @@ def gateway_openai_audio_translations(
             "trace_id": trace_id,
             "risk_tier": risk_tier,
             "risk_reasons": risk_reasons,
+            "risk_policy_decision": str(runtime_risk_meta.get("risk_policy_decision") or "allow"),
+            "risk_policy_mode": str(runtime_risk_meta.get("risk_policy_mode") or "off"),
             "selected_provider_id": selected_provider_id,
             "route_policy_id": selected_route_policy_id,
         }
@@ -10170,6 +14350,20 @@ def gateway_openai_images_generate(
 
         prompt_text = str(payload.prompt or "").strip()
         created_at = int(datetime.utcnow().timestamp())
+
+        runtime_risk_meta = _enforce_runtime_risk_before_inference(
+            db,
+            ctx,
+            model_name=model_name,
+            environment=environment,
+            has_tool_calls=False,
+            selected_provider_id=selected_provider_id,
+            request_id=request_id,
+            endpoint_family="images",
+            trace_id=trace_id,
+            has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+            input_chars=len(prompt_text),
+        )
 
         inference_credential = resolve_inference_credential(
             db,
@@ -10267,12 +14461,8 @@ def gateway_openai_images_generate(
         )
         db.commit()
 
-        risk_tier, risk_reasons = _assess_gateway_inference_risk(
-            model_name=model_name,
-            environment=environment,
-            has_tool_calls=False,
-            selected_provider_id=selected_provider_id,
-        )
+        risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+        risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
 
         return {
             "created": created_at,
@@ -10282,6 +14472,8 @@ def gateway_openai_images_generate(
             "trace_id": trace_id,
             "risk_tier": risk_tier,
             "risk_reasons": risk_reasons,
+            "risk_policy_decision": str(runtime_risk_meta.get("risk_policy_decision") or "allow"),
+            "risk_policy_mode": str(runtime_risk_meta.get("risk_policy_mode") or "off"),
             "selected_provider_id": selected_provider_id,
             "route_policy_id": selected_route_policy_id,
         }
@@ -10338,6 +14530,20 @@ def gateway_openai_rerank(
         query_text = str(payload.query or "").strip()
         documents = list(payload.documents or [])
         normalized_documents = [_document_to_text(document) for document in documents]
+
+        runtime_risk_meta = _enforce_runtime_risk_before_inference(
+            db,
+            ctx,
+            model_name=model_name,
+            environment=environment,
+            has_tool_calls=False,
+            selected_provider_id=selected_provider_id,
+            request_id=request_id,
+            endpoint_family="rerank",
+            trace_id=trace_id,
+            has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+            input_chars=len(query_text) + sum(len(item) for item in normalized_documents),
+        )
 
         inference_credential = resolve_inference_credential(
             db,
@@ -10459,12 +14665,8 @@ def gateway_openai_rerank(
         )
         db.commit()
 
-        risk_tier, risk_reasons = _assess_gateway_inference_risk(
-            model_name=model_name,
-            environment=environment,
-            has_tool_calls=False,
-            selected_provider_id=selected_provider_id,
-        )
+        risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+        risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
 
         return {
             "object": "list",
@@ -10478,6 +14680,8 @@ def gateway_openai_rerank(
             "trace_id": trace_id,
             "risk_tier": risk_tier,
             "risk_reasons": risk_reasons,
+            "risk_policy_decision": str(runtime_risk_meta.get("risk_policy_decision") or "allow"),
+            "risk_policy_mode": str(runtime_risk_meta.get("risk_policy_mode") or "off"),
             "selected_provider_id": selected_provider_id,
             "route_policy_id": selected_route_policy_id,
         }
@@ -10551,6 +14755,20 @@ def gateway_openai_realtime(
         session_identifier = f"realtime-{uuid4().hex[:24]}"
         expires_at_dt = datetime.utcnow() + timedelta(minutes=15)
         expires_at = int(expires_at_dt.timestamp())
+
+        runtime_risk_meta = _enforce_runtime_risk_before_inference(
+            db,
+            ctx,
+            model_name=model_name,
+            environment=environment,
+            has_tool_calls=False,
+            selected_provider_id=selected_provider_id,
+            request_id=request_id,
+            endpoint_family="realtime",
+            trace_id=trace_id,
+            has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+            input_chars=len(session_label or "") + len(" ".join(requested_modalities)),
+        )
 
         prompt_tokens = _estimate_token_count(" ".join([model_name, session_label or "", " ".join(requested_modalities)]))
         model_rates, default_model_rates = _load_model_token_rates(db)
@@ -10636,12 +14854,8 @@ def gateway_openai_realtime(
         )
         db.commit()
 
-        risk_tier, risk_reasons = _assess_gateway_inference_risk(
-            model_name=model_name,
-            environment=environment,
-            has_tool_calls=False,
-            selected_provider_id=selected_provider_id,
-        )
+        risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+        risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
 
         created_ts = int(datetime.utcnow().timestamp())
         if bool(payload.stream):
@@ -10702,6 +14916,8 @@ def gateway_openai_realtime(
             "trace_id": trace_id,
             "risk_tier": risk_tier,
             "risk_reasons": risk_reasons,
+            "risk_policy_decision": str(runtime_risk_meta.get("risk_policy_decision") or "allow"),
+            "risk_policy_mode": str(runtime_risk_meta.get("risk_policy_mode") or "off"),
             "selected_provider_id": selected_provider_id,
             "route_policy_id": selected_route_policy_id,
         }
@@ -11114,6 +15330,20 @@ def gateway_openai_messages(
         content = _normalize_audio_text(payload.input)
         conversation_id = str(payload.conversation_id or "").strip() or f"conv-{uuid4().hex[:16]}"
 
+        runtime_risk_meta = _enforce_runtime_risk_before_inference(
+            db,
+            ctx,
+            model_name=model_name,
+            environment=environment,
+            has_tool_calls=False,
+            selected_provider_id=selected_provider_id,
+            request_id=request_id,
+            endpoint_family="messages",
+            trace_id=trace_id,
+            has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+            input_chars=len(content or ""),
+        )
+
         inference_credential = resolve_inference_credential(
             db,
             agent_id=str(getattr(payload, "agent_id", None) or "").strip() or None,
@@ -11201,12 +15431,8 @@ def gateway_openai_messages(
         )
         db.commit()
 
-        risk_tier, risk_reasons = _assess_gateway_inference_risk(
-            model_name=model_name,
-            environment=environment,
-            has_tool_calls=False,
-            selected_provider_id=selected_provider_id,
-        )
+        risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+        risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
         return {
             "id": message_id,
             "object": "message",
@@ -11218,6 +15444,8 @@ def gateway_openai_messages(
             "trace_id": trace_id,
             "risk_tier": risk_tier,
             "risk_reasons": risk_reasons,
+            "risk_policy_decision": str(runtime_risk_meta.get("risk_policy_decision") or "allow"),
+            "risk_policy_mode": str(runtime_risk_meta.get("risk_policy_mode") or "off"),
             "selected_provider_id": selected_provider_id,
             "route_policy_id": selected_route_policy_id,
         }
@@ -11258,6 +15486,21 @@ def gateway_openai_a2a_messages(
         environment = str(payload.environment or "dev").strip().lower() or "dev"
         request_tag = _normalize_request_tag(payload.request_tag)
         content = _normalize_audio_text(payload.message)
+
+        runtime_risk_meta = _enforce_runtime_risk_before_inference(
+            db,
+            ctx,
+            model_name=model_name,
+            environment=environment,
+            has_tool_calls=False,
+            selected_provider_id=selected_provider_id,
+            request_id=request_id,
+            endpoint_family="a2a",
+            trace_id=trace_id,
+            has_agent_id=True,
+            input_chars=len(content or ""),
+        )
+
         prompt_tokens = _estimate_token_count(content + " " + payload.from_agent_id + " " + payload.to_agent_id)
 
         model_rates, default_model_rates = _load_model_token_rates(db)
@@ -11304,12 +15547,8 @@ def gateway_openai_a2a_messages(
         )
         db.commit()
 
-        risk_tier, risk_reasons = _assess_gateway_inference_risk(
-            model_name=model_name,
-            environment=environment,
-            has_tool_calls=False,
-            selected_provider_id=selected_provider_id,
-        )
+        risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+        risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
 
         return {
             "id": message_id,
@@ -11323,6 +15562,8 @@ def gateway_openai_a2a_messages(
             "trace_id": trace_id,
             "risk_tier": risk_tier,
             "risk_reasons": risk_reasons,
+            "risk_policy_decision": str(runtime_risk_meta.get("risk_policy_decision") or "allow"),
+            "risk_policy_mode": str(runtime_risk_meta.get("risk_policy_mode") or "off"),
             "selected_provider_id": selected_provider_id,
             "route_policy_id": selected_route_policy_id,
         }
@@ -11351,6 +15592,7 @@ def gateway_openai_responses_create(
     started_at = time.perf_counter()
     trace_id = f"trace-gateway-responses-{uuid4()}"
     model_name = str(payload.model or "").strip() or "unknown"
+    auto_route_meta: dict[str, object] = {}
     request_id = f"gw-resp-{uuid4().hex[:16]}"
     response_id = f"resp-{uuid4().hex[:24]}"
     selected_provider_id: str | None = None
@@ -11369,6 +15611,50 @@ def gateway_openai_responses_create(
 
     try:
         require_role(ctx, GATEWAY_INFERENCE_ROLES)
+        from app.services.gateway_auto_router import should_auto_route
+        from app.services.gateway_leadership_pack11 import build_auto_route_with_pack11
+
+        if should_auto_route(model_name, bool(getattr(payload, "auto_route", False))):
+            auto_prompt = (
+                str(getattr(payload, "instructions", None) or "").strip()
+                + "\n"
+                + _responses_input_to_text(payload.input)
+            ).strip()
+            response_format_type = str((payload.response_format or {}).get("type") or "").strip().lower()
+            decision = build_auto_route_with_pack11(
+                db,
+                prompt_text=auto_prompt or model_name,
+                prefer_live_only=True,
+                strategy=str(getattr(payload, "auto_route_strategy", None) or "balanced"),
+                has_tools=bool(payload.tools),
+                json_response_format=response_format_type in {"json_object", "json_schema"},
+                request_tag=str(getattr(payload, "request_tag", None) or "").strip() or None,
+                route_policy_id=str(getattr(payload, "route_policy_id", None) or "").strip() or None,
+                use_cache=True,
+            )
+            selected_auto_model = str(decision.get("selected_model") or "").strip()
+            if not selected_auto_model:
+                from app.services.gateway_leadership_pack13 import auto_route_policy_block_detail
+
+                raise HTTPException(
+                    status_code=422,
+                    detail=auto_route_policy_block_detail(decision),
+                )
+            model_name = selected_auto_model
+            from app.services.gateway_leadership_pack14 import explain_snippet_from_decision
+
+            auto_route_meta = {
+                "tier": (decision.get("complexity") or {}).get("tier"),
+                "score": (decision.get("complexity") or {}).get("score"),
+                "rationale": decision.get("rationale"),
+                "strategy": decision.get("strategy"),
+                "cache_hit": decision.get("cache_hit"),
+                "strategy_policy_source": (decision.get("strategy_policy") or {}).get("source"),
+                "catalog_policy": decision.get("catalog_policy"),
+                "explain_snippet": explain_snippet_from_decision(decision),
+                "provider_diversity": decision.get("provider_diversity"),
+            }
+
         _ensure_inference_credentials(
             db,
             agent_id=str(getattr(payload, "agent_id", None) or "").strip() or None,
@@ -11392,6 +15678,173 @@ def gateway_openai_responses_create(
             authorization_header=request.headers.get("Authorization"),
             x_virtual_key_id=x_virtual_key_id,
         )
+        from app.services.gateway_nhi_iga_deny import enforce_iga_deny_or_raise
+
+        enforce_iga_deny_or_raise(
+            db,
+            actor_id=ctx.actor_id,
+            virtual_key_id=(
+                str(getattr(virtual_key, "key_id", "") or "").strip()
+                or str(resolved_virtual_key_id or "").strip()
+                or None
+            ),
+            owner_scope_id=str(owner_scope_for_guardrail or getattr(virtual_key, "owner_scope_id", "") or "").strip()
+            or None,
+            tenant_id=str(getattr(virtual_key, "tenant_id", "") or "").strip() or None,
+            environment=environment,
+            create_audit=create_audit_event,
+            audit_actor_id=ctx.actor_id,
+            trace_id=trace_id,
+        )
+        declared_intent = str(getattr(payload, "declared_intent", None) or "").strip()
+        vk_for_intent = (
+            str(getattr(virtual_key, "key_id", "") or "").strip()
+            or str(resolved_virtual_key_id or "").strip()
+            or None
+        )
+        from app.services.gateway_nhi_insights import blocking_nhi_modes
+
+        _nhi_modes = blocking_nhi_modes(db)
+        if (
+            _nhi_modes.get("intent_mode") == "block" or _nhi_modes.get("access_mode") == "block"
+        ) and not declared_intent:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error_code": "NHI_DECLARED_INTENT_REQUIRED",
+                    "message": (
+                        "declared_intent is required when NHI intent_mode or access_mode is block."
+                    ),
+                    "intent_mode": _nhi_modes.get("intent_mode"),
+                    "access_mode": _nhi_modes.get("access_mode"),
+                    "remediation_hint": (
+                        "Pass declared_intent on the request, or set intent_mode/access_mode to off|warn."
+                    ),
+                },
+            )
+        if declared_intent:
+            from app.services.gateway_nhi_insights import evaluate_nhi_intent
+            from app.services.gateway_nhi_native_access import authorize_nhi_access
+
+            owner_for_intent = (
+                str(owner_scope_for_guardrail or getattr(virtual_key, "owner_scope_id", "") or "").strip()
+                or None
+            )
+            intent_result = evaluate_nhi_intent(
+                db,
+                virtual_key_id=vk_for_intent,
+                owner_scope_id=owner_for_intent,
+                actor_id=str(ctx.actor_id or "").strip() or None,
+                declared_intent=declared_intent,
+                action="responses",
+                missing_ok=True,
+                enforce=True,
+            )
+            if intent_result.get("matched") or intent_result.get("reason") != "no_nhi_binding":
+                create_audit_event(
+                    db,
+                    actor_id=ctx.actor_id,
+                    action_type="gateway.nhi.intent_check",
+                    resource_type="gateway_nhi_inventory",
+                    resource_id=str(intent_result.get("nhi_record_id") or "intent"),
+                    trace_id=trace_id,
+                    decision_outcome="deny" if intent_result.get("decision") == "deny" else "allow",
+                    action_context={
+                        "decision": intent_result.get("decision"),
+                        "declared_intent": declared_intent,
+                        "mode": intent_result.get("mode"),
+                        "endpoint": "responses",
+                        "reason": intent_result.get("reason"),
+                    },
+                )
+            if intent_result.get("decision") in {"deny", "warn"}:
+                from app.services.gateway_nhi_insights import append_nhi_gate_event
+
+                append_nhi_gate_event(
+                    db,
+                    {
+                        "gate": "intent",
+                        "decision": intent_result.get("decision"),
+                        "reason": intent_result.get("reason"),
+                        "declared_intent": declared_intent,
+                        "mode": intent_result.get("mode"),
+                        "endpoint": "responses",
+                        "nhi_record_id": intent_result.get("nhi_record_id") or None,
+                        "actor_id": ctx.actor_id,
+                    },
+                    actor_id=str(ctx.actor_id or "system"),
+                )
+            if intent_result.get("decision") == "deny":
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "NHI_INTENT_DENIED",
+                        "message": "Declared intent is not approved for this gateway NHI.",
+                        "declared_intent": declared_intent,
+                        "approved_intents": intent_result.get("approved_intents") or [],
+                        "nhi_record_id": intent_result.get("nhi_record_id"),
+                        "remediation_hint": "Update approved intents via PUT /gateway/nhi/{id}/intents or set intent_mode=off/warn.",
+                    },
+                )
+            access_resource = str(getattr(payload, "access_resource", None) or f"model:{model_name}").strip()
+            access_result = authorize_nhi_access(
+                db,
+                declared_intent=declared_intent,
+                resource=access_resource,
+                action="responses",
+                virtual_key_id=vk_for_intent,
+                owner_scope_id=owner_for_intent,
+                actor_id=str(ctx.actor_id or "").strip() or None,
+                missing_ok=True,
+                enforce=True,
+            )
+            if access_result.get("decision") in {"deny", "warn"}:
+                create_audit_event(
+                    db,
+                    actor_id=ctx.actor_id,
+                    action_type="gateway.nhi.access.authorize",
+                    resource_type="gateway_nhi_access",
+                    resource_id=str(access_result.get("matched_policy_id") or "access"),
+                    trace_id=trace_id,
+                    decision_outcome="deny" if access_result.get("decision") == "deny" else "allow",
+                    action_context={
+                        "decision": access_result.get("decision"),
+                        "reason": access_result.get("reason"),
+                        "resource": access_resource,
+                        "endpoint": "responses",
+                    },
+                )
+                from app.services.gateway_nhi_insights import append_nhi_gate_event
+
+                append_nhi_gate_event(
+                    db,
+                    {
+                        "gate": "access",
+                        "decision": access_result.get("decision"),
+                        "reason": access_result.get("reason"),
+                        "declared_intent": declared_intent,
+                        "resource": access_resource,
+                        "mode": access_result.get("mode"),
+                        "endpoint": "responses",
+                        "matched_policy_id": access_result.get("matched_policy_id"),
+                        "nhi_record_id": access_result.get("nhi_record_id") or None,
+                        "actor_id": ctx.actor_id,
+                    },
+                    actor_id=str(ctx.actor_id or "system"),
+                )
+            if access_result.get("decision") == "deny":
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "NHI_ACCESS_DENIED",
+                        "message": "IARA-lite access policy denied this intent/resource/action.",
+                        "declared_intent": declared_intent,
+                        "resource": access_resource,
+                        "matched_policy_id": access_result.get("matched_policy_id"),
+                        "reason": access_result.get("reason"),
+                        "remediation_hint": "Update access policies via PUT /gateway/nhi/access/config or set access_mode=off/warn.",
+                    },
+                )
         if virtual_key is not None:
             _enforce_virtual_key_expiry(
                 db,
@@ -11614,12 +16067,21 @@ def gateway_openai_responses_create(
                     should_store_after_inference=True,
                 )
             if cache_pre is not None and cache_pre.cached_response is not None:
-                risk_tier, risk_reasons = _assess_gateway_inference_risk(
+                runtime_risk_meta = _enforce_runtime_risk_before_inference(
+                    db,
+                    ctx,
                     model_name=model_name,
                     environment=environment,
-                    has_tool_calls=False,
+                    has_tool_calls=bool(payload.tools),
                     selected_provider_id=selected_provider_id,
+                    request_id=request_id,
+                    endpoint_family="responses",
+                    trace_id=trace_id,
+                    has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+                    input_chars=len(str(prompt_preview or "")),
                 )
+                risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+                risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
                 refreshed = dict(cache_pre.cached_response)
                 refreshed["id"] = response_id
                 refreshed["request_id"] = request_id
@@ -11627,6 +16089,8 @@ def gateway_openai_responses_create(
                 refreshed["cache_short_circuit"] = True
                 refreshed["risk_tier"] = risk_tier
                 refreshed["risk_reasons"] = risk_reasons
+                refreshed["risk_policy_decision"] = str(runtime_risk_meta.get("risk_policy_decision") or "allow")
+                refreshed["risk_policy_mode"] = str(runtime_risk_meta.get("risk_policy_mode") or "off")
                 refreshed["selected_provider_id"] = selected_provider_id
                 refreshed["route_policy_id"] = selected_route_policy_id
                 refreshed["fallback_hops_used"] = fallback_hops_used
@@ -11721,6 +16185,20 @@ def gateway_openai_responses_create(
                     "skipped_before": 0,
                 }
             ]
+
+        runtime_risk_meta = _enforce_runtime_risk_before_inference(
+            db,
+            ctx,
+            model_name=model_name,
+            environment=environment,
+            has_tool_calls=bool(getattr(payload, "tools", None)),
+            selected_provider_id=selected_provider_id,
+            request_id=request_id,
+            endpoint_family="responses",
+            trace_id=trace_id,
+            has_agent_id=bool(str(getattr(payload, "agent_id", None) or "").strip()),
+            input_chars=len(str(prompt_preview or "")),
+        )
 
         inference_credential = None
         last_inference_error: Optional[HTTPException] = None
@@ -12076,12 +16554,17 @@ def gateway_openai_responses_create(
                 request_body=upstream_request_body,
             )
 
-        risk_tier, risk_reasons = _assess_gateway_inference_risk(
-            model_name=model_name,
-            environment=environment,
-            has_tool_calls=bool(selected_tool_name) or has_upstream_tool_calls,
-            selected_provider_id=selected_provider_id,
-        )
+        # Re-score for response metadata when tool execution was observed post-inference.
+        if bool(selected_tool_name) or has_upstream_tool_calls:
+            risk_tier, risk_reasons = _assess_gateway_inference_risk(
+                model_name=model_name,
+                environment=environment,
+                has_tool_calls=True,
+                selected_provider_id=selected_provider_id,
+            )
+        else:
+            risk_tier = str(runtime_risk_meta.get("risk_tier") or "low")
+            risk_reasons = list(runtime_risk_meta.get("risk_reasons") or [])
 
         created_ts = int(datetime.utcnow().timestamp())
         if bool(payload.stream):
@@ -12123,6 +16606,8 @@ def gateway_openai_responses_create(
             "trace_id": trace_id,
             "risk_tier": risk_tier,
             "risk_reasons": risk_reasons,
+            "risk_policy_decision": str(runtime_risk_meta.get("risk_policy_decision") or "allow"),
+            "risk_policy_mode": str(runtime_risk_meta.get("risk_policy_mode") or "off"),
             "selected_provider_id": selected_provider_id,
             "route_policy_id": selected_route_policy_id,
             "config_id": selected_route_policy_id,
@@ -12140,6 +16625,10 @@ def gateway_openai_responses_create(
             response_body["prompt_registry_id"] = prompt_registry_meta.get("prompt_registry_id")
         if hierarchy_limit_meta:
             response_body["cost_hierarchy_limits"] = hierarchy_limit_meta
+        if auto_route_meta:
+            response_body["auto_route_tier"] = auto_route_meta.get("tier")
+            response_body["auto_route_score"] = auto_route_meta.get("score")
+            response_body["auto_route_rationale"] = auto_route_meta.get("rationale")
         if (
             cache_pre is not None
             and cache_pre.short_circuit_active
@@ -13976,32 +18465,7 @@ def get_gateway_nhi_hygiene(
         _gateway_nhi_record_to_response(row, max_credential_age_days=max_credential_age_days, now=now)
         for row in rows
     ]
-    findings_counter: dict[str, int] = {}
-    source_counter: dict[str, int] = {}
-    stale_count = 0
-    missing_owner_count = 0
-    inactive_count = 0
-    high_risk_count = 0
-
-    unmanaged_prod_count = 0
-    for row in response_rows:
-        source_counter[row.source_type] = source_counter.get(row.source_type, 0) + 1
-        if row.stale_credential:
-            stale_count += 1
-        if row.missing_owner:
-            missing_owner_count += 1
-        if str(row.status or "").strip().lower() != "active":
-            inactive_count += 1
-        findings = _parse_string_list(row.findings, "findings")
-        if "high_risk" in findings:
-            high_risk_count += 1
-        for finding in findings:
-            findings_counter[finding] = findings_counter.get(finding, 0) + 1
-        # Leader Readiness clock: unmanaged prod identities (high-risk or ownerless in prod).
-        if str(row.environment or "").strip().lower() == "prod" and (
-            row.missing_owner or "high_risk" in findings
-        ):
-            unmanaged_prod_count += 1
+    summary = _build_nhi_hygiene_summary(response_rows, max_credential_age_days=max_credential_age_days)
 
     create_audit_event(
         db,
@@ -14012,22 +18476,1312 @@ def get_gateway_nhi_hygiene(
         trace_id=f"trace-gateway-nhi-hygiene-read-{uuid4()}",
     )
     db.commit()
-    return GatewayNhiHygieneResponse(
-        max_credential_age_days=max_credential_age_days,
-        total_identities=len(response_rows),
-        stale_credentials=stale_count,
-        missing_owner=missing_owner_count,
-        inactive_identities=inactive_count,
-        high_risk_identities=high_risk_count,
-        unmanaged_prod_identities=unmanaged_prod_count,
-        prod_unmanaged_zero_ok=unmanaged_prod_count == 0,
-        findings_distribution=[
-            {"key": key, "count": count} for key, count in sorted(findings_counter.items(), key=lambda item: item[0])
-        ],
-        source_distribution=[
-            {"key": key, "count": count} for key, count in sorted(source_counter.items(), key=lambda item: item[0])
-        ],
+    return GatewayNhiHygieneResponse(**summary)
+
+
+@router.get("/gateway/nhi/orphans", response_model=GatewayNhiOrphansResponse)
+def get_gateway_nhi_orphans(
+    max_credential_age_days: int = Query(default=90, ge=1, le=3650),
+    tenant_id: Optional[str] = Query(default=None),
+    environment: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import list_nhi_orphans
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    _sync_gateway_nhi_inventory(db, max_credential_age_days=max_credential_age_days)
+    db.flush()
+    query = db.query(GatewayNhiInventory)
+    if tenant_id:
+        query = query.filter(GatewayNhiInventory.tenant_id == str(tenant_id).strip())
+    if environment:
+        query = query.filter(GatewayNhiInventory.environment == str(environment).strip().lower())
+    payload = list_nhi_orphans(
+        db, rows=query.all(), max_credential_age_days=max_credential_age_days, limit=limit
     )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.orphans.read",
+        resource_type="gateway_nhi_inventory",
+        resource_id="orphans",
+        trace_id=f"trace-gateway-nhi-orphans-{uuid4()}",
+        action_context={"orphan_count": payload.get("orphan_count")},
+    )
+    db.commit()
+    return payload
+
+
+@router.post("/gateway/nhi/orphans/assign", response_model=GatewayNhiOrphansAssignResponse)
+def post_gateway_nhi_orphans_assign(
+    payload: GatewayNhiOrphansAssignRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import bulk_assign_nhi_orphans
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    result = bulk_assign_nhi_orphans(
+        db,
+        nhi_record_ids=payload.nhi_record_ids,
+        owner_scope_type=payload.owner_scope_type,
+        owner_scope_id=payload.owner_scope_id,
+        purpose=payload.purpose,
+        actor_id=ctx.actor_id,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.orphans.assign",
+        resource_type="gateway_nhi_inventory",
+        resource_id="orphans",
+        trace_id=f"trace-gateway-nhi-orphans-assign-{uuid4()}",
+        action_context={
+            "updated_count": result.get("updated_count"),
+            "owner_scope_type": result.get("owner_scope_type"),
+            "owner_scope_id": result.get("owner_scope_id"),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/nhi/agents", response_model=GatewayNhiAgentsResponse)
+def get_gateway_nhi_agents(
+    max_credential_age_days: int = Query(default=90, ge=1, le=3650),
+    tenant_id: Optional[str] = Query(default=None),
+    environment: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_native_access import list_nhi_agents
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    _sync_gateway_nhi_inventory(db, max_credential_age_days=max_credential_age_days)
+    db.flush()
+    query = db.query(GatewayNhiInventory)
+    if tenant_id:
+        query = query.filter(GatewayNhiInventory.tenant_id == str(tenant_id).strip())
+    if environment:
+        query = query.filter(GatewayNhiInventory.environment == str(environment).strip().lower())
+    payload = list_nhi_agents(
+        db, rows=query.all(), max_credential_age_days=max_credential_age_days, limit=limit
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.agents.read",
+        resource_type="gateway_nhi_inventory",
+        resource_id="agents",
+        trace_id=f"trace-gateway-nhi-agents-{uuid4()}",
+        action_context={"agent_count": payload.get("agent_count")},
+    )
+    db.commit()
+    return payload
+
+
+@router.get("/gateway/runtime-risk/config", response_model=GatewayRuntimeRiskConfig)
+def get_gateway_runtime_risk_config(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_runtime_risk import load_runtime_risk_config
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    return load_runtime_risk_config(db)
+
+
+@router.put("/gateway/runtime-risk/config", response_model=GatewayRuntimeRiskConfig)
+def put_gateway_runtime_risk_config(
+    payload: GatewayRuntimeRiskConfig,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_runtime_risk import save_runtime_risk_config
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    require_mfa(ctx)
+    result = save_runtime_risk_config(db, payload.model_dump(), actor_id=ctx.actor_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.runtime_risk.config.update",
+        resource_type="gateway_runtime_risk",
+        resource_id="config",
+        trace_id=f"trace-gateway-runtime-risk-config-{uuid4()}",
+        action_context={
+            "enabled": result.get("enabled"),
+            "mode": result.get("mode"),
+            "high_action": result.get("high_action"),
+            "medium_action": result.get("medium_action"),
+            "low_action": result.get("low_action"),
+            "enforce_environments": result.get("enforce_environments"),
+            "fail_closed_on_config_error": result.get("fail_closed_on_config_error"),
+            "approver_id": getattr(ctx, "approver_id", None),
+            "mfa_verified": True,
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/runtime-risk/evaluate", response_model=GatewayRuntimeRiskEvaluateResponse)
+def post_gateway_runtime_risk_evaluate(
+    payload: GatewayRuntimeRiskEvaluateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_runtime_risk import evaluate_runtime_risk
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    result = evaluate_runtime_risk(
+        db,
+        model_name=payload.model_name,
+        environment=payload.environment,
+        has_tool_calls=payload.has_tool_calls,
+        selected_provider_id=payload.selected_provider_id,
+        endpoint_family=payload.endpoint_family,
+        has_agent_id=payload.has_agent_id,
+        input_chars=payload.input_chars,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.runtime_risk.evaluate",
+        resource_type="gateway_runtime_risk",
+        resource_id=str(payload.model_name)[:128],
+        trace_id=f"trace-gateway-runtime-risk-eval-{uuid4()}",
+        action_context={
+            "risk_tier": result.get("risk_tier"),
+            "decision": result.get("decision"),
+            "would_block": result.get("would_block"),
+            "endpoint_family": result.get("endpoint_family"),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/nhi/access/config", response_model=GatewayNhiAccessConfig)
+def get_gateway_nhi_access_config(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_native_access import load_access_config
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    return load_access_config(db)
+
+
+@router.put("/gateway/nhi/access/config", response_model=GatewayNhiAccessConfig)
+def put_gateway_nhi_access_config(
+    payload: GatewayNhiAccessConfig,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_native_access import save_access_config
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    result = save_access_config(db, payload.model_dump(), actor_id=ctx.actor_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.access.config.update",
+        resource_type="gateway_nhi_access",
+        resource_id="config",
+        trace_id=f"trace-gateway-nhi-access-config-{uuid4()}",
+        action_context={
+            "access_mode": result.get("access_mode"),
+            "policy_count": result.get("policy_count"),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/nhi/access/authorize", response_model=GatewayNhiAccessAuthorizeResponse)
+def post_gateway_nhi_access_authorize(
+    payload: GatewayNhiAccessAuthorizeRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_native_access import authorize_nhi_access
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    result = authorize_nhi_access(
+        db,
+        declared_intent=payload.declared_intent,
+        resource=payload.resource,
+        action=payload.action,
+        nhi_record_id=payload.nhi_record_id,
+        virtual_key_id=payload.virtual_key_id,
+        owner_scope_id=payload.owner_scope_id,
+        actor_id=payload.actor_id or ctx.actor_id,
+        missing_ok=True,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.access.authorize",
+        resource_type="gateway_nhi_access",
+        resource_id=str(result.get("matched_policy_id") or "access"),
+        trace_id=f"trace-gateway-nhi-access-authz-{uuid4()}",
+        decision_outcome="deny" if result.get("decision") == "deny" else "allow",
+        action_context={
+            "decision": result.get("decision"),
+            "reason": result.get("reason"),
+            "resource": result.get("resource"),
+            "action": result.get("action"),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/nhi/{nhi_record_id}/shadow-action", response_model=GatewayNhiShadowActionResponse)
+def post_gateway_nhi_shadow_action(
+    nhi_record_id: str,
+    payload: GatewayNhiShadowActionRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_native_access import apply_shadow_ai_action
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    row = db.query(GatewayNhiInventory).filter_by(nhi_record_id=nhi_record_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="NHI record not found")
+    result = apply_shadow_ai_action(
+        db, row=row, action=payload.action, actor_id=ctx.actor_id, notes=payload.notes
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.shadow.action",
+        resource_type="gateway_nhi_inventory",
+        resource_id=nhi_record_id,
+        trace_id=f"trace-gateway-nhi-shadow-{uuid4()}",
+        action_context={
+            "action": result.get("action"),
+            "shadow_status": result.get("shadow_status"),
+            "nhi_status": result.get("nhi_status"),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/nhi/insights", response_model=GatewayNhiInsightsResponse)
+def get_gateway_nhi_insights(
+    max_credential_age_days: int = Query(default=90, ge=1, le=3650),
+    tenant_id: Optional[str] = Query(default=None),
+    environment: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import build_nhi_insights
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    _sync_gateway_nhi_inventory(db, max_credential_age_days=max_credential_age_days)
+    db.flush()
+    query = db.query(GatewayNhiInventory)
+    if tenant_id:
+        query = query.filter(GatewayNhiInventory.tenant_id == str(tenant_id).strip())
+    if environment:
+        query = query.filter(GatewayNhiInventory.environment == str(environment).strip().lower())
+    rows = query.all()
+    payload = build_nhi_insights(
+        db, rows=rows, max_credential_age_days=max_credential_age_days, limit=limit
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.insights.read",
+        resource_type="gateway_nhi_inventory",
+        resource_id="insights",
+        trace_id=f"trace-gateway-nhi-insights-{uuid4()}",
+        action_context={"total_identities": payload.get("total_identities"), "limit": limit},
+    )
+    db.commit()
+    return payload
+
+
+@router.get("/gateway/nhi/{nhi_record_id}/access-map", response_model=GatewayNhiAccessMapResponse)
+def get_gateway_nhi_access_map(
+    nhi_record_id: str,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import build_nhi_access_map
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    row = db.query(GatewayNhiInventory).filter_by(nhi_record_id=nhi_record_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="NHI record not found")
+    payload = build_nhi_access_map(db, row=row)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.access_map.read",
+        resource_type="gateway_nhi_inventory",
+        resource_id=nhi_record_id,
+        trace_id=f"trace-gateway-nhi-access-map-{uuid4()}",
+        action_context={"path_count": payload.get("path_count")},
+    )
+    db.commit()
+    return payload
+
+
+@router.get("/gateway/nhi/{nhi_record_id}/timeline", response_model=GatewayNhiTimelineResponse)
+def get_gateway_nhi_timeline(
+    nhi_record_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import build_nhi_timeline
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    row = db.query(GatewayNhiInventory).filter_by(nhi_record_id=nhi_record_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="NHI record not found")
+    payload = build_nhi_timeline(db, row=row, limit=limit)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.timeline.read",
+        resource_type="gateway_nhi_inventory",
+        resource_id=nhi_record_id,
+        trace_id=f"trace-gateway-nhi-timeline-{uuid4()}",
+        action_context={"event_count": payload.get("event_count")},
+    )
+    db.commit()
+    return payload
+
+
+@router.put("/gateway/nhi/{nhi_record_id}/correlation", response_model=GatewayNhiCorrelationResponse)
+def update_gateway_nhi_correlation(
+    nhi_record_id: str,
+    payload: GatewayNhiCorrelationUpdateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import set_nhi_correlation
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    row = db.query(GatewayNhiInventory).filter_by(nhi_record_id=nhi_record_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="NHI record not found")
+    result = set_nhi_correlation(
+        db,
+        row=row,
+        external_ref=payload.external_ref,
+        iga_agent_id=payload.iga_agent_id,
+        source_system=payload.source_system,
+        actor_id=ctx.actor_id,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.correlation.update",
+        resource_type="gateway_nhi_inventory",
+        resource_id=nhi_record_id,
+        trace_id=f"trace-gateway-nhi-correlation-{uuid4()}",
+        action_context={
+            "external_ref": result.get("external_ref"),
+            "iga_agent_id": result.get("iga_agent_id"),
+            "correlation_source_system": result.get("correlation_source_system"),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.put("/gateway/nhi/{nhi_record_id}/owner", response_model=GatewayNhiInventoryRecordResponse)
+def update_gateway_nhi_owner(
+    nhi_record_id: str,
+    payload: GatewayNhiOwnerUpdateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import assign_nhi_owner
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    row = db.query(GatewayNhiInventory).filter_by(nhi_record_id=nhi_record_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="NHI record not found")
+    assign_nhi_owner(
+        db,
+        row=row,
+        owner_scope_type=payload.owner_scope_type,
+        owner_scope_id=payload.owner_scope_id,
+        purpose=payload.purpose,
+        actor_id=ctx.actor_id,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.owner.update",
+        resource_type="gateway_nhi_inventory",
+        resource_id=nhi_record_id,
+        trace_id=f"trace-gateway-nhi-owner-{uuid4()}",
+        action_context={
+            "owner_scope_type": payload.owner_scope_type,
+            "owner_scope_id": payload.owner_scope_id,
+            "purpose": payload.purpose,
+        },
+    )
+    db.commit()
+    db.refresh(row)
+    return _gateway_nhi_record_to_response(row, max_credential_age_days=90, now=datetime.utcnow())
+
+
+@router.post("/gateway/nhi/{nhi_record_id}/lifecycle", response_model=GatewayNhiInventoryRecordResponse)
+def update_gateway_nhi_lifecycle(
+    nhi_record_id: str,
+    payload: GatewayNhiLifecycleRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import apply_nhi_lifecycle
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    row = db.query(GatewayNhiInventory).filter_by(nhi_record_id=nhi_record_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="NHI record not found")
+    apply_nhi_lifecycle(
+        db,
+        row=row,
+        action=payload.action,
+        reason=payload.reason,
+        actor_id=ctx.actor_id,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.lifecycle.update",
+        resource_type="gateway_nhi_inventory",
+        resource_id=nhi_record_id,
+        trace_id=f"trace-gateway-nhi-lifecycle-{uuid4()}",
+        action_context={"action": payload.action, "reason": payload.reason, "status": row.status},
+    )
+    db.commit()
+    db.refresh(row)
+    return _gateway_nhi_record_to_response(row, max_credential_age_days=90, now=datetime.utcnow())
+
+
+@router.put("/gateway/nhi/{nhi_record_id}/intents")
+def update_gateway_nhi_intents(
+    nhi_record_id: str,
+    payload: GatewayNhiIntentsUpdateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import set_nhi_approved_intents
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    row = db.query(GatewayNhiInventory).filter_by(nhi_record_id=nhi_record_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="NHI record not found")
+    result = set_nhi_approved_intents(
+        db,
+        row=row,
+        purpose=payload.purpose,
+        approved_intents=payload.approved_intents,
+        actor_id=ctx.actor_id,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.intents.update",
+        resource_type="gateway_nhi_inventory",
+        resource_id=nhi_record_id,
+        trace_id=f"trace-gateway-nhi-intents-{uuid4()}",
+        action_context={"approved_intents": result.get("approved_intents"), "purpose": result.get("purpose")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/nhi/governance/config", response_model=GatewayNhiGovernanceConfig)
+def get_gateway_nhi_governance_config(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import load_nhi_governance
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    return load_nhi_governance(db, reveal_secret=False)
+
+
+@router.put("/gateway/nhi/governance/config", response_model=GatewayNhiGovernanceConfig)
+def put_gateway_nhi_governance_config(
+    payload: GatewayNhiGovernanceConfig,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import save_nhi_governance
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    result = save_nhi_governance(
+        db,
+        {
+            "intent_mode": payload.intent_mode,
+            "correlation_ingest_enabled": payload.correlation_ingest_enabled,
+            "require_correlation_ingest_hmac": payload.require_correlation_ingest_hmac,
+            "correlation_ingest_hmac_secret": payload.correlation_ingest_hmac_secret,
+        },
+        actor_id=ctx.actor_id,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.governance.config.update",
+        resource_type="gateway_nhi_governance",
+        resource_id="config",
+        trace_id=f"trace-gateway-nhi-gov-config-{uuid4()}",
+        action_context={
+            "intent_mode": result.get("intent_mode"),
+            "correlation_ingest_enabled": bool(result.get("correlation_ingest_enabled")),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/nhi/intent-check", response_model=GatewayNhiIntentCheckResponse)
+def post_gateway_nhi_intent_check(
+    payload: GatewayNhiIntentCheckRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_insights import evaluate_nhi_intent
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    result = evaluate_nhi_intent(
+        db,
+        nhi_record_id=payload.nhi_record_id,
+        virtual_key_id=payload.virtual_key_id,
+        owner_scope_id=payload.owner_scope_id,
+        actor_id=payload.actor_id,
+        declared_intent=payload.declared_intent,
+        action=payload.action,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.intent_check",
+        resource_type="gateway_nhi_inventory",
+        resource_id=str(result.get("nhi_record_id") or "intent"),
+        trace_id=f"trace-gateway-nhi-intent-check-{uuid4()}",
+        decision_outcome="deny" if result.get("decision") == "deny" else "allow",
+        action_context={
+            "decision": result.get("decision"),
+            "declared_intent": result.get("declared_intent"),
+            "mode": result.get("mode"),
+            "reason": result.get("reason"),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/nhi/evidence/export", response_model=GatewayNhiEvidenceExportResponse)
+def export_gateway_nhi_evidence(
+    payload: GatewayNhiEvidenceExportRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_evidence import build_nhi_evidence_pack
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    max_age = int(payload.max_credential_age_days or 90)
+    _sync_gateway_nhi_inventory(db, max_credential_age_days=max_age)
+    db.flush()
+    query = db.query(GatewayNhiInventory)
+    if payload.tenant_id:
+        query = query.filter(GatewayNhiInventory.tenant_id == str(payload.tenant_id).strip())
+    if payload.environment:
+        query = query.filter(
+            GatewayNhiInventory.environment == str(payload.environment).strip().lower()
+        )
+    rows = query.all()
+    now = datetime.utcnow()
+    hygiene_rows = [
+        _gateway_nhi_record_to_response(row, max_credential_age_days=max_age, now=now) for row in rows
+    ]
+    hygiene = _build_nhi_hygiene_summary(hygiene_rows, max_credential_age_days=max_age)
+    pack = build_nhi_evidence_pack(
+        db,
+        rows=rows,
+        hygiene=hygiene,
+        max_credential_age_days=max_age,
+        tenant_id=payload.tenant_id,
+        environment=payload.environment,
+        actor_id=ctx.actor_id,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.evidence.export",
+        resource_type="gateway_nhi_evidence",
+        resource_id=str(pack.get("evidence_id") or "evidence"),
+        trace_id=f"trace-gateway-nhi-evidence-{uuid4()}",
+        action_context={
+            "total_identities": (pack.get("summary") or {}).get("total_identities"),
+            "orphan_count": (pack.get("summary") or {}).get("orphan_count"),
+            "correlation_coverage_pct": (pack.get("summary") or {}).get("correlation_coverage_pct"),
+        },
+    )
+    db.commit()
+    return pack
+
+
+@router.post("/gateway/nhi/correlation/ingest", response_model=GatewayNhiCorrelationResponse)
+async def ingest_gateway_nhi_correlation_hmac(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Machine ingest to bind IGA agent ids onto existing gateway NHIs (HMAC; no crawl)."""
+    from app.services.gateway_nhi_iga_deny import verify_ingest_anti_replay, verify_ingest_signature
+    from app.services.gateway_nhi_insights import (
+        ingest_nhi_correlation,
+        load_nhi_governance,
+        _load_governance_raw,
+    )
+    from app.runtime_constants import RUNTIME_CONFIG_GATEWAY_NHI_GOVERNANCE_JSON
+    from app.services.runtime_config import upsert_runtime_config_value
+
+    body = await request.body()
+    try:
+        payload_obj = json.loads(body.decode("utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="invalid JSON body") from exc
+    if not isinstance(payload_obj, dict):
+        raise HTTPException(status_code=422, detail="JSON body must be an object")
+    payload = GatewayNhiCorrelationIngestRequest(**payload_obj)
+    gov = load_nhi_governance(db, reveal_secret=True)
+    if not gov.get("correlation_ingest_enabled"):
+        raise HTTPException(status_code=400, detail="NHI correlation ingest is disabled")
+    secret = str(gov.get("correlation_ingest_hmac_secret") or "")
+    ts_header = request.headers.get("X-Gateway-Nhi-Correlation-Timestamp") or request.headers.get(
+        "x-gateway-nhi-correlation-timestamp"
+    )
+    nonce_header = request.headers.get("X-Gateway-Nhi-Correlation-Nonce") or request.headers.get(
+        "x-gateway-nhi-correlation-nonce"
+    )
+    provided = request.headers.get("X-Gateway-Nhi-Correlation-Signature") or request.headers.get(
+        "x-gateway-nhi-correlation-signature"
+    )
+    require_ts = bool(gov.get("require_correlation_ingest_timestamp"))
+    allow_legacy = not require_ts
+    if gov.get("require_correlation_ingest_hmac"):
+        if not secret.strip():
+            raise HTTPException(status_code=503, detail="Correlation ingest HMAC secret is not configured")
+        if not provided or not verify_ingest_signature(
+            secret=secret,
+            body=body,
+            provided=str(provided),
+            timestamp=str(ts_header or ""),
+            nonce=str(nonce_header or ""),
+            allow_legacy_body_only=allow_legacy,
+        ):
+            raise HTTPException(
+                status_code=401, detail="Invalid or missing X-Gateway-Nhi-Correlation-Signature"
+            )
+    elif secret.strip() and provided:
+        if not verify_ingest_signature(
+            secret=secret,
+            body=body,
+            provided=str(provided),
+            timestamp=str(ts_header or ""),
+            nonce=str(nonce_header or ""),
+            allow_legacy_body_only=allow_legacy,
+        ):
+            raise HTTPException(status_code=401, detail="Invalid X-Gateway-Nhi-Correlation-Signature")
+
+    raw_gov = _load_governance_raw(db)
+    verify_ingest_anti_replay(
+        raw_gov,
+        timestamp_header=ts_header,
+        nonce_header=nonce_header,
+        require_timestamp=require_ts,
+        max_skew_seconds=int(gov.get("max_correlation_ingest_skew_seconds") or 300),
+        nonce_header_name="X-Gateway-Nhi-Correlation-Nonce",
+        nonce_store_key="seen_correlation_nonces",
+        failure_prefix="NHI correlation ingest freshness failed",
+    )
+    if str(nonce_header or "").strip():
+        upsert_runtime_config_value(
+            db,
+            RUNTIME_CONFIG_GATEWAY_NHI_GOVERNANCE_JSON,
+            json.dumps(raw_gov, separators=(",", ":"), default=str),
+            description="NHI governance + native access (GOV-AI-IDSEC-NHI-004/006/007/008)",
+        )
+
+    result = ingest_nhi_correlation(
+        db,
+        nhi_record_id=payload.nhi_record_id,
+        virtual_key_id=payload.virtual_key_id,
+        source_type=payload.source_type,
+        source_id=payload.source_id,
+        external_ref=payload.external_ref,
+        iga_agent_id=payload.iga_agent_id,
+        source_system=payload.source_system,
+        actor_id=f"iga:{payload.source_system or 'correlation'}",
+    )
+    create_audit_event(
+        db,
+        actor_id=f"iga:{payload.source_system or 'correlation'}",
+        action_type="gateway.nhi.correlation.ingest",
+        resource_type="gateway_nhi_inventory",
+        resource_id=str(result.get("nhi_record_id") or "correlation"),
+        trace_id=f"trace-gateway-nhi-correlation-ingest-{uuid4()}",
+        action_context={
+            "external_ref": result.get("external_ref"),
+            "iga_agent_id": result.get("iga_agent_id"),
+            "hmac_verified": bool(provided),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.get("/gateway/nhi/iga-export/config", response_model=GatewayNhiIgaExportConfig)
+def get_gateway_nhi_iga_export_config(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_iga_export import load_nhi_iga_export_config
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    return load_nhi_iga_export_config(db, reveal_secret=False)
+
+
+@router.put("/gateway/nhi/iga-export/config", response_model=GatewayNhiIgaExportConfig)
+def put_gateway_nhi_iga_export_config(
+    payload: GatewayNhiIgaExportConfig,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_iga_export import save_nhi_iga_export_config
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    config = save_nhi_iga_export_config(db, payload.model_dump(), actor_id=ctx.actor_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.iga_export.config.update",
+        resource_type="gateway_nhi_iga_export",
+        resource_id="config",
+        trace_id=f"trace-gateway-nhi-iga-export-config-{uuid4()}",
+        action_context={
+            "enabled": bool(config.get("enabled")),
+            "target_system": config.get("target_system"),
+            "webhook_configured": bool(str(config.get("webhook_url") or "").strip()),
+            "hmac_secret_configured": bool(config.get("hmac_secret_configured")),
+            "default_profile": config.get("default_profile"),
+        },
+    )
+    db.commit()
+    return config
+
+
+@router.post("/gateway/nhi/export", response_model=GatewayNhiExportResponse)
+def export_gateway_nhi_inventory(
+    payload: GatewayNhiExportRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_iga_export import (
+        build_nhi_export_bundle,
+        deliver_nhi_export_webhook,
+        load_nhi_iga_export_config,
+    )
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    config = load_nhi_iga_export_config(db, reveal_secret=False)
+    max_credential_age_days = int(payload.max_credential_age_days or 90)
+    _sync_gateway_nhi_inventory(db, max_credential_age_days=max_credential_age_days)
+    db.flush()
+
+    query = db.query(GatewayNhiInventory)
+    if payload.tenant_id:
+        query = query.filter(GatewayNhiInventory.tenant_id == str(payload.tenant_id).strip())
+    if payload.environment:
+        query = query.filter(GatewayNhiInventory.environment == str(payload.environment).strip().lower())
+    if payload.source_type:
+        query = query.filter(GatewayNhiInventory.source_type == str(payload.source_type).strip().lower())
+    if payload.provider_type:
+        query = query.filter(GatewayNhiInventory.provider_type == str(payload.provider_type).strip().lower())
+    if payload.identity_type:
+        query = query.filter(GatewayNhiInventory.identity_type == str(payload.identity_type).strip().lower())
+    if payload.status:
+        query = query.filter(GatewayNhiInventory.status == str(payload.status).strip().lower())
+
+    limit = min(int(payload.limit or 100), int(config.get("max_records") or 500))
+    rows = query.order_by(GatewayNhiInventory.updated_at.desc()).offset(int(payload.offset or 0)).limit(limit).all()
+    now = datetime.utcnow()
+    result_rows = [
+        _gateway_nhi_record_to_response(row, max_credential_age_days=max_credential_age_days, now=now)
+        for row in rows
+    ]
+    if payload.stale_only:
+        result_rows = [row for row in result_rows if row.stale_credential]
+    if payload.missing_owner_only:
+        result_rows = [row for row in result_rows if row.missing_owner]
+
+    from app.services.gateway_nhi_insights import load_nhi_governance
+
+    gov = load_nhi_governance(db)
+    gov_records = gov.get("records") if isinstance(gov.get("records"), dict) else {}
+    export_records: list[dict[str, object]] = []
+    for row in result_rows:
+        item = row.model_dump() if hasattr(row, "model_dump") else dict(row)
+        meta = gov_records.get(str(item.get("nhi_record_id") or ""))
+        if isinstance(meta, dict):
+            item["external_ref"] = meta.get("external_ref")
+            item["iga_agent_id"] = meta.get("iga_agent_id")
+            item["correlation_source_system"] = meta.get("correlation_source_system")
+        export_records.append(item)
+
+    hygiene_payload = None
+    include_hygiene = (
+        bool(config.get("include_hygiene_summary", True))
+        if payload.include_hygiene_summary is None
+        else bool(payload.include_hygiene_summary)
+    )
+    if include_hygiene:
+        hygiene_query = db.query(GatewayNhiInventory)
+        if payload.tenant_id:
+            hygiene_query = hygiene_query.filter(
+                GatewayNhiInventory.tenant_id == str(payload.tenant_id).strip()
+            )
+        if payload.environment:
+            hygiene_query = hygiene_query.filter(
+                GatewayNhiInventory.environment == str(payload.environment).strip().lower()
+            )
+        hygiene_rows = [
+            _gateway_nhi_record_to_response(row, max_credential_age_days=max_credential_age_days, now=now)
+            for row in hygiene_query.all()
+        ]
+        hygiene_payload = _build_nhi_hygiene_summary(
+            hygiene_rows, max_credential_age_days=max_credential_age_days
+        )
+
+    profile = str(payload.profile or config.get("default_profile") or "iga_correlation").strip()
+    target_system = str(payload.target_system or config.get("target_system") or "generic").strip()
+    filters = {
+        "tenant_id": payload.tenant_id,
+        "environment": payload.environment,
+        "source_type": payload.source_type,
+        "provider_type": payload.provider_type,
+        "identity_type": payload.identity_type,
+        "status": payload.status,
+        "stale_only": payload.stale_only,
+        "missing_owner_only": payload.missing_owner_only,
+        "max_credential_age_days": max_credential_age_days,
+        "limit": limit,
+        "offset": int(payload.offset or 0),
+    }
+    bundle = build_nhi_export_bundle(
+        records=export_records,
+        hygiene=hygiene_payload,
+        profile=profile,
+        target_system=target_system,
+        filters=filters,
+        actor_id=ctx.actor_id,
+        include_hygiene_summary=include_hygiene,
+    )
+
+    delivery = None
+    if payload.deliver_webhook:
+        require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+        env_for_gate = str(payload.environment or "dev").strip().lower() or "dev"
+        if _is_prod_environment(env_for_gate) or _runtime_is_production() or not payload.dry_run_delivery:
+            require_dual_approval(ctx)
+        delivery = deliver_nhi_export_webhook(
+            db,
+            bundle=bundle,
+            dry_run=bool(payload.dry_run_delivery),
+        )
+        create_audit_event(
+            db,
+            actor_id=ctx.actor_id,
+            action_type="gateway.nhi.iga_export.deliver",
+            resource_type="gateway_nhi_iga_export",
+            resource_id=str(bundle.get("export_id") or "export"),
+            trace_id=f"trace-gateway-nhi-export-deliver-{uuid4()}",
+            action_context={
+                "delivery_status": delivery.get("delivery_status"),
+                "dry_run": bool(payload.dry_run_delivery),
+                "record_count": delivery.get("record_count"),
+                "signed": delivery.get("signed"),
+            },
+        )
+
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.export",
+        resource_type="gateway_nhi_inventory",
+        resource_id=str(bundle.get("export_id") or "export"),
+        trace_id=f"trace-gateway-nhi-export-{uuid4()}",
+        action_context={
+            "profile": bundle.get("profile"),
+            "target_system": bundle.get("target_system"),
+            "record_count": bundle.get("record_count"),
+            "deliver_webhook": bool(payload.deliver_webhook),
+        },
+    )
+    db.commit()
+    if delivery is not None:
+        bundle["delivery"] = delivery
+    return bundle
+
+
+@router.post("/gateway/nhi/iga-export/test-delivery", response_model=GatewayNhiExportResponse)
+def test_gateway_nhi_iga_export_delivery(
+    payload: GatewayNhiIgaExportTestRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_iga_export import (
+        build_nhi_export_bundle,
+        deliver_nhi_export_webhook,
+        load_nhi_iga_export_config,
+    )
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    if not payload.dry_run:
+        require_dual_approval(ctx)
+    config = load_nhi_iga_export_config(db, reveal_secret=False)
+    sample = build_nhi_export_bundle(
+        records=[],
+        hygiene={
+            "total_identities": 0,
+            "stale_credentials": 0,
+            "missing_owner": 0,
+            "high_risk_identities": 0,
+            "note": "test_delivery_sample",
+        },
+        profile=str(config.get("default_profile") or "iga_correlation"),
+        target_system=str(config.get("target_system") or "generic"),
+        filters={"test": True},
+        actor_id=ctx.actor_id,
+        include_hygiene_summary=True,
+    )
+    delivery = deliver_nhi_export_webhook(db, bundle=sample, dry_run=bool(payload.dry_run))
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.iga_export.test",
+        resource_type="gateway_nhi_iga_export",
+        resource_id=str(sample.get("export_id") or "test"),
+        trace_id=f"trace-gateway-nhi-iga-export-test-{uuid4()}",
+        action_context={
+            "dry_run": bool(payload.dry_run),
+            "delivery_status": delivery.get("delivery_status"),
+            "signed": delivery.get("signed"),
+        },
+    )
+    db.commit()
+    sample["delivery"] = delivery
+    return sample
+
+
+@router.get("/gateway/nhi/iga-deny/events", response_model=GatewayNhiIgaDenyEventsResponse)
+def get_gateway_nhi_iga_deny_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_iga_deny import list_iga_deny_events
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    payload = list_iga_deny_events(db, limit=limit)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.iga_deny.events.read",
+        resource_type="gateway_nhi_iga_deny",
+        resource_id="events",
+        trace_id=f"trace-gateway-nhi-iga-deny-events-{uuid4()}",
+        action_context={"event_count": payload.get("event_count")},
+    )
+    db.commit()
+    return payload
+
+
+@router.get("/gateway/nhi/gate-events", response_model=GatewayNhiIgaDenyEventsResponse)
+def get_gateway_nhi_gate_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    """Intent/access native-gate decision ring buffer (NHI-008 hardening)."""
+    from app.services.gateway_nhi_insights import list_nhi_gate_events
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    payload = list_nhi_gate_events(db, limit=limit)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.gate_events.read",
+        resource_type="gateway_nhi_gate",
+        resource_id="events",
+        trace_id=f"trace-gateway-nhi-gate-events-{uuid4()}",
+        action_context={"event_count": payload.get("event_count")},
+    )
+    db.commit()
+    return payload
+
+
+@router.get("/gateway/nhi/iga-deny/config", response_model=GatewayNhiIgaDenyConfig)
+def get_gateway_nhi_iga_deny_config(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_iga_deny import load_iga_deny_config
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    return load_iga_deny_config(db, reveal_secret=False)
+
+
+@router.put("/gateway/nhi/iga-deny/config", response_model=GatewayNhiIgaDenyConfig)
+def put_gateway_nhi_iga_deny_config(
+    payload: GatewayNhiIgaDenyConfig,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_iga_deny import save_iga_deny_config
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    config = save_iga_deny_config(db, payload.model_dump(), actor_id=ctx.actor_id)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.iga_deny.config.update",
+        resource_type="gateway_nhi_iga_deny",
+        resource_id="config",
+        trace_id=f"trace-gateway-nhi-iga-deny-config-{uuid4()}",
+        action_context={
+            "enabled": bool(config.get("enabled")),
+            "mode": config.get("mode"),
+            "active_deny_count": config.get("active_deny_count"),
+            "require_ingest_hmac": bool(config.get("require_ingest_hmac")),
+        },
+    )
+    db.commit()
+    return config
+
+
+@router.post("/gateway/nhi/iga-deny/ingest", response_model=GatewayNhiIgaDenyIngestResponse)
+async def ingest_gateway_nhi_iga_deny_hmac(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Machine ingest for complementary IGA deny signals (HMAC; no session required)."""
+    from app.services.gateway_nhi_iga_deny import (
+        ingest_iga_deny,
+        load_iga_deny_config,
+        verify_ingest_signature,
+    )
+
+    body = await request.body()
+    try:
+        payload_obj = json.loads(body.decode("utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="invalid JSON body") from exc
+    if not isinstance(payload_obj, dict):
+        raise HTTPException(status_code=422, detail="JSON body must be an object")
+    payload = GatewayNhiIgaDenyIngestRequest(**payload_obj)
+    cfg = load_iga_deny_config(db, reveal_secret=True)
+    if not cfg.get("enabled"):
+        raise HTTPException(status_code=400, detail="IGA deny ingest is disabled")
+    secret = str(cfg.get("ingest_hmac_secret") or "")
+    ts_header = request.headers.get("X-Gateway-Iga-Timestamp") or request.headers.get(
+        "x-gateway-iga-timestamp"
+    )
+    nonce_header = request.headers.get("X-Gateway-Iga-Nonce") or request.headers.get(
+        "x-gateway-iga-nonce"
+    )
+    provided = request.headers.get("X-Gateway-Iga-Signature") or request.headers.get("x-gateway-iga-signature")
+    require_ts = bool(cfg.get("require_ingest_timestamp"))
+    allow_legacy = not require_ts
+    if cfg.get("require_ingest_hmac"):
+        if not secret.strip():
+            raise HTTPException(status_code=503, detail="IGA deny ingest HMAC secret is not configured")
+        if not provided or not verify_ingest_signature(
+            secret=secret,
+            body=body,
+            provided=str(provided),
+            timestamp=str(ts_header or ""),
+            nonce=str(nonce_header or ""),
+            allow_legacy_body_only=allow_legacy,
+        ):
+            raise HTTPException(status_code=401, detail="Invalid or missing X-Gateway-Iga-Signature")
+    elif secret.strip() and provided:
+        if not verify_ingest_signature(
+            secret=secret,
+            body=body,
+            provided=str(provided),
+            timestamp=str(ts_header or ""),
+            nonce=str(nonce_header or ""),
+            allow_legacy_body_only=allow_legacy,
+        ):
+            raise HTTPException(status_code=401, detail="Invalid X-Gateway-Iga-Signature")
+
+    result = ingest_iga_deny(
+        db,
+        subject_type=payload.subject_type,
+        subject_id=payload.subject_id,
+        reason=payload.reason,
+        source_system=payload.source_system,
+        tenant_id=payload.tenant_id,
+        environment=payload.environment,
+        external_ref=payload.external_ref,
+        ttl_seconds=payload.ttl_seconds,
+        expires_at=payload.expires_at,
+        actor_id=f"iga:{payload.source_system}",
+        timestamp_header=ts_header,
+        nonce_header=nonce_header,
+        check_freshness=True,
+    )
+    create_audit_event(
+        db,
+        actor_id=f"iga:{payload.source_system}",
+        action_type="gateway.nhi.iga_deny.ingest",
+        resource_type="gateway_nhi_iga_deny",
+        resource_id=str(result.get("deny_id") or "deny"),
+        trace_id=f"trace-gateway-nhi-iga-deny-ingest-{uuid4()}",
+        action_context={
+            "subject_type": result.get("subject_type"),
+            "subject_id": result.get("subject_id"),
+            "source_system": result.get("source_system"),
+            "hmac_verified": bool(provided),
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/nhi/iga-deny", response_model=GatewayNhiIgaDenyIngestResponse)
+def create_gateway_nhi_iga_deny_manual(
+    payload: GatewayNhiIgaDenyIngestRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_iga_deny import ingest_iga_deny
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    result = ingest_iga_deny(
+        db,
+        subject_type=payload.subject_type,
+        subject_id=payload.subject_id,
+        reason=payload.reason,
+        source_system=payload.source_system,
+        tenant_id=payload.tenant_id,
+        environment=payload.environment,
+        external_ref=payload.external_ref,
+        ttl_seconds=payload.ttl_seconds,
+        expires_at=payload.expires_at,
+        actor_id=ctx.actor_id,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.iga_deny.ingest",
+        resource_type="gateway_nhi_iga_deny",
+        resource_id=str(result.get("deny_id") or "deny"),
+        trace_id=f"trace-gateway-nhi-iga-deny-manual-{uuid4()}",
+        action_context={
+            "subject_type": result.get("subject_type"),
+            "subject_id": result.get("subject_id"),
+            "source_system": result.get("source_system"),
+            "manual": True,
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.post("/gateway/nhi/iga-deny/{deny_id}/revoke", response_model=GatewayNhiIgaDenyIngestResponse)
+def revoke_gateway_nhi_iga_deny(
+    deny_id: str,
+    payload: GatewayNhiIgaDenyRevokeRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_iga_deny import revoke_iga_deny
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    require_dual_approval(ctx)
+    result = revoke_iga_deny(db, deny_id=deny_id, actor_id=ctx.actor_id, reason=payload.reason)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.iga_deny.revoke",
+        resource_type="gateway_nhi_iga_deny",
+        resource_id=deny_id,
+        trace_id=f"trace-gateway-nhi-iga-deny-revoke-{uuid4()}",
+        action_context={"reason": payload.reason},
+    )
+    db.commit()
+    return {
+        "deny_id": result["deny_id"],
+        "status": result["status"],
+        "subject_type": "",
+        "subject_id": "",
+        "source_system": "",
+        "active_deny_count": result.get("active_deny_count") or 0,
+    }
+
+
+@router.post("/gateway/nhi/iga-deny/evaluate", response_model=GatewayNhiIgaDenyEvaluateResponse)
+def evaluate_gateway_nhi_iga_deny(
+    payload: GatewayNhiIgaDenyEvaluateRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_nhi_iga_deny import evaluate_iga_deny
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    result = evaluate_iga_deny(
+        db,
+        actor_id=payload.actor_id,
+        virtual_key_id=payload.virtual_key_id,
+        owner_scope_id=payload.owner_scope_id,
+        tenant_id=payload.tenant_id,
+        environment=payload.environment,
+    )
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.nhi.iga_deny.evaluate",
+        resource_type="gateway_nhi_iga_deny",
+        resource_id="evaluate",
+        trace_id=f"trace-gateway-nhi-iga-deny-evaluate-{uuid4()}",
+        action_context={"matched": bool(result.get("matched")), "mode": result.get("mode")},
+    )
+    db.commit()
+    return result
 
 
 @router.post("/gateway/access-reviews/campaigns", response_model=GatewayAccessReviewCampaignResponse)
@@ -14113,6 +19867,8 @@ def _gateway_jit_access_response(
     *,
     issued_virtual_key_token: Optional[str] = None,
 ) -> GatewayJitAccessRequestResponse:
+    from app.services.gateway_jit_notifications import parse_last_notify, parse_notify_history
+
     return GatewayJitAccessRequestResponse(
         request_id=request.request_id,
         entitlement_id=request.entitlement_id,
@@ -14131,6 +19887,8 @@ def _gateway_jit_access_response(
         mint_virtual_key=bool(getattr(request, "mint_virtual_key", True)),
         issued_virtual_key_id=getattr(request, "issued_virtual_key_id", None),
         issued_virtual_key_token=issued_virtual_key_token,
+        last_notify=parse_last_notify(request),
+        notify_history=parse_notify_history(request),
         created_at=request.created_at,
     )
 
@@ -14442,6 +20200,46 @@ def expire_gateway_jit_grants_tick(
     return result
 
 
+@router.post("/gateway/jit-requests/notify-tick", response_model=GatewayJitNotifyTickResponse)
+def run_gateway_jit_notify_tick(
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_jit_notifications import run_jit_notify_tick
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    result = run_jit_notify_tick(db, actor_id=ctx.actor_id, limit=limit)
+    db.commit()
+    return result
+
+
+@router.get("/gateway/jit-decision-notify/pending-summary", response_model=GatewayJitPendingNotifySummary)
+def get_gateway_jit_pending_notify_summary(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_jit_notifications import pending_jit_notify_summary
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    summary = pending_jit_notify_summary(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.jit.decision_notify.pending_summary",
+        resource_type="gateway_jit_decision_notify",
+        resource_id="pending-summary",
+        trace_id=f"trace-gateway-jit-pending-summary-{uuid4().hex[:10]}",
+        action_context={
+            "pending_count": summary.get("pending_count"),
+            "overdue_reminder_count": summary.get("overdue_reminder_count"),
+            "overdue_escalation_count": summary.get("overdue_escalation_count"),
+        },
+    )
+    db.commit()
+    return summary
+
+
 @router.get("/gateway/jit-decision-notify/config", response_model=GatewayJitDecisionNotifyConfig)
 def get_gateway_jit_decision_notify_config(
     db: Session = Depends(get_db),
@@ -14470,11 +20268,60 @@ def put_gateway_jit_decision_notify_config(
 
 
 @router.post(
+    "/gateway/jit-decision-notify/test-delivery",
+    response_model=GatewayJitDecisionNotifyResult,
+)
+def test_gateway_jit_decision_notify_delivery(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_jit_notifications import test_jit_decision_notify_delivery
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    result = test_jit_decision_notify_delivery(db, actor_id=ctx.actor_id)
+    db.commit()
+    return result
+
+
+@router.post(
+    "/gateway/jit-requests/{request_id}/preview-action-links",
+    response_model=GatewayJitActionLinksPreviewResponse,
+)
+def preview_gateway_jit_action_links(
+    request_id: str,
+    reviewer_email: str = Query(default="preview@example.com"),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_jit_notifications import preview_jit_action_links
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    request = db.query(GatewayJitAccessRequest).filter_by(request_id=request_id).first()
+    if request is None:
+        raise HTTPException(status_code=404, detail="Gateway JIT request not found")
+    preview = preview_jit_action_links(db, request=request, reviewer_email=reviewer_email)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.jit.decision_notify.preview",
+        resource_type="gateway_jit_access_request",
+        resource_id=request.request_id,
+        trace_id=f"trace-gateway-jit-preview-{request.request_id}",
+        action_context={"reviewer_email": preview.get("reviewer_email"), "links_ready": preview.get("links_ready")},
+    )
+    db.commit()
+    return preview
+
+
+@router.post(
     "/gateway/jit-requests/{request_id}/notify",
     response_model=GatewayJitDecisionNotifyResult,
 )
 def notify_gateway_jit_access_request(
     request_id: str,
+    reminder: bool = Query(default=False),
+    force: bool = Query(default=False),
+    escalate: bool = Query(default=False),
     db: Session = Depends(get_db),
     ctx: ActorContext = Depends(get_actor_context),
 ):
@@ -14484,6 +20331,8 @@ def notify_gateway_jit_access_request(
     request = db.query(GatewayJitAccessRequest).filter_by(request_id=request_id).first()
     if request is None:
         raise HTTPException(status_code=404, detail="Gateway JIT request not found")
+    if (reminder or escalate) and str(request.status or "").strip().lower() != "requested":
+        raise HTTPException(status_code=409, detail="Reminders/escalations are only allowed for pending JIT requests")
     result = notify_jit_request(
         db,
         request=request,
@@ -14491,18 +20340,88 @@ def notify_gateway_jit_access_request(
         event_type="gateway.jit.request.create"
         if str(request.status or "").strip().lower() == "requested"
         else f"gateway.jit.request.{str(request.status or 'update').strip().lower()}",
+        reminder=bool(reminder) and not escalate,
+        force=bool(force),
+        escalate=bool(escalate),
     )
     db.commit()
     return result
 
 
-def _decide_gateway_jit_via_action_token(db: Session, token: str) -> GatewayJitActionDecideResponse:
+@router.post(
+    "/gateway/jit-requests/{request_id}/notify-retry",
+    response_model=GatewayJitDecisionNotifyResult,
+)
+def retry_gateway_jit_notify_webhooks(
+    request_id: str,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_jit_notifications import retry_failed_jit_webhooks
+
+    require_role(ctx, GATEWAY_ADMIN_OR_SECURITY_ROLES)
+    request = db.query(GatewayJitAccessRequest).filter_by(request_id=request_id).first()
+    if request is None:
+        raise HTTPException(status_code=404, detail="Gateway JIT request not found")
+    result = retry_failed_jit_webhooks(db, request=request, actor_id=ctx.actor_id)
+    db.commit()
+    return result
+
+
+@router.get(
+    "/gateway/jit-requests/{request_id}/notify-history",
+    response_model=GatewayJitNotifyHistoryResponse,
+)
+def get_gateway_jit_notify_history(
+    request_id: str,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    from app.services.gateway_jit_notifications import parse_last_notify, parse_notify_history
+
+    require_role(ctx, GATEWAY_READ_ROLES)
+    request = db.query(GatewayJitAccessRequest).filter_by(request_id=request_id).first()
+    if request is None:
+        raise HTTPException(status_code=404, detail="Gateway JIT request not found")
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="gateway.jit.decision_notify.history",
+        resource_type="gateway_jit_access_request",
+        resource_id=request.request_id,
+        trace_id=f"trace-gateway-jit-notify-history-{request.request_id}",
+    )
+    db.commit()
+    return {
+        "request_id": request.request_id,
+        "last_notify": parse_last_notify(request),
+        "history": parse_notify_history(request),
+    }
+
+
+def _decide_gateway_jit_via_action_token(
+    db: Session,
+    token: str,
+    *,
+    confirm_nonce: str,
+    decision_reason: Optional[str] = None,
+) -> GatewayJitActionDecideResponse:
     from app.services.gateway_jit_notifications import (
+        consume_jit_action_jti,
+        deliver_virtual_key_email,
         load_jit_decision_notify_config,
+        verify_confirm_nonce,
         verify_jit_action_token,
     )
 
     claims = verify_jit_action_token(token)
+    verify_confirm_nonce(
+        db,
+        jti=str(claims["jti"]),
+        decision=str(claims["decision"]),
+        request_id=str(claims["request_id"]),
+        nonce=confirm_nonce,
+    )
     request = db.query(GatewayJitAccessRequest).filter_by(request_id=claims["request_id"]).first()
     if request is None:
         raise HTTPException(status_code=404, detail="Gateway JIT request not found")
@@ -14528,18 +20447,30 @@ def _decide_gateway_jit_via_action_token(db: Session, token: str) -> GatewayJitA
                 },
             )
 
+    # Consume after policy checks so disabled/prod gates do not burn unused tokens.
+    consume_jit_action_jti(db, jti=str(claims["jti"]), exp=int(claims["exp"]))
+
     reviewer_email = claims.get("email") or "email-action"
     actor_id = f"email:{reviewer_email}"[:128]
+    reason = str(decision_reason or "").strip() or f"email_action:{decision}"
     request, issued_token = _apply_gateway_jit_decision(
         db,
         request=request,
         decision=decision,
         actor_id=actor_id,
         actor_role="Email Reviewer",
-        decision_reason=f"email_action:{decision}",
+        decision_reason=reason[:512],
         mint_virtual_key_override=None,
         decision_channel="email_action",
     )
+    key_email = {"emails_sent": 0, "skipped": True}
+    if decision == "approve" and issued_token:
+        key_email = deliver_virtual_key_email(
+            db,
+            request=request,
+            issued_virtual_key_token=issued_token,
+            actor_id=actor_id,
+        )
     create_audit_event(
         db,
         actor_id=actor_id,
@@ -14551,7 +20482,10 @@ def _decide_gateway_jit_via_action_token(db: Session, token: str) -> GatewayJitA
             "decision": decision,
             "reviewer_email": reviewer_email,
             "jti": claims.get("jti"),
+            "decision_reason": reason[:200],
             "issued_virtual_key_id": getattr(request, "issued_virtual_key_id", None),
+            "expose_virtual_key_on_email_action": bool(config.get("expose_virtual_key_on_email_action")),
+            "virtual_key_emailed": int(key_email.get("emails_sent") or 0) > 0,
         },
     )
     db.commit()
@@ -14565,13 +20499,20 @@ def _decide_gateway_jit_via_action_token(db: Session, token: str) -> GatewayJitA
     db.commit()
     db.refresh(request)
 
+    expose_token = bool(config.get("expose_virtual_key_on_email_action")) and bool(issued_token)
     message = (
         f"JIT request {request.request_id} {decision}d via email action."
         if decision in {"approve", "deny"}
         else f"JIT request {request.request_id} updated."
     )
     if decision == "approve" and issued_token:
-        message += " One-time virtual key token is included below — copy it now."
+        if expose_token:
+            message += " One-time virtual key token is included below — copy it now."
+        elif int(key_email.get("emails_sent") or 0) > 0:
+            message += " One-time virtual key was emailed to configured decision recipients."
+        else:
+            message += " Virtual key was minted; retrieve via console/operator channel (not shown on this page)."
+
     return GatewayJitActionDecideResponse(
         request_id=request.request_id,
         status=request.status,
@@ -14579,11 +20520,13 @@ def _decide_gateway_jit_via_action_token(db: Session, token: str) -> GatewayJitA
         decided_by=actor_id,
         message=message,
         issued_virtual_key_id=getattr(request, "issued_virtual_key_id", None),
-        issued_virtual_key_token=issued_token,
+        issued_virtual_key_token=issued_token if expose_token else None,
+        virtual_key_emailed=int(key_email.get("emails_sent") or 0) > 0,
+        key_email_recipients=int(key_email.get("emails_sent") or 0),
     )
 
 
-def _jit_action_html(result: GatewayJitActionDecideResponse) -> str:
+def _jit_action_result_html(result: GatewayJitActionDecideResponse) -> str:
     import html
 
     token_block = ""
@@ -14592,6 +20535,11 @@ def _jit_action_html(result: GatewayJitActionDecideResponse) -> str:
             "<p><strong>One-time virtual key (copy now):</strong></p>"
             f"<pre>{html.escape(result.issued_virtual_key_token)}</pre>"
             "<p>This token is not shown again.</p>"
+        )
+    elif result.virtual_key_emailed:
+        token_block = (
+            f"<p>Virtual key emailed to {int(result.key_email_recipients)} recipient"
+            f"{'' if result.key_email_recipients == 1 else 's'}.</p>"
         )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
@@ -14605,27 +20553,123 @@ def _jit_action_html(result: GatewayJitActionDecideResponse) -> str:
     )
 
 
+def _jit_action_confirm_html(preview: dict, token: str) -> str:
+    import html
+
+    decision = str(preview.get("decision") or "")
+    verb = "Approve" if decision == "approve" else "Deny"
+    disabled = "" if preview.get("pending") else "disabled"
+    status_note = ""
+    if not preview.get("pending"):
+        status_note = (
+            f"<p><strong>This request is already "
+            f"{html.escape(str(preview.get('status') or 'decided'))}.</strong> "
+            "Submitting will not change it.</p>"
+        )
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<title>Confirm JIT {html.escape(decision)}</title></head><body>"
+        f"<h1>Confirm JIT {html.escape(verb.lower())}</h1>"
+        f"<p>{html.escape(str(preview.get('message') or ''))}</p>"
+        f"<p>Request: <code>{html.escape(str(preview.get('request_id') or ''))}</code></p>"
+        f"<p>Entitlement: <code>{html.escape(str(preview.get('entitlement_id') or ''))}</code></p>"
+        f"<p>Environment: <code>{html.escape(str(preview.get('environment') or ''))}</code></p>"
+        f"<p>Requester: <code>{html.escape(str(preview.get('requester_id') or ''))}</code></p>"
+        f"<p>Justification: {html.escape(str(preview.get('justification') or ''))}</p>"
+        f"{status_note}"
+        f"<form method='post' action='/gateway/jit-actions/{html.escape(token)}'>"
+        "<input type='hidden' name='confirm' value='1' />"
+        f"<input type='hidden' name='confirm_nonce' value='{html.escape(str(preview.get('confirm_nonce') or ''))}' />"
+        "<label>Decision reason (optional)<br/>"
+        "<textarea name='decision_reason' rows='3' cols='60' "
+        "placeholder='Optional note for audit evidence'></textarea></label><br/><br/>"
+        f"<button type='submit' {disabled}>{html.escape(verb)} now</button>"
+        "</form>"
+        "<p><small>Opening this page does not approve or deny. "
+        "Email scanners that prefetch links are safe.</small></p>"
+        "</body></html>"
+    )
+
+
 @router.get("/gateway/jit-actions/{token}")
-def decide_gateway_jit_via_email_action_get(
+def preview_gateway_jit_via_email_action_get(
     token: str,
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Approve or deny a JIT request using a signed email action token (no session)."""
-    result = _decide_gateway_jit_via_action_token(db, token)
+    """Preview/confirm page for email action tokens. Never mutates (anti-prefetch)."""
+    from app.services.gateway_jit_notifications import preview_jit_action_decision
+
+    preview = preview_jit_action_decision(db, token)
     accept = (request.headers.get("accept") or "").lower()
     if "application/json" in accept and "text/html" not in accept:
-        return result
-    return HTMLResponse(content=_jit_action_html(result))
+        return GatewayJitActionConfirmPreviewResponse(**preview)
+    return HTMLResponse(content=_jit_action_confirm_html(preview, token))
 
 
-@router.post("/gateway/jit-actions/{token}", response_model=GatewayJitActionDecideResponse)
-def decide_gateway_jit_via_email_action_post(
+@router.post("/gateway/jit-actions/{token}")
+async def decide_gateway_jit_via_email_action_post(
     token: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    """Programmatic approve/deny using a signed email action token (no session)."""
-    return _decide_gateway_jit_via_action_token(db, token)
+    """Apply approve/deny after explicit confirm (HTML form or JSON body)."""
+    content_type = (request.headers.get("content-type") or "").lower()
+    nonce = ""
+    reason: Optional[str] = None
+    confirmed = False
+
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        payload = GatewayJitActionDecideRequest(
+            confirm=bool(body.get("confirm", True)),
+            confirm_nonce=str(body.get("confirm_nonce") or ""),
+            decision_reason=(
+                str(body.get("decision_reason")).strip() if body.get("decision_reason") is not None else None
+            ),
+        )
+        confirmed = bool(payload.confirm)
+        nonce = payload.confirm_nonce
+        reason = payload.decision_reason
+    else:
+        form = await request.form()
+        confirmed = str(form.get("confirm") or "").strip().lower() in {"1", "true", "yes", "on"}
+        nonce = str(form.get("confirm_nonce") or "").strip()
+        raw_reason = form.get("decision_reason")
+        reason = str(raw_reason).strip() if raw_reason is not None and str(raw_reason).strip() else None
+
+    if not confirmed:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "JIT_ACTION_CONFIRM_REQUIRED",
+                "message": "Set confirm=true and include confirm_nonce from the GET preview.",
+            },
+        )
+    if not nonce:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "JIT_ACTION_CONFIRM_REQUIRED",
+                "message": "confirm_nonce is required. Open the email link (GET) first.",
+            },
+        )
+
+    result = _decide_gateway_jit_via_action_token(
+        db,
+        token,
+        confirm_nonce=str(nonce),
+        decision_reason=reason,
+    )
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept or "application/json" in content_type:
+        return result
+    return HTMLResponse(content=_jit_action_result_html(result))
 
 
 @router.get("/gateway/least-privilege/recommendations", response_model=list[GatewayLeastPrivilegeRecommendationResponse])

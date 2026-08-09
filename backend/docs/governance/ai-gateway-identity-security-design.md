@@ -54,20 +54,20 @@ Agent-oriented slice checklist:
 
 ## Quick-Build Sequence (Fastest Path to Value)
 
-Build in this exact order for fastest and safest agent throughput:
+**Status (2026-08-08):** Items 1–6 below are **shipped** for the designed lane (see `product-completion-status.md`). Keep this order when agents reopen adjacent depth — do not re-implement as greenfield.
 
-1. Explainability hardening (already started)
-  - Extend `/gateway/authz/explain` with scope-level decisions and consistent reason taxonomy.
-2. Entitlements MVP
+1. Explainability hardening — shipped
+  - `/gateway/authz/explain` + auth-domain matrix/single-action simulation.
+2. Entitlements MVP — shipped
   - `GET/PUT /gateway/entitlements` with scoped action grants and readback UI.
-3. NHI inventory + hygiene MVP
-  - `GET /gateway/nhi/inventory` and `GET /gateway/nhi/hygiene` with owner + credential-age indicators.
-4. Access review + JIT MVP
-  - Campaign create/read and JIT request/approve with expiry and audit evidence.
-5. Least-privilege recommendations MVP
+3. NHI inventory + hygiene (+ Agents & Access / IGA coexistence) — shipped
+  - `/gateway/nhi/*` four-panel Routing & Gateway card; no SaaS crawler; no competitor UI branding.
+4. Access review + JIT MVP — shipped
+  - Campaign create/read and JIT request/approve with optional VK mint and notify paths.
+5. Least-privilege recommendations MVP — shipped
   - Read/apply recommendation workflow with explicit approval/audit behavior.
-6. Gateway governance evidence export
-  - Filtered audit-event aggregation and JSON evidence bundle export for entitlement/NHI/access-review/JIT/least-privilege governance actions.
+6. Gateway governance evidence export — shipped
+  - NHI evidence pack + filtered governance evidence export paths.
 
 Implementation pacing:
 
@@ -117,7 +117,7 @@ Existing baseline (already in platform):
 
 1. Enforce least privilege for model, tool, route, and key actions.
 2. Improve explainability of authorization decisions for operators and auditors.
-3. Strengthen non-human identity (NHI) posture for gateway credentials and service principals.
+3. Strengthen non-human identity (NHI) posture for gateway credentials and service principals. Enterprise-wide AI identity ISPM remains adjacent (see `enterprise-ai-identity-competitive-positioning.md`); this design stays **gateway-scoped** with Agents & Access, access policies, IGA export/deny/correlation, and gate-events. **No SaaS crawler.** Operator UI must not use competitor product names. Completion: `product-completion-status.md`.
 4. Enable review-request-remediate lifecycle for sensitive gateway entitlements.
 5. Keep cloud deployment operable with explicit AWS guardrails.
 
@@ -505,6 +505,9 @@ Use observed gateway activity to suggest downscoping.
 9a. `GET /gateway/jit-requests` / `GET /gateway/jit-requests/{request_id}` (implemented)
 9b. `POST /gateway/jit-requests/{request_id}/revoke` / `POST /gateway/jit-requests/expire-tick` (implemented)
 9c. `GET/PUT /gateway/jit-decision-notify/config` + `POST /gateway/jit-requests/{id}/notify` + `GET|POST /gateway/jit-actions/{token}` (email/external REST decide; implemented)
+9d. `POST /gateway/jit-decision-notify/test-delivery` + `POST /gateway/jit-requests/{id}/preview-action-links` (operator probe/preview; implemented)
+9e. `GET /gateway/jit-requests/{id}/notify-history` + `POST .../notify-retry` + notify `reminder`/`force` cooldown (implemented)
+9f. `POST /gateway/jit-requests/notify-tick` + `GET /gateway/jit-decision-notify/pending-summary` + escalate SLA config (implemented)
 10. `GET /gateway/least-privilege/recommendations`
 11. `POST /gateway/least-privilege/recommendations/{recommendation_id}/apply`
 
@@ -605,15 +608,25 @@ Agent migration checklist:
 3. Decision trace IDs standardized for gateway authorization decisions.
 4. Endpoint-level control-to-audit mapping documented in governance inventory.
 
-## UI Theme and Consistency Plan (Pending Slices)
+## UI Theme and Consistency Plan
 
-For remaining gateway governance slices (entitlements, NHI inventory/hygiene, access reviews/JIT, least-privilege recommendations):
+Gateway governance slices (entitlements, NHI four-panel card, access reviews/JIT, least-privilege) are **shipped** in Routing & Gateway. Operator UX deepen (2026-08-08):
 
-1. Place operator workflows in existing Routing & Gateway section first; add Security view cross-links only when needed.
-2. Reuse current table/action conventions (`Use`, `Approve`, `Reject`, `Apply`) and mono evidence outputs.
-3. Keep forms compact and stateful with explicit load/save/readback cycles.
-4. Keep error/success feedback style consistent with current result-message patterns.
-5. Avoid introducing alternate design systems or inconsistent component semantics.
+| Panel | Shipped operator controls |
+|-------|---------------------------|
+| Inventory | Load inventory/hygiene/orphans; click row → Insights/Access `nhi_record_id` |
+| Agents & Access | Agents table click-select; access config/authorize; shadow action; clickable gate-events |
+| IGA Coexistence | Export/deny config; ingest; **Revoke Deny**; **Probe HMAC Deny Ingest**; clickable active-deny + event tables; evidence pack |
+| Insights & Lifecycle | **Load/Save Intent Mode**; **Test Correlation Ingest**; access-map/timeline/owner/lifecycle/intents/intent-check |
+
+Consistency rules:
+
+1. Keep workflows in Routing & Gateway; Security cross-links only when needed.
+2. Reuse table/action conventions, click-to-fill, and mono evidence outputs.
+3. Keep forms compact with explicit load/save/readback; dual-approval on privileged mutations.
+4. Label Intent / Access / Deny as independent modes (defaults off); use gateway/IGA vocabulary — not competitor product names.
+5. HMAC machine ingest probes re-enter secrets in-form (never persist plaintext after save).
+6. Avoid introducing alternate design systems or inconsistent component semantics.
 
 ## Test Strategy
 
@@ -636,48 +649,32 @@ For remaining gateway governance slices (entitlements, NHI inventory/hygiene, ac
 
 ## Rollout Plan
 
-Phase 0 (Observe):
+**Status (2026-08-08):** Phases 0–3 below are **shipped** for the designed lane (historical record). Do not re-open as greenfield. Forward work is sustainment + optional depth only — see `product-completion-status.md`.
 
-- Explain endpoint + read-only entitlement views.
-- No hard enforcement changes.
+Phase 0 (Observe) — shipped:
 
-Phase 1 (Controlled Enforcement):
+- Explain endpoint + entitlement views.
 
-- Enforce action-level authz on selected high-risk operations in non-prod.
-- Activate NHI hygiene alerts.
+Phase 1 (Controlled Enforcement) — shipped:
 
-Phase 2 (Production Enforcement):
+- Action-level authz on high-risk operations; NHI hygiene.
 
-- Enforce across prod mutation paths with dual approval where required.
-- Launch access reviews and JIT workflows.
+Phase 2 (Production Enforcement) — shipped:
 
-Phase 3 (Optimization):
+- Prod dual-approval on privileged mutations; access reviews + JIT (+ VK mint/notify).
 
-- Enable least-privilege recommendations and controlled auto-remediation.
+Phase 3 (Optimization) — shipped:
 
-## Minimal PR Blueprint (for Agents)
+- Least-privilege recommendations; gateway-native NHI four-panel operator UX.
 
-Use this blueprint to keep development quick and understandable:
+## Minimal PR Blueprint (for Agents) — historical
 
-1. PR-1: Entitlements read/update MVP
-  - API: `GET/PUT /gateway/entitlements`
-  - UI: Entitlements card
-  - DB: `gateway_entitlements`
+PR-1…PR-4 below are **complete**. Prefer additive slices on adjacent depth; do not recreate these MVPs.
 
-2. PR-2: NHI inventory/hygiene MVP
-  - API: `GET /gateway/nhi/inventory`, `GET /gateway/nhi/hygiene`
-  - UI: NHI inventory/hygiene card
-  - DB: `gateway_nhi_inventory`
-
-3. PR-3: Access reviews + JIT MVP
-  - API: campaigns + JIT request/approve
-  - UI: Reviews/JIT card
-  - DB: `gateway_access_review_campaigns`, `gateway_access_review_items`, `gateway_jit_access_requests`
-
-4. PR-4: Least-privilege recommendations MVP
-  - API: recommendation read/apply
-  - UI: Recommendations card
-  - DB: `gateway_least_privilege_recommendations`
+1. PR-1: Entitlements — shipped (`GET/PUT /gateway/entitlements`)
+2. PR-2: NHI inventory/hygiene — shipped (`/gateway/nhi/inventory|hygiene` + four-panel UX)
+3. PR-3: Access reviews + JIT — shipped
+4. PR-4: Least-privilege recommendations — shipped
 
 ## Impact Analysis (PR-1 Entitlements MVP)
 
@@ -721,9 +718,13 @@ This section captures concrete impact for the first implementation slice (`GET/P
 
 ## Open Decisions
 
-1. Scope taxonomy granularity for model/tool entitlements.
-2. Default reviewer assignment policy for access review campaigns.
-3. Auto-apply threshold and approval requirements for recommendations.
+Resolved for designed lane (defaults shipped; revisit only with explicit product change):
+
+1. Scope taxonomy for model/tool entitlements — action + optional route/tag/model/tool dimensions in entitlements table.
+2. Access review campaigns — create/read with reviewer role; JIT notify optional.
+3. Recommendations — read/apply with dual-approval; no silent auto-apply in prod.
+
+Remaining adjacent (not designed-lane blockers): enterprise SaaS identity crawl and full IARA into arbitrary apps stay out of scope (`enterprise-ai-identity-competitive-positioning.md`).
 
 ## Acceptance Criteria
 

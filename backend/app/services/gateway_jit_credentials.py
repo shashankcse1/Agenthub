@@ -72,12 +72,14 @@ def mint_virtual_key_for_jit_grant(
             },
         )
 
+    from app.services.virtual_key_secrets import mint_virtual_key_bearer
+
     owner_scope_type, owner_scope_id = resolve_jit_owner_scope(db, request=request)
-    bearer_token = str(uuid4())
+    bearer_token, key_hash = mint_virtual_key_bearer()
     key_id = f"zjit-{int(datetime.utcnow().timestamp() * 1000):013d}-{uuid4().hex[:12]}"
     key = VirtualKey(
         key_id=key_id,
-        key_hash=bearer_token,
+        key_hash=key_hash,
         owner_scope_type=owner_scope_type,
         owner_scope_id=owner_scope_id,
         allowed_endpoint_families="[]",

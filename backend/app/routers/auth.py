@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api_errors import (
@@ -89,9 +89,28 @@ from app.security import (
     require_dual_approval,
     require_mfa,
     require_role,
+    resolve_session_id_from_bearer_token,
     verify_user_password,
 )
+from app.services.csrf_protection import (
+    CSRF_COOKIE_NAME,
+    attach_browser_auth_cookies,
+    attach_csrf_cookie,
+    clear_csrf_cookie,
+    issue_csrf_token,
+)
+from app.services.session_cookies import (
+    APPROVER_SESSION_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
+    attach_session_cookie,
+    clear_session_cookie,
+    read_session_cookie,
+)
 from app.services.audit import create_audit_event
+from app.services.basic_auth_expiry import (
+    clamp_max_enable_duration_minutes,
+    expire_stale_basic_auth_fallbacks,
+)
 from app.services.policy_config import AuthPolicy, get_auth_policy
 from app.services.runtime_config import get_runtime_config_int
 from app.runtime_constants import (
@@ -598,6 +617,7 @@ def get_session(
 @router.post("/auth/sessions", response_model=SessionIssueResponse)
 def issue_session(
     payload: SessionCreateRequest,
+    response: Response,
     db: Session = Depends(get_db),
     ctx: ActorContext = Depends(get_actor_context),
 ):
@@ -626,6 +646,12 @@ def issue_session(
         trace_id=f"trace-{session.session_id}",
     )
     db.commit()
+    token = issue_session_bearer_token(session.session_id)
+    attach_browser_auth_cookies(
+        response,
+        session_token=token,
+        max_age_seconds=int(payload.ttl_minutes) * 60,
+    )
     logger.info(
         "session_issued %s",
         sanitize_fields({"actor_id": ctx.actor_id, "issued_session_id": session.session_id}),
@@ -633,7 +659,7 @@ def issue_session(
     return {
         "session_id": session.session_id,
         "token_type": "Bearer",
-        "access_token": issue_session_bearer_token(session.session_id),
+        "access_token": token,
         "expires_at": session.expires_at,
     }
 
@@ -815,7 +841,7 @@ def create_basic_auth_config(
         enabled=False,
         allowed_user_groups=payload.allowed_user_groups,
         ip_allowlist=payload.ip_allowlist,
-        max_enable_duration_minutes=payload.max_enable_duration_minutes,
+        max_enable_duration_minutes=clamp_max_enable_duration_minutes(payload.max_enable_duration_minutes),
     )
     db.add(config)
     create_audit_event(
@@ -843,6 +869,10 @@ def update_basic_auth_config(
         raise not_found_error("basic_auth_config", config_id, decision_trace_id="auth-basic-config-not-found")
 
     updates = payload.model_dump(exclude_none=True)
+    if "max_enable_duration_minutes" in updates:
+        updates["max_enable_duration_minutes"] = clamp_max_enable_duration_minutes(
+            updates["max_enable_duration_minutes"]
+        )
     for key, value in updates.items():
         setattr(config, key, value)
 
@@ -899,13 +929,17 @@ def enable_basic_auth_temporary(
     if not config:
         raise not_found_error("basic_auth_config", config_id, decision_trace_id="auth-basic-config-not-found")
 
-    if payload.duration_minutes > config.max_enable_duration_minutes:
+    # Auto-disable any already-expired configs before enabling a new window.
+    expire_stale_basic_auth_fallbacks(db)
+    capped_max = clamp_max_enable_duration_minutes(config.max_enable_duration_minutes)
+    config.max_enable_duration_minutes = capped_max
+    if payload.duration_minutes > capped_max:
         raise api_validation_error("Requested duration exceeds max limit", decision_trace_id="auth-basic-duration-exceeds-max")
 
     config.enabled = True
     config.enabled_by = ctx.actor_id
     config.break_glass_reason = payload.break_glass_reason
-    config.expires_at = datetime.utcnow() + timedelta(minutes=payload.duration_minutes)
+    config.expires_at = datetime.utcnow() + timedelta(minutes=int(payload.duration_minutes))
     config.last_toggled_at = datetime.utcnow()
 
     create_audit_event(
@@ -979,6 +1013,33 @@ def disable_basic_auth(
     return {"basic_auth_config_id": config_id, "enabled": False}
 
 
+@router.post(
+    "/auth/basic/config/expire-tick",
+    summary="Expire stale break-glass basic auth windows",
+    description=(
+        "Cron-ready sweep that disables enabled basic-auth fallback configs whose expires_at has passed "
+        "(Leader Readiness: exceptions ≤ 90d with auto-disable)."
+    ),
+)
+def tick_expire_basic_auth_fallbacks(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, AUTH_ADMIN_OR_SECURITY_ROLES)
+    disabled = expire_stale_basic_auth_fallbacks(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="auth.basic_fallback.expire_tick",
+        resource_type="basic_auth_config",
+        resource_id="expire-tick",
+        trace_id=f"trace-basic-auth-expire-tick-{uuid4().hex[:12]}",
+        action_context={"disabled_count": disabled},
+    )
+    db.commit()
+    return {"disabled_count": disabled, "max_duration_days_cap": 90}
+
+
 def _normalize_status(value: Optional[str], default: str = "active") -> str:
     normalized = str(value or default).strip().lower()
     if normalized not in {"active", "inactive"}:
@@ -1029,25 +1090,27 @@ def _record_failed_password_login(db: Session, user: DirectoryUser) -> None:
     db.flush()
 
 
-@router.post("/auth/login", response_model=SessionLoginResponse)
-def login_with_password(
-    payload: SessionLoginRequest,
-    db: Session = Depends(get_db),
-):
-    username = payload.username.strip()
-    if not username:
+def _authenticate_directory_password(
+    db: Session,
+    *,
+    username: str,
+    password: str,
+    audit_action: str,
+) -> DirectoryUser:
+    normalized = username.strip()
+    if not normalized:
         raise api_validation_error("username cannot be empty", decision_trace_id="auth-login-username-empty")
 
     now = datetime.utcnow()
     login_trace_id = f"trace-login-{uuid4()}"
-    user = db.query(DirectoryUser).filter_by(user_id=username).first()
+    user = db.query(DirectoryUser).filter_by(user_id=normalized).first()
     if not user or user.status != "active":
         create_audit_event(
             db,
-            actor_id=username,
-            action_type="auth.login.password",
+            actor_id=normalized,
+            action_type=audit_action,
             resource_type="directory_user",
-            resource_id=username,
+            resource_id=normalized,
             trace_id=login_trace_id,
             decision_outcome="deny",
         )
@@ -1058,7 +1121,7 @@ def login_with_password(
         create_audit_event(
             db,
             actor_id=user.user_id,
-            action_type="auth.login.password",
+            action_type=audit_action,
             resource_type="directory_user",
             resource_id=user.user_id,
             trace_id=login_trace_id,
@@ -1070,12 +1133,12 @@ def login_with_password(
     if user.locked_until and user.locked_until <= now:
         user.locked_until = None
 
-    if not verify_user_password(payload.password, user.password_hash):
+    if not verify_user_password(password, user.password_hash):
         _record_failed_password_login(db, user)
         create_audit_event(
             db,
             actor_id=user.user_id,
-            action_type="auth.login.password",
+            action_type=audit_action,
             resource_type="directory_user",
             resource_id=user.user_id,
             trace_id=login_trace_id,
@@ -1087,6 +1150,21 @@ def login_with_password(
     user.failed_login_attempts = 0
     user.locked_until = None
     user.last_login_at = now
+    return user
+
+
+@router.post("/auth/login", response_model=SessionLoginResponse)
+def login_with_password(
+    payload: SessionLoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    user = _authenticate_directory_password(
+        db,
+        username=payload.username,
+        password=payload.password,
+        audit_action="auth.login.password",
+    )
 
     session = _create_session(
         db,
@@ -1114,14 +1192,160 @@ def login_with_password(
         trace_id=f"trace-{session.session_id}",
     )
     db.commit()
+    token = issue_session_bearer_token(session.session_id)
+    csrf_token = attach_browser_auth_cookies(
+        response,
+        session_token=token,
+        max_age_seconds=int(payload.ttl_minutes) * 60,
+    )
     return {
         "session_id": session.session_id,
         "token_type": "Bearer",
-        "access_token": issue_session_bearer_token(session.session_id),
+        "access_token": token,
+        "expires_at": session.expires_at,
+        "actor_id": user.user_id,
+        "actor_role": user.role_name,
+        # Returned so cross-origin consoles can set X-CSRF-Token (cookie is API-host scoped).
+        "csrf_token": csrf_token,
+    }
+
+
+@router.get("/auth/csrf")
+def get_csrf_token(response: Response):
+    """Issue/refresh double-submit CSRF cookie for cookie-authenticated console mutations."""
+    token = issue_csrf_token()
+    attach_csrf_cookie(response, token, max_age_seconds=3600)
+    return {"csrf_token": token, "header_name": "X-CSRF-Token", "cookie_name": CSRF_COOKIE_NAME}
+
+
+@router.post("/auth/approver-session", response_model=SessionLoginResponse)
+def issue_approver_session(
+    payload: SessionLoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """Authenticate a co-signer and set gb_approver_session (does not replace gb_session)."""
+    user = _authenticate_directory_password(
+        db,
+        username=payload.username,
+        password=payload.password,
+        audit_action="auth.approver_session.login",
+    )
+    ttl_minutes = max(5, min(int(payload.ttl_minutes or 15), 30))
+    idle_timeout_minutes = max(5, min(int(payload.idle_timeout_minutes or 15), 30))
+    session = _create_session(
+        db,
+        actor_id=user.user_id,
+        actor_role=user.role_name,
+        ttl_minutes=ttl_minutes,
+        idle_timeout_minutes=idle_timeout_minutes,
+        mfa_verified=False,
+    )
+    create_audit_event(
+        db,
+        actor_id=user.user_id,
+        action_type="auth.approver_session.issue",
+        resource_type="session",
+        resource_id=session.session_id,
+        trace_id=f"trace-approver-{session.session_id}",
+    )
+    db.commit()
+    token = issue_session_bearer_token(session.session_id)
+    attach_session_cookie(
+        response,
+        token,
+        max_age_seconds=ttl_minutes * 60,
+        cookie_name=APPROVER_SESSION_COOKIE_NAME,
+    )
+    return {
+        "session_id": session.session_id,
+        "token_type": "Bearer",
+        "access_token": token,
         "expires_at": session.expires_at,
         "actor_id": user.user_id,
         "actor_role": user.role_name,
     }
+
+
+@router.post("/auth/logout")
+def logout_session(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """Expire the current session (Bearer or gb_session) and clear auth cookies."""
+    token = None
+    auth_header = (request.headers.get("Authorization") or "").strip()
+    if auth_header:
+        scheme, _, raw = auth_header.partition(" ")
+        if scheme.lower() == "bearer" and raw.strip():
+            token = raw.strip()
+    if not token:
+        token = read_session_cookie(request.cookies, cookie_name=SESSION_COOKIE_NAME)
+
+    expired_session_id = None
+    if token:
+        try:
+            session_id = resolve_session_id_from_bearer_token(token)
+            session = db.query(SessionRecord).filter_by(session_id=session_id).first()
+            if session:
+                session.expires_at = datetime.utcnow()
+                expired_session_id = session.session_id
+                create_audit_event(
+                    db,
+                    actor_id=session.actor_id,
+                    action_type="auth.logout",
+                    resource_type="session",
+                    resource_id=session.session_id,
+                    trace_id=f"trace-logout-{session.session_id}",
+                )
+                db.commit()
+        except HTTPException:
+            pass
+
+    clear_session_cookie(response, cookie_name=SESSION_COOKIE_NAME)
+    clear_session_cookie(response, cookie_name=APPROVER_SESSION_COOKIE_NAME)
+    clear_csrf_cookie(response)
+    return {"logged_out": True, "session_id": expired_session_id}
+
+
+@router.post("/auth/approver-logout")
+def logout_approver_session(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    token = None
+    auth_header = (request.headers.get("X-Approver-Authorization") or "").strip()
+    if auth_header:
+        scheme, _, raw = auth_header.partition(" ")
+        if scheme.lower() == "bearer" and raw.strip():
+            token = raw.strip()
+    if not token:
+        token = read_session_cookie(request.cookies, cookie_name=APPROVER_SESSION_COOKIE_NAME)
+
+    expired_session_id = None
+    if token:
+        try:
+            session_id = resolve_session_id_from_bearer_token(token)
+            session = db.query(SessionRecord).filter_by(session_id=session_id).first()
+            if session:
+                session.expires_at = datetime.utcnow()
+                expired_session_id = session.session_id
+                create_audit_event(
+                    db,
+                    actor_id=session.actor_id,
+                    action_type="auth.approver_session.logout",
+                    resource_type="session",
+                    resource_id=session.session_id,
+                    trace_id=f"trace-approver-logout-{session.session_id}",
+                )
+                db.commit()
+        except HTTPException:
+            pass
+
+    clear_session_cookie(response, cookie_name=APPROVER_SESSION_COOKIE_NAME)
+    return {"logged_out": True, "session_id": expired_session_id}
 
 
 @router.post("/auth/directory/users", response_model=DirectoryUserResponse)
@@ -1281,6 +1505,9 @@ def unlock_directory_user(
         resource_id=row.user_id,
         trace_id=f"trace-directory-user-unlock-{row.user_id}",
     )
+    from app.services.unlock_abuse import maybe_flag_unlock_abuse
+
+    maybe_flag_unlock_abuse(db, actor_id=ctx.actor_id, user_id=row.user_id)
     db.commit()
     return {"user_id": row.user_id, "unlocked": True}
 

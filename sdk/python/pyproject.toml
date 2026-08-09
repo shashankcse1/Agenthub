@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agenthub-gateway"
+version = "0.1.0"
+description = "First-party turnkey client for the AgentHub AI Gateway (zero runtime deps; no competitor SDKs)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "AgentHub" }]
+keywords = ["ai-gateway", "openai-compatible", "observability", "cost", "gateway-native"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: Apache Software License",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/agenthub/gateway"
+Documentation = "https://github.com/agenthub/gateway/tree/main/sdk/python"
+
+[tool.setuptools]
+py-modules = ["agenthub_gateway"]

@@ -2,11 +2,11 @@
           <article class="card runtime-config-hero security-hero">
             <div class="card-head security-hero-head">
               <div>
-                <p class="eyebrow">Directory · Session Policy · Identity · Authorization</p>
-                <h3>Security Console</h3>
-                <p class="card-lead security-intro">
-                  Govern directory users, session policy, SSO lifecycle, role-binding explainability, and break-glass controls with auditable operator workflows.
-                </p>
+                <p class="sig-kicker">Identity &amp; access</p>
+                <h3>Identity & access</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Access governed</span></p>
+                <p class="card-lead">Directory, session policy, SSO, authorization, and break-glass.</p>
+                <p class="help-copy" data-help-label="About identity & access">Govern directory users, session policy, SSO lifecycle, role-binding explainability, and break-glass controls with auditable operator workflows.</p>
               </div>
               <div class="inline-actions security-console-toolbar">
                 <label class="security-workspace-label">
@@ -59,6 +59,24 @@
                 <p class="signal-hint">Team inventory</p>
               </article>
             </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Directory</span>
+        <strong>Authoritative</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Sessions</span>
+        <strong>Policy-bound</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">SSO</span>
+        <strong>Federated</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Break-glass</span>
+        <strong>Audited</strong>
+      </div>
+    </section>
             <div class="runtime-console-tabs" role="tablist" aria-label="Security console workspaces">
               <button class="ghost active" type="button" role="tab" aria-selected="true" data-security-workspace-tab="directory">Directory</button>
               <button class="ghost" type="button" role="tab" aria-selected="false" data-security-workspace-tab="session-policy">Session Policy</button>
@@ -91,6 +109,7 @@
 
             <article id="securityConsoleUsers" class="card security-console active">
               <div class="card-head">
+                <p class="sig-kicker">Directory ledger</p>
                 <h3>Directory Users</h3>
                 <button id="loadDirectoryUsers" class="ghost" type="button">Load</button>
               </div>
@@ -459,6 +478,7 @@
             <article class="card">
               <div class="card-head">
                 <h3>Session and Break-Glass Controls</h3>
+                <button id="tickBasicAuthExpire" class="ghost" type="button" title="POST /auth/basic/config/expire-tick">Expire Stale Break-Glass</button>
               </div>
               <form id="issueSessionForm" class="form-grid">
                 <label>Actor ID<input name="actor_id" value="ui-operator" /></label>

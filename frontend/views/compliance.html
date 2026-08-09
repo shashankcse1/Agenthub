@@ -1,13 +1,14 @@
 <section id="compliance" class="view runtime-config-view">
   <article class="card runtime-config-hero">
     <div class="card-head">
-      <h3>Compliance Console</h3>
+      <div>
+        <p class="sig-kicker">Attestable posture</p>
+        <h3>Coverage &amp; evidence</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Attestation live</span></p>
+      </div>
       <button id="refreshComplianceConsole" class="ghost" type="button">Refresh All</button>
     </div>
-    <p class="card-lead">
-      Govern <strong>control coverage</strong>, <strong>evidence bundles</strong>, <strong>retention policies</strong>, and <strong>legal holds</strong> for audit-ready compliance posture.
-      Map controls to requirements, generate forensics bundles, and enforce data retention with jurisdiction-aware holds.
-    </p>
+    <p class="card-lead">Coverage, evidence bundles, retention, and holds.</p>
     <p id="complianceConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading compliance inventory…</p>
     <div class="view-page-search-toolbar" data-view-search-toolbar>
       <div class="view-page-search-row">
@@ -22,6 +23,24 @@
       </div>
       <p class="view-page-search-status mono" aria-live="polite"></p>
     </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Coverage</span>
+        <strong>Mapped</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Evidence</span>
+        <strong>Bundled</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Retention</span>
+        <strong>Governed</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Holds</span>
+        <strong>Enforceable</strong>
+      </div>
+    </section>
     <div class="runtime-console-tabs" role="tablist" aria-label="Compliance console sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="coverage">Coverage</button>
@@ -33,7 +52,7 @@
   <div data-console-panel="overview" class="runtime-console-panel active">
     <article class="card">
       <div class="card-head">
-        <h4>How Compliance Fits Together</h4>
+        <h4>Attestation sequence</h4>
       </div>
       <div class="runtime-workflow-steps" aria-label="Recommended compliance workflow">
         <div class="runtime-workflow-step">
@@ -273,6 +292,7 @@
         <button id="loadRetentionPolicies" class="ghost" type="button">Load Policies</button>
       </div>
       <form id="retentionPolicyForm" class="form-grid">
+        <input type="hidden" name="policy_id" value="" />
         <label>Data Class<input name="data_class" required value="audit_events" /></label>
         <label>Jurisdiction<input name="jurisdiction" required value="global" /></label>
         <label>Retention Days<input name="retention_days" type="number" min="1" step="1" value="365" /></label>
@@ -289,6 +309,13 @@
           <select name="legal_hold_supported">
             <option value="true" selected>true</option>
             <option value="false">false</option>
+          </select>
+        </label>
+        <label>
+          Status
+          <select name="status">
+            <option value="active" selected>active</option>
+            <option value="disabled">disabled</option>
           </select>
         </label>
         <div class="inline-row">

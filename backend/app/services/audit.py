@@ -231,6 +231,7 @@ def create_audit_event(
         "gateway.fine_tuning.",
         "gateway.passthrough.execute",
         "compliance.evidence.export",
+        "secret_provider.value.",
     )
     should_evaluate_siem = not str(action_type or "").startswith("observability.siem.") and (
         normalized_outcome == "deny"

@@ -78,6 +78,22 @@
     if (!healthOk && typeof onDowntime === "function") onDowntime();
   }
 
+  function renderControlPlaneBanner(status) {
+    const banner = qs("#platformControlPlaneBanner");
+    if (!banner) return;
+    const cp = status?.control_plane || {};
+    const advisory = cp.advisory;
+    if (!advisory) {
+      banner.hidden = true;
+      banner.textContent = "";
+      banner.classList.remove("warn");
+      return;
+    }
+    banner.hidden = false;
+    banner.classList.toggle("warn", Boolean(cp.control_readonly) || cp.ready === false);
+    banner.textContent = String(advisory);
+  }
+
   async function fetchOperationalStatus() {
     const base = String(getApiBase() || "").replace(/\/$/, "");
     const started = performance.now();
@@ -90,6 +106,51 @@
     return response.json();
   }
 
+  let lastHealthPayload = null;
+
+  function renderLeadershipPostureChips(health) {
+    const root = qs("#leadershipPostureChips");
+    if (!root) return;
+    if (!health || typeof health !== "object") {
+      root.hidden = true;
+      return;
+    }
+    root.hidden = false;
+    const mfa = health.mfa_optional || {};
+    const token = health.token_exposure || {};
+    const rotation = health.session_signing_rotation || {};
+    const rate = health.rate_limit || {};
+    const setText = (id, value) => {
+      const el = qs(id);
+      if (el) el.textContent = value;
+    };
+    setText("#postureMfaOptional", mfa.effective ? "ON (local-only)" : "off");
+    setText("#postureTokenExposure", token.effective ? "ON (local-only)" : "off");
+    if (rotation.rotation_age_exceeded) {
+      setText("#postureSessionSigning", "rotation overdue");
+    } else if (rotation.key_ring_configured) {
+      setText("#postureSessionSigning", rotation.monitoring_enabled ? "monitored" : "configured");
+    } else {
+      setText("#postureSessionSigning", "default");
+    }
+    setText(
+      "#postureRateLimit",
+      rate.degraded ? "degraded" : String(rate.active_backend || rate.status || "ok")
+    );
+    const transport = health.transport || {};
+    setText(
+      "#postureTransport",
+      transport.expect_https ? "HTTPS expected · HSTS on" : "HSTS on (local)"
+    );
+    const exceptions = health.exception_posture || {};
+    const activeBg = Number(exceptions.active_break_glass || 0);
+    const expired = Number(exceptions.expired_still_marked_enabled || 0);
+    setText(
+      "#postureExceptions",
+      expired > 0 ? `${expired} expired (auto-disable)` : activeBg > 0 ? `${activeBg} active` : "none"
+    );
+  }
+
   async function probeHealthLatency() {
     const base = String(getApiBase() || "").replace(/\/$/, "");
     const started = performance.now();
@@ -98,6 +159,15 @@
       headers: { Accept: "application/json" },
     });
     recordLatency(Math.round(performance.now() - started));
+    if (response.ok) {
+      try {
+        lastHealthPayload = await response.json();
+      } catch {
+        lastHealthPayload = null;
+      }
+    } else {
+      lastHealthPayload = null;
+    }
     return response.ok;
   }
 
@@ -107,6 +177,7 @@
       healthOk = await probeHealthLatency();
     } catch {
       healthOk = false;
+      lastHealthPayload = null;
     }
     try {
       operationalStatus = await fetchOperationalStatus();
@@ -117,9 +188,11 @@
         performance: { slow_response_threshold_ms: 2000 },
       };
     }
+    renderLeadershipPostureChips(lastHealthPayload);
     renderMaintenanceBanner(operationalStatus);
     renderSlowPerformanceBanner(operationalStatus, lastHealthLatencyMs);
     renderDowntimeBanner(operationalStatus, healthOk);
+    renderControlPlaneBanner(operationalStatus);
     if (options.notifyFeedback && global.OperatorFeedback) {
       global.OperatorFeedback.setContext({
         clientLatencyMs: lastHealthLatencyMs,
@@ -147,6 +220,7 @@
       lastHealthLatencyMs,
       averageLatencyMs: averageLatency(),
       currentView: getCurrentView(),
+      lastHealthPayload,
     };
   }
 

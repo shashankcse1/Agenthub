@@ -39,6 +39,7 @@ services:
         condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
+      APP_PLANE: ${APP_PLANE:-all}
       STARTUP_AUTO_CREATE_SCHEMA: ${STARTUP_AUTO_CREATE_SCHEMA:-false}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/agenthub}
       SESSION_TOKEN_SIGNING_KEYS: ${SESSION_TOKEN_SIGNING_KEYS:?Set SESSION_TOKEN_SIGNING_KEYS in your environment}
@@ -55,6 +56,87 @@ services:
       API_PORT: 8000
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # Optional process-isolated control plane (architecture §12). Enable with:
+  #   docker compose -f docker-compose.production.yml --profile plane-split up -d
+  # Point the UI at api-control:8001 and clients at api-gateway:8002.
+  api-control:
+    profiles: ["plane-split"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agenthub-api-control
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_PLANE: control
+      DATA_PLANE_PEER_URL: ${DATA_PLANE_PEER_URL:-http://api-gateway:8000}
+      PLANE_DRIFT_WATCHER_ENABLED: ${PLANE_DRIFT_WATCHER_ENABLED:-true}
+      PLANE_DRIFT_WATCHER_INTERVAL_SECONDS: ${PLANE_DRIFT_WATCHER_INTERVAL_SECONDS:-30}
+      PLANE_FAIL_CLOSED_MODE: ${PLANE_FAIL_CLOSED_MODE:-off}
+      STARTUP_AUTO_CREATE_SCHEMA: ${STARTUP_AUTO_CREATE_SCHEMA:-false}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/agenthub}
+      SESSION_TOKEN_SIGNING_KEYS: ${SESSION_TOKEN_SIGNING_KEYS:?Set SESSION_TOKEN_SIGNING_KEYS in your environment}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:?Set CORS_ALLOW_ORIGINS to your UI origin}
+      ALLOW_HEADER_ACTOR_AUTH: ${ALLOW_HEADER_ACTOR_AUTH:-false}
+      MFA_ENFORCEMENT_OPTIONAL: ${MFA_ENFORCEMENT_OPTIONAL:-false}
+      EXPOSE_WORKLOAD_IDENTITY_ACCESS_TOKEN: ${EXPOSE_WORKLOAD_IDENTITY_ACCESS_TOKEN:-false}
+      RATE_LIMIT_BACKEND: ${RATE_LIMIT_BACKEND:-redis}
+      RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-redis://redis:6379/0}
+      RATE_LIMIT_REDIS_PREFIX: ${RATE_LIMIT_REDIS_PREFIX:-rate-limit-cp}
+      UVICORN_WORKERS: ${CONTROL_UVICORN_WORKERS:-2}
+      API_PORT: 8000
+    ports:
+      - "8001:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  api-gateway:
+    profiles: ["plane-split"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agenthub-api-gateway
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_PLANE: data
+      CONTROL_PLANE_PEER_URL: ${CONTROL_PLANE_PEER_URL:-http://api-control:8000}
+      PLANE_DRIFT_WATCHER_ENABLED: ${PLANE_DRIFT_WATCHER_ENABLED:-true}
+      PLANE_DRIFT_WATCHER_INTERVAL_SECONDS: ${PLANE_DRIFT_WATCHER_INTERVAL_SECONDS:-30}
+      PLANE_FAIL_CLOSED_MODE: ${PLANE_FAIL_CLOSED_MODE:-drift}
+      STARTUP_AUTO_CREATE_SCHEMA: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/agenthub}
+      SESSION_TOKEN_SIGNING_KEYS: ${SESSION_TOKEN_SIGNING_KEYS:?Set SESSION_TOKEN_SIGNING_KEYS in your environment}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:?Set CORS_ALLOW_ORIGINS to your UI origin}
+      ALLOW_HEADER_ACTOR_AUTH: ${ALLOW_HEADER_ACTOR_AUTH:-false}
+      MFA_ENFORCEMENT_OPTIONAL: ${MFA_ENFORCEMENT_OPTIONAL:-false}
+      EXPOSE_WORKLOAD_IDENTITY_ACCESS_TOKEN: ${EXPOSE_WORKLOAD_IDENTITY_ACCESS_TOKEN:-false}
+      RATE_LIMIT_BACKEND: ${RATE_LIMIT_BACKEND:-redis}
+      RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-redis://redis:6379/0}
+      RATE_LIMIT_REDIS_PREFIX: ${RATE_LIMIT_REDIS_PREFIX:-rate-limit-dp}
+      UVICORN_WORKERS: ${GATEWAY_UVICORN_WORKERS:-4}
+      API_PORT: 8000
+    ports:
+      - "8002:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 15s

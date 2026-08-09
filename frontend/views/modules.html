@@ -1,13 +1,15 @@
 <section id="modules" class="view modules-view runtime-config-view">
   <article class="card runtime-config-hero">
     <div class="card-head">
-      <h3>Modules Console</h3>
+      <div>
+        <p class="sig-kicker">Catalog &amp; skills</p>
+        <h3>Lifecycle &amp; skills</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Catalog governed</span></p>
+      </div>
       <button id="refreshModulesConsole" class="ghost" type="button">Refresh All</button>
     </div>
-    <p class="card-lead">
-      Govern the <strong>module catalog</strong>, <strong>agent compatibility checks</strong>, <strong>upgrade planning</strong>, and the <strong>AI skills registry</strong> that agents and routing consume.
-      Register modules with provenance and integration metadata, validate agent pins, plan upgrades, and deprecate with migration guidance.
-    </p>
+    <p class="card-lead">Module catalog, agent pins, upgrades, and AI skills registry.</p>
+    <p class="help-copy" data-help-label="About lifecycle & skills">Govern the module catalog, agent compatibility checks, upgrade planning, and the AI skills registry. Register modules with provenance, validate agent pins, plan upgrades, and deprecate with migration guidance.</p>
     <p id="modulesConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading module inventory…</p>
     <div class="modules-page-search-bar view-page-search-toolbar" data-view-search-toolbar>
       <div class="view-page-search-row">
@@ -22,6 +24,24 @@
       </div>
       <p class="view-page-search-status mono" aria-live="polite"></p>
     </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Modules</span>
+        <strong>Versioned</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Skills</span>
+        <strong>Registered</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Sync</span>
+        <strong>Attested</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Lifecycle</span>
+        <strong>Deprecatable</strong>
+      </div>
+    </section>
     <div class="runtime-console-tabs" role="tablist" aria-label="Modules console sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-modules-console-tab="overview">Overview</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-modules-console-tab="registry">Module Registry</button>
@@ -99,7 +119,7 @@
         <h4>Module Registry</h4>
         <button id="loadModules" class="ghost" type="button">Refresh Catalog</button>
       </div>
-      <p class="card-lead">Register modules with provenance, permissions, and optional integration metadata. Use row actions to populate lifecycle forms or sync integrations.</p>
+      <p class="help-copy" data-help-label="About module catalog">Register modules with provenance and permissions. Row actions populate lifecycle forms or sync integrations.</p>
       <form id="moduleRegisterForm" class="form-grid modules-register-form">
         <label>Module Name<input name="module_name" required placeholder="gateway-policy-optimizer" /></label>
         <label>
@@ -165,7 +185,7 @@
       <div class="card-head">
         <h4>Module Versions</h4>
       </div>
-      <p class="card-lead">Load published versions for a module before planning agent upgrades or validation.</p>
+      <p class="help-copy" data-help-label="About versions">Load published versions before planning agent upgrades or validation.</p>
       <form id="moduleVersionsForm" class="form-grid">
         <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
         <button type="submit" class="ghost">Load Versions</button>
@@ -177,7 +197,7 @@
       <div class="card-head">
         <h4>Agent Module Validate</h4>
       </div>
-      <p class="card-lead">Confirm an agent pin is compatible with the catalog before promotion.</p>
+      <p class="help-copy" data-help-label="About compatibility">Confirm an agent pin is compatible with the catalog before promotion.</p>
       <form id="moduleValidateForm" class="form-grid">
         <label>Agent ID<input name="agent_id" required placeholder="agent-001" /></label>
         <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
@@ -192,7 +212,7 @@
       <div class="card-head">
         <h4>Agent Module Upgrade Plan</h4>
       </div>
-      <p class="card-lead">Generate an upgrade plan from the agent's pinned version to the catalog target.</p>
+      <p class="help-copy" data-help-label="About upgrade plan">Generate an upgrade plan from the pinned version to the catalog target.</p>
       <form id="moduleUpgradePlanForm" class="form-grid">
         <label>Agent ID<input name="agent_id" required placeholder="agent-001" /></label>
         <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
@@ -207,7 +227,7 @@
       <div class="card-head">
         <h4>Deprecate Module</h4>
       </div>
-      <p class="card-lead">Retire a module with migration guidance and an optional replacement module ID.</p>
+      <p class="help-copy" data-help-label="About retirement">Retire a module with migration guidance and an optional replacement.</p>
       <form id="moduleDeprecateForm" class="form-grid">
         <label>Module ID<input name="module_id" required placeholder="module-id" /></label>
         <label>Replacement Module ID<input name="replacement_module_id" placeholder="optional replacement module id" /></label>
@@ -225,7 +245,7 @@
         <h4>AI Skills Registry</h4>
         <button id="loadAiSkills" class="ghost" type="button">Refresh Skills</button>
       </div>
-      <p class="card-lead">Skill-focused module inventory for <code>ai_skill</code> and <code>skill</code> types. Use the module catalog for full lifecycle actions.</p>
+      <p class="help-copy" data-help-label="About skills inventory">Skill-focused inventory for ai_skill and skill types. Use the module catalog for lifecycle actions.</p>
       <p id="aiSkillsResult" class="runtime-feedback mono"></p>
       <div class="modules-table-search view-page-search-row">
         <label class="view-page-search-label">

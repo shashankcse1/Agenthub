@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import uuid4
@@ -21,6 +22,7 @@ from app.models import (
 from app.runtime_constants import (
     RUNTIME_CONFIG_GATEWAY_MEMORY_CONTENT_MAX_BYTES,
     RUNTIME_CONFIG_GATEWAY_MEMORY_LONG_TERM_ENABLED,
+    RUNTIME_CONFIG_GATEWAY_MEMORY_LONG_TERM_TTL_DAYS,
     RUNTIME_CONFIG_GATEWAY_MEMORY_PII_CLASSIFICATION_ENABLED,
     RUNTIME_CONFIG_GATEWAY_MEMORY_SESSION_CAPTURE_ENABLED,
     RUNTIME_CONFIG_GATEWAY_MEMORY_MAX_RECORDS_PER_SCOPE,
@@ -29,6 +31,7 @@ from app.runtime_constants import (
 )
 from app.services.runtime_config import get_runtime_config, get_runtime_config_int
 from app.services.audit import create_audit_event
+from app.services.prompt_injection_guard import evaluate_prompt_injection_text, wrap_untrusted_retrieval_text
 
 MEMORY_TIERS = {"short_term", "long_term"}
 MEMORY_SCOPE_TYPES = {"session", "conversation", "agent", "global"}
@@ -49,9 +52,20 @@ def _session_capture_enabled(db: Session) -> bool:
     return str(raw).strip().lower() in {"true", "1", "yes", "on"}
 
 
+def _runtime_environment() -> str:
+    return (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "dev").strip().lower()
+
+
 def _pii_classification_enabled(db: Session) -> bool:
-    raw = get_runtime_config(db, RUNTIME_CONFIG_GATEWAY_MEMORY_PII_CLASSIFICATION_ENABLED, "false")
+    # Enterprise default: force PII classification outside local/dev/test (RSK-017).
+    env = _runtime_environment()
+    default = "true" if env not in {"dev", "test", "local"} else "false"
+    raw = get_runtime_config(db, RUNTIME_CONFIG_GATEWAY_MEMORY_PII_CLASSIFICATION_ENABLED, default)
     return str(raw).strip().lower() in {"true", "1", "yes", "on"}
+
+
+def _long_term_ttl_days(db: Session) -> int:
+    return max(1, min(3650, get_runtime_config_int(db, RUNTIME_CONFIG_GATEWAY_MEMORY_LONG_TERM_TTL_DAYS, 365)))
 
 
 BLOCKED_MEMORY_DATA_CLASSES = frozenset({"pii", "phi", "secret"})
@@ -129,12 +143,11 @@ def _cache_hit_ratio(db: Session) -> tuple[float, int]:
     return ratio, eligible
 
 
-def expire_stale_short_term_records(db: Session) -> int:
+def expire_stale_memory_records(db: Session) -> int:
     now = datetime.utcnow()
     rows = (
         db.query(AgentMemoryRecord)
         .filter(
-            AgentMemoryRecord.memory_tier == "short_term",
             AgentMemoryRecord.status == "active",
             AgentMemoryRecord.expires_at.isnot(None),
             AgentMemoryRecord.expires_at < now,
@@ -147,6 +160,11 @@ def expire_stale_short_term_records(db: Session) -> int:
     if rows:
         db.flush()
     return len(rows)
+
+
+def expire_stale_short_term_records(db: Session) -> int:
+    """Backward-compatible alias — expires any tier with expires_at past due."""
+    return expire_stale_memory_records(db)
 
 
 def build_gateway_memory_overview(db: Session, *, actor_id_filter: Optional[str] = None) -> dict[str, object]:
@@ -354,7 +372,34 @@ def create_memory_record(
             },
         )
 
+    injection = evaluate_prompt_injection_text(
+        db,
+        normalized_content,
+        source="gateway.memory.create",
+        raise_on_block=True,
+    )
+    if injection.get("decision") == "warn":
+        normalized_content = wrap_untrusted_retrieval_text(normalized_content)
+        if len(normalized_content) > content_max:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error_code": "VALIDATION_ERROR",
+                    "message": (
+                        f"content must not exceed {content_max} characters after "
+                        "untrusted-content wrapping for prompt-injection warn hits."
+                    ),
+                    "decision_trace_id": "gateway-memory-content-max-length-wrapped",
+                },
+            )
+
     metadata = _validate_metadata_json(metadata_json)
+    if injection.get("decision") == "warn":
+        meta_obj = json.loads(metadata)
+        meta_obj["prompt_injection_decision"] = "warn"
+        meta_obj["prompt_injection_reasons"] = list(injection.get("reasons") or [])
+        meta_obj["untrusted_content"] = True
+        metadata = json.dumps(meta_obj, separators=(",", ":"), sort_keys=True)
     if _pii_classification_enabled(db):
         metadata_tag = _metadata_tag_from_json(metadata)
         data_class = classify_memory_content_data_class(normalized_content, metadata_tag)
@@ -401,6 +446,8 @@ def create_memory_record(
     if tier == "short_term":
         ttl_seconds = get_runtime_config_int(db, RUNTIME_CONFIG_GATEWAY_MEMORY_SHORT_TERM_TTL_SECONDS, 3600)
         expires_at = now + timedelta(seconds=ttl_seconds)
+    elif tier == "long_term":
+        expires_at = now + timedelta(days=_long_term_ttl_days(db))
 
     row = AgentMemoryRecord(
         memory_id=memory_id,

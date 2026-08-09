@@ -57,8 +57,15 @@ from app.schemas import (
     SecretProviderValueResponse,
     SecretProviderValueUpsertRequest,
     SupportedModelApprovalRequest,
+    SupportedModelCloudDiscoverRequest,
+    SupportedModelCloudDiscoverResponse,
+    SupportedModelCloudSyncRequest,
+    SupportedModelCloudSyncResponse,
     SupportedModelResponse,
+    SupportedModelSeedTrendingRequest,
+    SupportedModelSeedTrendingResponse,
     SupportedModelUpsertRequest,
+    InferenceReadinessResponse,
     PlatformAvailableModelsResponse,
     TenantCatalogResponse,
     TenantSupportedModelEntitlementResponse,
@@ -74,6 +81,9 @@ from app.schemas import (
 )
 from app.security import ActorContext, get_actor_context, require_dual_approval, require_mfa, require_role
 from app.services.audit import create_audit_event
+from app.services.cloud_model_catalog import seed_model_catalog_specs
+from app.services.cloud_model_discovery import discover_cloud_models
+from app.services.inference_readiness import build_inference_readiness
 from app.services.platform_available_models import list_platform_available_models
 from app.services.provider_crypto import decrypt_value, encrypt_value
 from app.services.provider_credential_bindings import (
@@ -82,6 +92,7 @@ from app.services.provider_credential_bindings import (
     serialize_binding,
     upsert_provider_credential_binding,
 )
+from app.services.trending_model_catalog import seed_trending_model_catalog
 from app.services.secret_provider_values import (
     delete_db_secret_provider_value,
     is_db_secret_provider,
@@ -107,6 +118,15 @@ _RUNTIME_VENDOR_PREFIXES: dict[str, str] = {
     "fireworks": "FIREWORKS",
     "perplexity": "PERPLEXITY",
     "xai": "XAI",
+    "deepseek": "DEEPSEEK",
+    "google": "GOOGLE",
+    "vertex": "VERTEX",
+    "azure-openai": "AZURE_OPENAI",
+    "azure_openai": "AZURE_OPENAI",
+    "azure": "AZURE_OPENAI",
+    "cursor": "CURSOR",
+    "aws": "AWS_BEDROCK",
+    "bedrock": "AWS_BEDROCK",
 }
 
 
@@ -126,7 +146,9 @@ def _is_google_provider(provider_type: str) -> bool:
 
 
 def _is_runtime_prod_environment() -> bool:
-    return (os.getenv("RUNTIME_ENVIRONMENT") or os.getenv("ENVIRONMENT") or "dev").strip().lower() == "prod"
+    from app.services.runtime_env import is_production_runtime
+
+    return is_production_runtime()
 
 
 def _required_binding_approver_role(ctx: ActorContext) -> Optional[str]:
@@ -1613,6 +1635,188 @@ def create_supported_model(
     return row
 
 
+@router.post(
+    "/providers/models/seed-trending",
+    response_model=SupportedModelSeedTrendingResponse,
+    summary="Seed trending and cloud model packs",
+    description=(
+        "Upserts curated model packs. Default pack is `trending`. "
+        "Pass packs=['bedrock','azure','gcp'] or packs=['all'] for hyperscaler catalogs "
+        "(AWS Bedrock foundation IDs, Azure OpenAI/Foundry deployments, Google Gemini + Vertex). "
+        "Existing rows are skipped unless overwrite=true. In production, new rows stay "
+        "pending approval even when auto_approve is requested."
+    ),
+)
+def seed_trending_supported_models(
+    payload: SupportedModelSeedTrendingRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_ROLES)
+    require_mfa(ctx)
+    effective_auto_approve = bool(payload.auto_approve) and not _is_runtime_prod_environment()
+    requested_packs = [str(item).strip().lower() for item in (payload.packs or ["trending"]) if str(item).strip()]
+    if not requested_packs:
+        requested_packs = ["trending"]
+    try:
+        summary = seed_trending_model_catalog(
+            db,
+            actor_id=ctx.actor_id,
+            overwrite=bool(payload.overwrite),
+            auto_approve=effective_auto_approve,
+            packs=requested_packs,
+        )
+    except ValueError as exc:
+        raise api_validation_error(str(exc), decision_trace_id="providers-seed-pack-invalid") from exc
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="supported_model.seed_trending",
+        resource_type="supported_model_catalog",
+        resource_id=",".join(summary.get("packs") or requested_packs) or "trending-pack",
+        trace_id=f"trace-seed-trending-{uuid4()}",
+        action_context=summary,
+    )
+    db.commit()
+    return summary
+
+
+@router.post(
+    "/providers/models/discover-cloud",
+    response_model=SupportedModelCloudDiscoverResponse,
+    summary="Discover live cloud foundation/deployment models",
+    description=(
+        "Calls AWS Bedrock list_foundation_models / inference profiles, Azure OpenAI deployments, "
+        "Google Gemini models.list, and/or Vertex publisher models using runtime credentials. "
+        "Returns a preview without writing the catalog. Partial failures are returned per target."
+    ),
+)
+def discover_cloud_supported_models(
+    payload: SupportedModelCloudDiscoverRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_ROLES)
+    require_mfa(ctx)
+    try:
+        discovered = discover_cloud_models(list(payload.targets or ["all"]), region=payload.region)
+    except ValueError as exc:
+        raise api_validation_error(str(exc), decision_trace_id="providers-discover-target-invalid") from exc
+    models = list(discovered.get("models") or [])[: int(payload.limit)]
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="supported_model.discover_cloud",
+        resource_type="supported_model_catalog",
+        resource_id=",".join(discovered.get("targets") or []) or "cloud",
+        trace_id=f"trace-discover-cloud-{uuid4()}",
+        action_context={
+            "targets": discovered.get("targets"),
+            "total": discovered.get("total"),
+            "returned": len(models),
+            "errors": discovered.get("errors"),
+            "results": discovered.get("results"),
+        },
+    )
+    db.commit()
+    return {
+        "targets": discovered.get("targets") or [],
+        "total": int(discovered.get("total") or 0),
+        "models": models,
+        "results": discovered.get("results") or [],
+        "errors": discovered.get("errors") or [],
+    }
+
+
+@router.post(
+    "/providers/models/sync-cloud",
+    response_model=SupportedModelCloudSyncResponse,
+    summary="Discover and upsert live cloud models into the catalog",
+    description=(
+        "Runs live cloud discovery then upserts discovered model IDs into the supported-model catalog. "
+        "Existing rows are skipped unless overwrite=true. In production, new rows stay pending approval "
+        "even when auto_approve is requested."
+    ),
+)
+def sync_cloud_supported_models(
+    payload: SupportedModelCloudSyncRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PROVIDERS_ADMIN_ROLES)
+    require_mfa(ctx)
+    effective_auto_approve = bool(payload.auto_approve) and not _is_runtime_prod_environment()
+    try:
+        discovered = discover_cloud_models(list(payload.targets or ["all"]), region=payload.region)
+    except ValueError as exc:
+        raise api_validation_error(str(exc), decision_trace_id="providers-sync-target-invalid") from exc
+    specs = discovered.get("specs") or []
+    summary = seed_model_catalog_specs(
+        db,
+        specs,
+        actor_id=ctx.actor_id,
+        overwrite=bool(payload.overwrite),
+        auto_approve=effective_auto_approve,
+        packs_applied=list(discovered.get("targets") or []),
+    )
+    response_body = {
+        "targets": discovered.get("targets") or [],
+        "discovered": int(discovered.get("total") or 0),
+        "created": int(summary.get("created") or 0),
+        "updated": int(summary.get("updated") or 0),
+        "skipped": int(summary.get("skipped") or 0),
+        "pack_size": int(summary.get("pack_size") or 0),
+        "overwrite": bool(payload.overwrite),
+        "auto_approve": effective_auto_approve,
+        "results": discovered.get("results") or [],
+        "errors": discovered.get("errors") or [],
+    }
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="supported_model.sync_cloud",
+        resource_type="supported_model_catalog",
+        resource_id=",".join(response_body["targets"]) or "cloud",
+        trace_id=f"trace-sync-cloud-{uuid4()}",
+        action_context=response_body,
+    )
+    db.commit()
+    return response_body
+
+
+@router.get(
+    "/providers/models/inference-readiness",
+    response_model=InferenceReadinessResponse,
+    summary="AI / cloud inference readiness scorecard",
+    description=(
+        "Returns catalog counts and live credential/endpoint readiness for OpenAI, Anthropic, "
+        "Cursor, Azure OpenAI, AWS Bedrock, Gemini, Vertex, and other configured vendors. "
+        "Used by Playground and Providers to show whether selected models can invoke live."
+    ),
+)
+def get_inference_readiness(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, PLATFORM_AVAILABLE_MODEL_READ_ROLES)
+    payload = build_inference_readiness(db)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="supported_model.inference_readiness.read",
+        resource_type="supported_model_catalog",
+        resource_id="inference-readiness",
+        trace_id=f"trace-inference-readiness-{uuid4()}",
+        action_context={
+            "ready_providers": payload.get("ready_providers"),
+            "catalog_models_total": payload.get("catalog_models_total"),
+            "simulation_enabled": payload.get("simulation_enabled"),
+        },
+    )
+    db.commit()
+    return payload
+
+
 @router.get(
     "/providers/models/available",
     response_model=PlatformAvailableModelsResponse,
@@ -1790,8 +1994,10 @@ def approve_supported_model(
 ):
     require_role(ctx, PROVIDERS_ADMIN_SECURITY_ROLES)
     require_mfa(ctx)
+    from app.services.runtime_env import is_prod_target_environment
+
     environment = str(payload.environment or "dev").strip().lower() or "dev"
-    if environment == "prod":
+    if is_prod_target_environment(environment):
         require_dual_approval(ctx)
 
     row = db.query(SupportedModelCatalogEntry).filter_by(supported_model_id=supported_model_id).first()
@@ -2358,10 +2564,12 @@ def rotate_key_via_provider(
         "rotate_key_via_provider_start %s",
         sanitize_fields({"actor_id": ctx.actor_id, "key_id": key_id, "environment": environment}),
     )
+    from app.services.runtime_env import is_prod_target_environment
+
     try:
         require_role(ctx, PROVIDERS_ADMIN_ROLES)
         require_mfa(ctx)
-        if environment.strip().lower() == "prod":
+        if is_prod_target_environment(environment):
             require_dual_approval(ctx)
     except HTTPException as exc:
         if exc.status_code == 403:
@@ -2398,7 +2606,7 @@ def rotate_key_via_provider(
         "key_id": key_id,
         "rotation_status": "delegated_to_secret_provider",
         "environment": environment,
-        "dual_approval_required": environment.strip().lower() == "prod",
+        "dual_approval_required": is_prod_target_environment(environment),
     }
 
 
@@ -2414,7 +2622,9 @@ def create_provider_credential_binding(
 ):
     require_role(ctx, PROVIDERS_ADMIN_SECURITY_ROLES)
     require_mfa(ctx)
-    if payload.environment.strip().lower() == "prod" or _is_runtime_prod_environment():
+    from app.services.runtime_env import is_prod_target_environment
+
+    if is_prod_target_environment(payload.environment) or _is_runtime_prod_environment():
         required_approver_role = _required_binding_approver_role(ctx)
         if required_approver_role:
             require_dual_approval(ctx, required_approver_role=required_approver_role)
@@ -2538,7 +2748,9 @@ def update_provider_credential_binding(
 ):
     require_role(ctx, PROVIDERS_ADMIN_SECURITY_ROLES)
     require_mfa(ctx)
-    if payload.environment.strip().lower() == "prod" or _is_runtime_prod_environment():
+    from app.services.runtime_env import is_prod_target_environment
+
+    if is_prod_target_environment(payload.environment) or _is_runtime_prod_environment():
         required_approver_role = _required_binding_approver_role(ctx)
         if required_approver_role:
             require_dual_approval(ctx, required_approver_role=required_approver_role)

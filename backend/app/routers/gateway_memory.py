@@ -61,7 +61,9 @@ _NOT_FOUND = {
 
 
 def _is_prod_environment(value: str) -> bool:
-    return value.strip().lower() == "prod"
+    from app.services.runtime_env import is_prod_target_environment
+
+    return is_prod_target_environment(value)
 
 
 def _agent_owner_scope(actor_id: str) -> str:

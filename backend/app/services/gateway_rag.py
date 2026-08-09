@@ -13,6 +13,10 @@ from app.services.gateway_vector_stores import (
     vector_store_settings,
 )
 from app.services.mcp_gateway import call_tool as mcp_call_tool, resolve_mcp_server
+from app.services.prompt_injection_guard import (
+    evaluate_prompt_injection_text,
+    wrap_untrusted_retrieval_text,
+)
 from app.services.runtime_config import get_runtime_config_int
 
 
@@ -137,11 +141,28 @@ def rag_ingest(
                     "decision_trace_id": "gateway-rag-ingest-doc-text",
                 },
             )
+        injection = evaluate_prompt_injection_text(
+            db,
+            text,
+            source=f"rag.ingest[{idx}]",
+            raise_on_block=True,
+        )
+        doc_metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+        merged_metadata = dict(doc_metadata)
+        stored_text = text
+        if injection.get("decision") == "warn":
+            merged_metadata = {
+                **merged_metadata,
+                "prompt_injection_decision": "warn",
+                "prompt_injection_reasons": list(injection.get("reasons") or []),
+                "untrusted_content": True,
+            }
+            stored_text = wrap_untrusted_retrieval_text(text)
         normalized_docs.append(
             {
                 "id": str(doc.get("id") or doc.get("document_id") or f"doc-{idx}"),
-                "text": text,
-                "metadata": doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {},
+                "text": stored_text,
+                "metadata": merged_metadata,
             }
         )
 
@@ -199,6 +220,13 @@ def rag_query(
             },
         )
 
+    query_injection = evaluate_prompt_injection_text(
+        db,
+        normalized_query,
+        source="rag.query",
+        raise_on_block=True,
+    )
+
     resolved_top_k = top_k
     if resolved_top_k is None:
         resolved_top_k = get_runtime_config_int(db, RUNTIME_CONFIG_GATEWAY_VECTOR_STORES_SEARCH_TOP_K, 8)
@@ -229,14 +257,31 @@ def rag_query(
     matches = tool_result.get("results") or tool_result.get("matches") or tool_result.get("documents") or []
     if not isinstance(matches, list):
         matches = [matches] if matches else []
+
+    wrapped_matches: list[Any] = []
+    for match in matches:
+        if isinstance(match, dict):
+            item = dict(match)
+            for key in ("text", "content", "document", "chunk"):
+                if key in item and str(item.get(key) or "").strip():
+                    item[key] = wrap_untrusted_retrieval_text(str(item.get(key) or ""))
+            item["untrusted_content"] = True
+            wrapped_matches.append(item)
+        elif isinstance(match, str):
+            wrapped_matches.append(wrap_untrusted_retrieval_text(match))
+        else:
+            wrapped_matches.append(match)
+
     return {
         "object": "rag.query",
         "store_id": store_id,
         "provider_type": store["provider_type"],
         "query": normalized_query,
         "top_k": resolved_top_k,
-        "matches": matches,
-        "match_count": len(matches),
+        "matches": wrapped_matches,
+        "match_count": len(wrapped_matches),
+        "content_guard_decision": str(query_injection.get("decision") or "allow"),
+        "content_guard_reasons": list(query_injection.get("reasons") or []),
         "upstream": tool_result,
     }
 

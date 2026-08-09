@@ -607,6 +607,8 @@ def _upgrade_gateway_jit_virtual_key_schema() -> None:
         "ALTER TABLE IF EXISTS gateway_jit_access_requests ADD COLUMN IF NOT EXISTS owner_scope_id VARCHAR(128)",
         "ALTER TABLE IF EXISTS gateway_jit_access_requests ADD COLUMN IF NOT EXISTS mint_virtual_key BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE IF EXISTS gateway_jit_access_requests ADD COLUMN IF NOT EXISTS issued_virtual_key_id VARCHAR(64)",
+        "ALTER TABLE IF EXISTS gateway_jit_access_requests ADD COLUMN IF NOT EXISTS last_notify_json TEXT",
+        "ALTER TABLE IF EXISTS gateway_jit_access_requests ADD COLUMN IF NOT EXISTS notify_history_json TEXT",
         "CREATE INDEX IF NOT EXISTS ix_gateway_jit_request_issued_key ON gateway_jit_access_requests (issued_virtual_key_id)",
     ]
     with engine.begin() as connection:
@@ -1186,14 +1188,24 @@ app.state.app_plane = APP_PLANE
 
 def _rate_limit_actor_identity(request: Request) -> str:
     auth_header = (request.headers.get("Authorization") or "").strip()
+    token = ""
     if auth_header:
-        scheme, _, token = auth_header.partition(" ")
-        if scheme.lower() == "bearer" and token.strip():
-            try:
-                session_id = resolve_session_id_from_bearer_token(token.strip())
-                return f"session:{session_id}"
-            except Exception:
-                logger.trace("rate_limiter_invalid_bearer_fallback_to_ip")
+        scheme, _, raw = auth_header.partition(" ")
+        if scheme.lower() == "bearer" and raw.strip():
+            token = raw.strip()
+    if not token:
+        try:
+            from app.services.session_cookies import SESSION_COOKIE_NAME
+
+            token = (request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
+        except Exception:
+            token = ""
+    if token:
+        try:
+            session_id = resolve_session_id_from_bearer_token(token)
+            return f"session:{session_id}"
+        except Exception:
+            logger.trace("rate_limiter_invalid_bearer_fallback_to_ip")
 
     # Keep header identity trust available in non-production while blocking it in production.
     if _runtime_environment() not in {"prod", "production"}:
@@ -1203,6 +1215,16 @@ def _rate_limit_actor_identity(request: Request) -> str:
 
     client_ip = request.client.host if request.client and request.client.host else "unknown"
     return f"ip:{client_ip}"
+
+
+@app.middleware("http")
+async def csrf_protection_middleware(request: Request, call_next):
+    from app.services.csrf_protection import validate_csrf
+
+    rejected = validate_csrf(request)
+    if rejected is not None:
+        return rejected
+    return await call_next(request)
 
 
 @app.middleware("http")

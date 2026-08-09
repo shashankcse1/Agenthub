@@ -1,0 +1,220 @@
+{
+  "clocks": {
+    "on_plane_auto_reported": true,
+    "on_plane_coverage_percent": 100.0,
+    "prod_unmanaged_zero_ok": true,
+    "unmanaged_prod_identities": 0
+  },
+  "control_plane_leadership": {
+    "attestation_fresh": true,
+    "band": "contender",
+    "blockers": [
+      "Optional: deploy APP_PLANE=control|data (compose profile plane-split) to raise isolation 2\u21923."
+    ],
+    "contract_version": "plane-contract-v2",
+    "control_readonly": false,
+    "control_ready": true,
+    "engineering_leader_ready": false,
+    "gate_streak": 9,
+    "gate_streak_required": 2,
+    "last_attestation_id": "cpla-b07056e1b1b3481a",
+    "last_attestation_valid": false,
+    "last_known_good_fingerprint": "dba56dafc10bec38",
+    "leader_band_threshold": 16,
+    "marketing_claim_allowed": false,
+    "max_score": 20,
+    "next_actions": [
+      {
+        "action": "Optional: deploy APP_PLANE=control|data (compose profile plane-split) to raise isolation 2\u21923.",
+        "closes_toward": "cpli_leader_band",
+        "priority": 1
+      }
+    ],
+    "plane_split_ready": true,
+    "points_to_leader_band": 1,
+    "policy_fingerprint": "232fc65478507b64",
+    "promotion_ready": false,
+    "release_gate_evaluations": 12,
+    "release_gate_passed": false,
+    "score": 15,
+    "score_trend": {
+      "current_score": 15,
+      "delta": -2,
+      "direction": "down",
+      "prior_attested_score": 17,
+      "samples": 8
+    }
+  },
+  "drills": {
+    "by_drill": {
+      "Clock-01": {
+        "days_since": 0,
+        "outcome": "pass",
+        "performed_on": "2026-08-07",
+        "recorded": true,
+        "run_id": "ldr-a4ee73713ac14e78",
+        "within_90d": true
+      },
+      "Clock-02": {
+        "days_since": 0,
+        "outcome": "pass",
+        "performed_on": "2026-08-07",
+        "recorded": true,
+        "run_id": "ldr-2a8e66ef7e754267",
+        "within_90d": true
+      },
+      "RT-01": {
+        "days_since": 0,
+        "outcome": "pass",
+        "performed_on": "2026-08-07",
+        "recorded": true,
+        "run_id": "ldr-7af41e444e604a39",
+        "within_90d": true
+      },
+      "RT-02": {
+        "days_since": 0,
+        "outcome": "pass",
+        "performed_on": "2026-08-07",
+        "recorded": true,
+        "run_id": "ldr-efd421f18c80438f",
+        "within_90d": true
+      },
+      "Tabletop": {
+        "days_since": 0,
+        "outcome": "pass",
+        "performed_on": "2026-08-07",
+        "recorded": true,
+        "run_id": "ldr-3b271b0fa94a489f",
+        "within_90d": true
+      }
+    },
+    "rt_01_02_within_90d": true,
+    "tabletop_within_180d": true
+  },
+  "exception_posture": {
+    "active_break_glass": 0,
+    "auto_disable_supported": true,
+    "expired_still_marked_enabled": 0,
+    "max_duration_days_cap": 90,
+    "max_duration_minutes_cap": 129600
+  },
+  "gates": {
+    "active_break_glass": 0,
+    "auto_disable_supported": true,
+    "exceptions_max_days_cap": 90,
+    "expired_still_marked_enabled": 0,
+    "hsts_configured": true,
+    "mfa_optional_effective": false,
+    "token_exposure_effective": false,
+    "transport_expect_https": false
+  },
+  "generated_at": "2026-08-07T03:16:51.957102Z",
+  "honesty": {
+    "leader_claim_allowed": true,
+    "lrs": {
+      "attestation_id": "PROG-LRS-2026-08-06",
+      "attested_on": "2026-08-06",
+      "authority_zeros": 0,
+      "band": "Governed velocity",
+      "clocks_zeros": 0,
+      "formal_signoff_complete": true,
+      "max_score": 40,
+      "score": 40
+    },
+    "reason": "LRS 40/40 (Governed velocity) with no Authority/Clocks zeros and formal sign-off complete (attestation PROG-LRS-2026-08-06)"
+  },
+  "mfa_optional": {
+    "allowed_environments": [
+      "dev",
+      "local",
+      "test"
+    ],
+    "effective": false,
+    "environment": "dev",
+    "fail_closed_outside_allowed": false,
+    "raw_flag_set": false,
+    "warnings": []
+  },
+  "on_plane_coverage": {
+    "formula": "on_plane / (on_plane + off_plane_detected)",
+    "off_plane_detected": 0,
+    "off_plane_tagged_cost_events": 0,
+    "on_plane_coverage_percent": 100.0,
+    "on_plane_events": 233,
+    "sensor_notes": "CostEvents are on-plane; off_plane_detected = properties.off_plane tags + unmanaged high-confidence discovery records.",
+    "unmanaged_high_risk_discovered": 0
+  },
+  "plane_isolation": {
+    "app_plane": "all",
+    "drift_status": "drift_detected",
+    "fingerprint": "232fc65478507b64",
+    "gate": {
+      "block_reason": null,
+      "drift_status": null,
+      "fail_closed_mode": "off",
+      "inference_allowed": true,
+      "updated_at_unix": null,
+      "watcher_enabled": false,
+      "watcher_ticks": 0
+    },
+    "key_count": 46,
+    "last_reconcile_at_unix": null,
+    "route_count": 11
+  },
+  "program_leadership": {
+    "cpli_band": "contender",
+    "cpli_engineering_leader_ready": false,
+    "cpli_max": 20,
+    "cpli_score": 15,
+    "leader_band_threshold": 16,
+    "lrs": {
+      "attestation_id": "PROG-LRS-2026-08-06",
+      "attested_on": "2026-08-06",
+      "authority_zeros": 0,
+      "band": "Governed velocity",
+      "clocks_zeros": 0,
+      "formal_signoff_complete": true,
+      "max_score": 40,
+      "score": 40
+    },
+    "lrs_claim_allowed": true,
+    "lrs_reason": "LRS 40/40 (Governed velocity) with no Authority/Clocks zeros and formal sign-off complete (attestation PROG-LRS-2026-08-06)",
+    "plane_split_ready": true,
+    "unified_ready": false
+  },
+  "purpose": "numbers_first_qbr",
+  "readiness_notes": [
+    "Plane drift status is drift_detected \u2014 run POST /platform/control-plane/reconcile.",
+    "CPLI 15/20 (contender) \u2014 close blockers via /platform/control-plane/leadership.",
+    "LRS attestation allows Under-contract+ claims: LRS 40/40 (Governed velocity) with no Authority/Clocks zeros and formal sign-off complete (attestation PROG-LRS-2026-08-06)",
+    "Program LRS met; raise CPLI to \u226516 for engineering leader band."
+  ],
+  "spend": {
+    "distinct_requests": 134,
+    "environment": null,
+    "off_plane_detected": 0,
+    "on_plane_events": 233,
+    "total_estimated_cost_cents": 78961,
+    "total_events": 233,
+    "window_hours": 2160
+  },
+  "token_exposure": {
+    "allowed_environments": [
+      "dev",
+      "local",
+      "test"
+    ],
+    "effective": false,
+    "environment": "dev",
+    "fail_closed_outside_allowed": false,
+    "raw_flag_set": false,
+    "warnings": []
+  },
+  "transport": {
+    "environment": "dev",
+    "expect_https": false,
+    "hsts_configured": true,
+    "hsts_header_policy": "max-age=63072000; includeSubDomains; preload",
+    "notes": "App middleware always sets Strict-Transport-Security. Ingress/load-balancer TLS termination must still be validated in staging/prod."
+  }
+}

@@ -112,12 +112,27 @@ def is_agent_config(config: AgentConfig) -> bool:
     return bool(str(config.agent_key or "").strip())
 
 
+KNOWN_GOVERNED_AGENT_TYPES: frozenset[str] = frozenset(
+    {
+        "assistant",
+        "automation",
+        "orchestrator",
+        "chatbot",
+        "aws",
+        "azure",
+        "gcp",
+        "onprem",
+        "hybrid",
+    }
+)
+
+
 def is_governed_agent(agent: Agent) -> bool:
     agent_type = str(agent.agent_type or "").strip().lower()
-    if agent_type in {"assistant", "automation", "orchestrator", "other"}:
+    if agent_type in KNOWN_GOVERNED_AGENT_TYPES:
+        return True
+    if agent_type == "other":
         haystack = " ".join([agent.name, agent.description, agent.agent_type])
-        if agent_type != "other":
-            return True
         return is_agent_related_text(haystack)
     return is_agent_related_text(" ".join([agent.name, agent.description, agent.agent_type]))
 

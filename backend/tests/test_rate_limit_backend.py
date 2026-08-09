@@ -108,3 +108,17 @@ def test_rate_limiter_degraded_status_and_recovery_telemetry():
     assert recovered["active_backend"] == "redis"
     assert recovered["redis_recovery_attempts"] >= 1
     assert recovered["redis_recovery_successes"] >= 1
+
+
+def test_rate_limiter_maybe_emit_degraded_alert_throttled():
+    alerts: list[str] = []
+    limiter = SlidingWindowRateLimiter(backend="redis", redis_client=_FailingRedisClient(), now_fn=lambda: 100.0)
+    limiter.allow(actor_id="actor-alert", method="POST", path="/auth/sessions")
+    assert limiter.runtime_status()["degraded"] is True
+
+    assert limiter.maybe_emit_degraded_alert(alerts.append) is True
+    assert len(alerts) == 1
+    assert "degraded" in alerts[0].lower() or "fallback" in alerts[0].lower()
+    # Throttled within RATE_LIMIT_REDIS_FALLBACK_WARN_PER_HOUR window.
+    assert limiter.maybe_emit_degraded_alert(alerts.append) is False
+    assert len(alerts) == 1

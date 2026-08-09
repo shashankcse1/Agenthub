@@ -11,6 +11,7 @@ from app.database import get_db
 from app.logging_utils import get_logger, sanitize_fields
 from app.models import (
     OrchestrationFlowDefinition,
+    OrchestrationFlowRevision,
     OrchestrationFlowRun,
     OrchestrationJitAccessRequest,
     OrchestrationFlowAccessCertification,
@@ -38,7 +39,11 @@ from app.schemas import (
     OrchestrationFlowApproveRequest,
     OrchestrationFlowCreateRequest,
     OrchestrationFlowListResponse,
+    OrchestrationFlowPromoteRequest,
     OrchestrationFlowResponse,
+    OrchestrationFlowRevisionListResponse,
+    OrchestrationFlowRevisionResponse,
+    OrchestrationFlowRollbackRequest,
     OrchestrationFlowRunListResponse,
     OrchestrationFlowRunRequest,
     OrchestrationFlowRunResponse,
@@ -56,10 +61,14 @@ from app.schemas import (
     OrchestrationJitAccessRequestCreateRequest,
     OrchestrationJitAccessRequestListResponse,
     OrchestrationJitAccessRequestResponse,
+    OrchestrationLiveReadinessBootstrapRequest,
+    OrchestrationLiveReadinessResponse,
     OrchestrationNodeTypesResponse,
 )
 from app.security import ActorContext, get_actor_context, require_dual_approval, require_role
 from app.services.audit import create_audit_event, push_audit_action_context
+from app.runtime_constants import RUNTIME_CONFIG_ORCHESTRATION_LIVE_EXECUTOR_ENABLED
+from app.services.runtime_config import upsert_runtime_config_value
 from app.services.orchestration_access import (
     FLOW_ACCESS_ACTION_APPROVE,
     FLOW_ACCESS_ACTION_MANAGE,
@@ -91,8 +100,10 @@ from app.services.orchestration_flows import (
     APPROVAL_STATUSES,
     FLOW_ENVIRONMENTS,
     FLOW_STATUSES,
+    ensure_leadership_connector_hosts,
     flow_has_human_approval_nodes,
     list_node_types,
+    live_readiness_snapshot,
     prod_run_requires_approval,
     security_policy_snapshot,
     serialize_flow,
@@ -183,6 +194,51 @@ def _require_flow(db: Session, flow_id: str) -> OrchestrationFlowDefinition:
     return row
 
 
+def _snapshot_flow_revision(
+    db: Session,
+    flow: OrchestrationFlowDefinition,
+    *,
+    actor_id: str,
+    change_reason: str = "",
+) -> OrchestrationFlowRevision:
+    version = int(flow.metadata_version or 1)
+    revision = OrchestrationFlowRevision(
+        revision_id=f"orev-{uuid4().hex[:20]}",
+        flow_id=flow.flow_id,
+        version=version,
+        flow_name=flow.flow_name,
+        description=flow.description or "",
+        status=flow.status,
+        environment=flow.environment,
+        trigger_type=flow.trigger_type,
+        trigger_config_json=flow.trigger_config_json or "{}",
+        graph_json=flow.graph_json or '{"nodes":[],"edges":[]}',
+        access_policy_json=flow.access_policy_json or "{}",
+        change_reason=(change_reason or "").strip()[:512],
+        created_by=actor_id,
+        created_at=datetime.utcnow(),
+    )
+    db.add(revision)
+    db.flush()
+    return revision
+
+
+def _serialize_flow_revision(row: OrchestrationFlowRevision) -> dict:
+    return {
+        "revision_id": row.revision_id,
+        "flow_id": row.flow_id,
+        "version": int(row.version or 1),
+        "flow_name": row.flow_name,
+        "description": row.description or "",
+        "status": row.status,
+        "environment": row.environment,
+        "trigger_type": row.trigger_type,
+        "change_reason": row.change_reason or "",
+        "created_by": row.created_by,
+        "created_at": row.created_at,
+    }
+
+
 def _audit_flow(
     db: Session,
     *,
@@ -225,6 +281,60 @@ def get_orchestration_node_types(
     policy = security_policy_snapshot(db)
     policy.update(live_executor_policy_snapshot(db))
     return {"node_types": list_node_types(), "policy": policy}
+
+
+@router.get("/orchestration/live-readiness", response_model=OrchestrationLiveReadinessResponse)
+def get_orchestration_live_readiness(
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    """Leadership Wave 2: non-prod live posture + connector host coverage (never secrets)."""
+    require_role(ctx, ROLES_ORCHESTRATION_READ)
+    snapshot = live_readiness_snapshot(db)
+    return {**snapshot, "actions_applied": []}
+
+
+@router.post("/orchestration/live-readiness/bootstrap", response_model=OrchestrationLiveReadinessResponse)
+def bootstrap_orchestration_live_readiness(
+    payload: OrchestrationLiveReadinessBootstrapRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    """Seed connector hosts and optionally enable non-prod live executor.
+
+    Never enables `orchestration.live_executor_prod_enabled`. Host allowlist + live flags
+    are dual-approval sensitive via runtime-config when mutated through admin APIs; this
+    bootstrap path is Platform Admin / write-role gated for operator velocity.
+    """
+    require_role(ctx, ROLES_ORCHESTRATION_WRITE)
+    actions: list[str] = []
+    if payload.seed_connector_hosts:
+        hosts = ensure_leadership_connector_hosts(db)
+        actions.append(f"seeded_connector_hosts:{len(hosts)}")
+    if payload.enable_non_prod_live:
+        upsert_runtime_config_value(
+            db,
+            RUNTIME_CONFIG_ORCHESTRATION_LIVE_EXECUTOR_ENABLED,
+            "true",
+            description="Non-prod Flow Studio live executor (prod remains separately gated)",
+        )
+        actions.append("enabled_non_prod_live_executor")
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="orchestration.live_readiness.bootstrap",
+        resource_type="orchestration",
+        resource_id="live-readiness",
+        trace_id=f"trace-live-readiness-{uuid4().hex[:12]}",
+        action_context={
+            "seed_connector_hosts": bool(payload.seed_connector_hosts),
+            "enable_non_prod_live": bool(payload.enable_non_prod_live),
+            "actions": actions,
+        },
+    )
+    db.commit()
+    snapshot = live_readiness_snapshot(db)
+    return {**snapshot, "actions_applied": actions}
 
 
 @router.get("/orchestration/summary", response_model=OrchestrationConsoleSummaryResponse)
@@ -439,6 +549,8 @@ def create_orchestration_flow(
         updated_by=ctx.actor_id,
     )
     db.add(row)
+    db.flush()
+    _snapshot_flow_revision(db, row, actor_id=ctx.actor_id, change_reason="Initial create")
     db.commit()
     db.refresh(row)
     _audit_flow(db, ctx=ctx, action_type="orchestration.flow.create", flow=row)
@@ -541,11 +653,167 @@ def update_orchestration_flow(
         row.approval_status = "pending"
     row.updated_by = ctx.actor_id
     row.updated_at = datetime.utcnow()
+    _snapshot_flow_revision(
+        db,
+        row,
+        actor_id=ctx.actor_id,
+        change_reason="Flow update",
+    )
     db.commit()
     db.refresh(row)
     _audit_flow(db, ctx=ctx, action_type="orchestration.flow.update", flow=row)
     db.commit()
     return serialize_flow(row)
+
+
+@router.get(
+    "/orchestration/flows/{flow_id}/revisions",
+    response_model=OrchestrationFlowRevisionListResponse,
+)
+def list_orchestration_flow_revisions(
+    flow_id: str,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    require_role(ctx, ROLES_ORCHESTRATION_READ)
+    row = _require_flow(db, flow_id)
+    enforce_flow_access(db, ctx, row, FLOW_ACCESS_ACTION_READ)
+    revisions = (
+        db.query(OrchestrationFlowRevision)
+        .filter_by(flow_id=flow_id)
+        .order_by(OrchestrationFlowRevision.version.desc())
+        .limit(limit)
+        .all()
+    )
+    return {"data": [_serialize_flow_revision(item) for item in revisions]}
+
+
+@router.post(
+    "/orchestration/flows/{flow_id}/revisions/rollback",
+    response_model=OrchestrationFlowResponse,
+)
+def rollback_orchestration_flow_revision(
+    flow_id: str,
+    payload: OrchestrationFlowRollbackRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, ROLES_ORCHESTRATION_WRITE)
+    row = _require_flow(db, flow_id)
+    enforce_flow_access(db, ctx, row, FLOW_ACCESS_ACTION_MANAGE)
+    revision = (
+        db.query(OrchestrationFlowRevision)
+        .filter_by(flow_id=flow_id, version=int(payload.version))
+        .first()
+    )
+    if revision is None:
+        raise not_found_error(
+            "orchestration_flow_revision",
+            f"{flow_id}:{payload.version}",
+            decision_trace_id="orchestration-flow-revision-not-found",
+        )
+    if row.environment == "prod":
+        require_dual_approval(ctx, required_approver_role=ROLE_SECURITY_APPROVER)
+
+    row.flow_name = revision.flow_name
+    row.description = revision.description or ""
+    row.status = revision.status
+    row.trigger_type = revision.trigger_type
+    row.trigger_config_json = revision.trigger_config_json or "{}"
+    row.graph_json = revision.graph_json or '{"nodes":[],"edges":[]}'
+    row.access_policy_json = revision.access_policy_json or "{}"
+    row.approval_status = "pending"
+    row.metadata_version = int(row.metadata_version or 1) + 1
+    row.updated_by = ctx.actor_id
+    row.updated_at = datetime.utcnow()
+    _snapshot_flow_revision(
+        db,
+        row,
+        actor_id=ctx.actor_id,
+        change_reason=f"Rollback to v{payload.version}: {payload.change_reason}",
+    )
+    db.commit()
+    db.refresh(row)
+    _audit_flow(
+        db,
+        ctx=ctx,
+        action_type="orchestration.flow.rollback",
+        flow=row,
+        action_context={"rolled_back_to_version": int(payload.version)},
+    )
+    db.commit()
+    return serialize_flow(row)
+
+
+@router.post(
+    "/orchestration/flows/{flow_id}/promote",
+    response_model=OrchestrationFlowResponse,
+)
+def promote_orchestration_flow(
+    flow_id: str,
+    payload: OrchestrationFlowPromoteRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, ROLES_ORCHESTRATION_WRITE)
+    source = _require_flow(db, flow_id)
+    enforce_flow_access(db, ctx, source, FLOW_ACCESS_ACTION_MANAGE)
+    target_env = str(payload.target_environment or "").strip().lower()
+    if target_env not in FLOW_ENVIRONMENTS:
+        raise validation_error(
+            message=f"target_environment must be one of: {', '.join(sorted(FLOW_ENVIRONMENTS))}"
+        )
+    if target_env == source.environment:
+        raise validation_error(message="target_environment must differ from the source environment")
+    if target_env == "prod":
+        require_dual_approval(ctx, required_approver_role=ROLE_SECURITY_APPROVER)
+
+    promoted = OrchestrationFlowDefinition(
+        flow_id=str(uuid4()),
+        flow_name=source.flow_name,
+        description=source.description or "",
+        status="draft",
+        environment=target_env,
+        tenant_id=source.tenant_id,
+        trigger_type=source.trigger_type,
+        trigger_config_json=source.trigger_config_json or "{}",
+        graph_json=source.graph_json or '{"nodes":[],"edges":[]}',
+        access_policy_json=source.access_policy_json or "{}",
+        approval_status="pending",
+        approval_stage_state_json="{}",
+        metadata_version=1,
+        created_by=ctx.actor_id,
+        updated_by=ctx.actor_id,
+    )
+    db.add(promoted)
+    db.flush()
+    _snapshot_flow_revision(
+        db,
+        promoted,
+        actor_id=ctx.actor_id,
+        change_reason=(
+            f"Promoted from {source.environment}:{source.flow_id}"
+            + (f" ticket={payload.change_ticket_id}" if payload.change_ticket_id else "")
+        ),
+    )
+    db.commit()
+    db.refresh(promoted)
+    _audit_flow(
+        db,
+        ctx=ctx,
+        action_type="orchestration.flow.promote",
+        flow=promoted,
+        action_context={
+            "source_flow_id": source.flow_id,
+            "source_environment": source.environment,
+            "target_environment": target_env,
+            "change_ticket_id": payload.change_ticket_id,
+            "change_reason": payload.change_reason,
+        },
+    )
+    db.commit()
+    return serialize_flow(promoted)
 
 
 @router.delete("/orchestration/flows/{flow_id}", response_model=OrchestrationFlowResponse)
@@ -589,7 +857,9 @@ def validate_orchestration_flow(
         result["valid"] = False
         result["errors"] = list(result.get("errors") or []) + iga_errors
     result["flow_id"] = flow_id
-    result["policy"] = security_policy_snapshot(db)
+    policy = security_policy_snapshot(db)
+    policy.update(live_executor_policy_snapshot(db))
+    result["policy"] = policy
     _audit_flow(
         db,
         ctx=ctx,
@@ -1428,6 +1698,8 @@ def trigger_orchestration_webhook(
     db: Session = Depends(get_db),
     ctx: ActorContext = Depends(get_actor_context),
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    x_hub_signature_256: Optional[str] = Header(default=None, alias="X-Hub-Signature-256"),
+    x_orchestration_signature: Optional[str] = Header(default=None, alias="X-Orchestration-Signature"),
 ):
     require_role(ctx, ROLES_ORCHESTRATION_RUN)
     run_row = trigger_webhook_flow(
@@ -1437,6 +1709,7 @@ def trigger_orchestration_webhook(
         authorization=authorization,
         run_input=str(payload.run_input or ""),
         dry_run=bool(payload.dry_run),
+        signature_header=x_hub_signature_256 or x_orchestration_signature,
     )
     flow = _require_flow(db, run_row.flow_id)
     return serialize_run(run_row, flow_name=flow.flow_name)

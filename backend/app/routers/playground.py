@@ -1,5 +1,4 @@
 import json
-import re
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import uuid4
@@ -28,6 +27,11 @@ from app.policy_constants import (
 from app.router_constants import ROLES_PLAYGROUND_READ, ROLES_PLAYGROUND_WRITE
 from app.services.benchmark_scan_runner import list_test_set_catalog
 from app.services.playground_judge import assess_playground_run_response, judge_candidate_models
+from app.services.prompt_template_render import (
+    extract_prompt_template_variables,
+    render_prompt_template_variables,
+    sanitize_prompt_template_variables,
+)
 from app.schemas import (
     PlaygroundCompareRequest,
     PlaygroundCompareResponse,
@@ -54,6 +58,8 @@ from app.schemas import (
     PromptRegistryItemResponse,
     PromptRegistryPromoteRequest,
     PromptRegistryPromoteResponse,
+    PromptRegistryRenderRequest,
+    PromptRegistryRenderResponse,
     PromptRegistryRollbackRequest,
     PromptRegistryUpdateRequest,
     PromptRegistryVersionResponse,
@@ -66,7 +72,6 @@ from app.services.escalation_notify import deliver_escalation_notification
 router = APIRouter()
 logger = get_logger(__name__)
 PLAYGROUND_DEFAULT_ESTIMATED_COST_CENTS = 25
-_PROMPT_TEMPLATE_VAR_PATTERN = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_\-\.]*)\s*\}\}")
 
 
 def _is_prod_environment(environment: str) -> bool:
@@ -88,20 +93,11 @@ def _prompt_registry_item_response(item: PromptRegistryItem) -> PromptRegistryIt
 
 
 def _extract_prompt_template_variables(prompt_text: str) -> list[str]:
-    return sorted({match.group(1).strip() for match in _PROMPT_TEMPLATE_VAR_PATTERN.finditer(prompt_text or "")})
+    return extract_prompt_template_variables(prompt_text)
 
 
 def _render_prompt_template(prompt_text: str, variables: dict[str, str]) -> str:
-    if "{{" in prompt_text and "}}" not in prompt_text:
-        raise HTTPException(status_code=422, detail="Prompt template has unmatched opening braces.")
-    if "}}" in prompt_text and "{{" not in prompt_text:
-        raise HTTPException(status_code=422, detail="Prompt template has unmatched closing braces.")
-
-    def _replace(match: re.Match[str]) -> str:
-        key = match.group(1).strip()
-        return str(variables.get(key, ""))
-
-    return _PROMPT_TEMPLATE_VAR_PATTERN.sub(_replace, prompt_text)
+    return render_prompt_template_variables(prompt_text, variables, require_matched_braces=True)
 
 
 def _extract_provider_id_from_model_name(model_name: str) -> str:
@@ -1043,26 +1039,41 @@ def create_prompt_registry_item(
 
 
 @router.get("/playground/prompts", response_model=list[PromptRegistryItemResponse])
+@router.get("/v1/prompts", response_model=list[PromptRegistryItemResponse], include_in_schema=True)
 def list_prompt_registry_items(
     db: Session = Depends(get_db),
     ctx: ActorContext = Depends(get_actor_context),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    q: Optional[str] = Query(default=None, max_length=128),
 ):
+    """Portkey-style prompt list (alias of playground registry)."""
     require_role(ctx, ROLES_PLAYGROUND_READ)
     query = db.query(PromptRegistryItem).order_by(PromptRegistryItem.updated_at.desc())
     if ctx.actor_role == ROLE_AGENT_OWNER:
         query = query.filter_by(created_by=ctx.actor_id)
+    search = str(q or "").strip()
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                PromptRegistryItem.name.ilike(like),
+                PromptRegistryItem.description.ilike(like),
+                PromptRegistryItem.labels.ilike(like),
+            )
+        )
     items = query.offset(offset).limit(limit).all()
     return [_prompt_registry_item_response(item) for item in items]
 
 
 @router.get("/playground/prompts/{prompt_registry_id}", response_model=PromptRegistryItemResponse)
+@router.get("/v1/prompts/{prompt_registry_id}", response_model=PromptRegistryItemResponse, include_in_schema=True)
 def get_prompt_registry_item(
     prompt_registry_id: str,
     db: Session = Depends(get_db),
     ctx: ActorContext = Depends(get_actor_context),
 ):
+    """Portkey-style prompt get (alias of playground registry)."""
     require_role(ctx, ROLES_PLAYGROUND_READ)
     item = db.query(PromptRegistryItem).filter_by(prompt_registry_id=prompt_registry_id).first()
     if not item:
@@ -1148,13 +1159,33 @@ def delete_prompt_registry_item(
     return _prompt_registry_item_response(item)
 
 
+def _require_prompt_registry_read_access(
+    db: Session,
+    ctx: ActorContext,
+    prompt_registry_id: str,
+) -> PromptRegistryItem:
+    item = db.query(PromptRegistryItem).filter_by(prompt_registry_id=prompt_registry_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Prompt registry item not found")
+    if ctx.actor_role == ROLE_AGENT_OWNER and item.created_by != ctx.actor_id:
+        raise HTTPException(status_code=403, detail="Agent Owner can only access own prompt registry items.")
+    return item
+
+
 @router.get("/playground/prompts/{prompt_registry_id}/versions", response_model=list[PromptRegistryVersionResponse])
+@router.get(
+    "/v1/prompts/{prompt_registry_id}/versions",
+    response_model=list[PromptRegistryVersionResponse],
+    include_in_schema=True,
+)
 def list_prompt_registry_versions(
     prompt_registry_id: str,
     db: Session = Depends(get_db),
     ctx: ActorContext = Depends(get_actor_context),
 ):
+    """Portkey-style prompt version history (alias of playground registry)."""
     require_role(ctx, ROLES_PLAYGROUND_READ)
+    _require_prompt_registry_read_access(db, ctx, prompt_registry_id)
     versions = (
         db.query(PromptRegistryVersion)
         .filter_by(prompt_registry_id=prompt_registry_id)
@@ -1162,6 +1193,34 @@ def list_prompt_registry_versions(
         .all()
     )
     return versions
+
+
+@router.get(
+    "/playground/prompts/{prompt_registry_id}/versions/{version}",
+    response_model=PromptRegistryVersionResponse,
+)
+@router.get(
+    "/v1/prompts/{prompt_registry_id}/versions/{version}",
+    response_model=PromptRegistryVersionResponse,
+    include_in_schema=True,
+)
+def get_prompt_registry_version(
+    prompt_registry_id: str,
+    version: int,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    """Portkey-style prompt version get (alias of playground registry)."""
+    require_role(ctx, ROLES_PLAYGROUND_READ)
+    _require_prompt_registry_read_access(db, ctx, prompt_registry_id)
+    row = (
+        db.query(PromptRegistryVersion)
+        .filter_by(prompt_registry_id=prompt_registry_id, version=int(version))
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Prompt registry version not found")
+    return row
 
 
 @router.post("/playground/prompts/{prompt_registry_id}/rollback", response_model=PromptRegistryItemResponse)
@@ -1212,13 +1271,88 @@ def rollback_prompt_registry_item(
     return _prompt_registry_item_response(item)
 
 
+def _sanitize_prompt_render_variables(raw_variables: Optional[dict[str, str]]) -> dict[str, str]:
+    return sanitize_prompt_template_variables(raw_variables)
+
+
+@router.post("/playground/prompts/{prompt_registry_id}/render", response_model=PromptRegistryRenderResponse)
+@router.post("/v1/prompts/{prompt_registry_id}/render", response_model=PromptRegistryRenderResponse, include_in_schema=True)
+def render_prompt_registry_item(
+    prompt_registry_id: str,
+    payload: PromptRegistryRenderRequest,
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    """Portkey-style prompt render/preview (no version bump, no promote)."""
+    require_role(ctx, ROLES_PLAYGROUND_READ)
+    item = db.query(PromptRegistryItem).filter_by(prompt_registry_id=prompt_registry_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Prompt registry item not found")
+    if ctx.actor_role == ROLE_AGENT_OWNER and item.created_by != ctx.actor_id:
+        raise HTTPException(status_code=403, detail="Agent Owner can only render own prompt registry items.")
+
+    prompt_text = item.prompt_text
+    version = int(item.latest_version or 1)
+    if payload.version is not None:
+        version_row = (
+            db.query(PromptRegistryVersion)
+            .filter_by(prompt_registry_id=prompt_registry_id, version=int(payload.version))
+            .first()
+        )
+        if not version_row:
+            raise HTTPException(status_code=404, detail=f"Prompt version {payload.version} not found")
+        prompt_text = version_row.prompt_text
+        version = int(version_row.version)
+
+    provided_variables = _sanitize_prompt_render_variables(payload.variables)
+    detected_variables = _extract_prompt_template_variables(prompt_text)
+    missing_variables = [key for key in detected_variables if key not in provided_variables]
+    if payload.require_all_variables and missing_variables:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "PROMPT_RENDER_VALIDATION_FAILED",
+                "message": "Prompt render blocked by missing template variables.",
+                "missing_variables": missing_variables,
+                "remediation_hint": "Provide values for all template variables or set require_all_variables=false.",
+            },
+        )
+
+    rendered = _render_prompt_template(prompt_text, provided_variables)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="playground.prompt_registry.render",
+        resource_type="prompt_registry_item",
+        resource_id=prompt_registry_id,
+        trace_id=f"trace-prompt-render-{prompt_registry_id}",
+    )
+    db.commit()
+    return PromptRegistryRenderResponse(
+        prompt_registry_id=prompt_registry_id,
+        name=item.name,
+        version=version,
+        prompt_text=prompt_text,
+        rendered=rendered,
+        variables_detected=detected_variables,
+        missing_variables=missing_variables,
+        variables_applied=provided_variables,
+    )
+
+
 @router.post("/playground/prompts/{prompt_registry_id}/promote", response_model=PromptRegistryPromoteResponse)
+@router.post(
+    "/v1/prompts/{prompt_registry_id}/promote",
+    response_model=PromptRegistryPromoteResponse,
+    include_in_schema=True,
+)
 def promote_prompt_registry_item(
     prompt_registry_id: str,
     payload: PromptRegistryPromoteRequest,
     db: Session = Depends(get_db),
     ctx: ActorContext = Depends(get_actor_context),
 ):
+    """Portkey-style prompt promote (alias of playground promote; prod requires dual approval)."""
     require_role(ctx, ROLES_PLAYGROUND_WRITE)
     item = db.query(PromptRegistryItem).filter_by(prompt_registry_id=prompt_registry_id).first()
     if not item:

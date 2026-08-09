@@ -38,3 +38,33 @@ def test_health_includes_runtime_config_cache_field():
     assert "active_backend" in cache
     assert "configured_backend" in cache
     assert isinstance(cache["degraded"], bool)
+
+
+def test_health_includes_mfa_optional_and_token_exposure_posture():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.security import mfa_optional_posture, token_exposure_posture
+
+    posture = mfa_optional_posture()
+    assert "effective" in posture
+    assert "fail_closed_outside_allowed" in posture
+    assert isinstance(posture["allowed_environments"], list)
+
+    token = token_exposure_posture()
+    assert "effective" in token
+    assert "raw_flag_set" in token
+
+    client = TestClient(app)
+    response = client.get("/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "mfa_optional" in payload
+    assert "token_exposure" in payload
+    assert payload["mfa_optional"]["environment"]
+    assert isinstance(payload["mfa_optional"]["effective"], bool)
+    assert isinstance(payload["token_exposure"]["effective"], bool)
+    assert "transport" in payload
+    assert payload["transport"]["hsts_configured"] is True
+    assert "exception_posture" in payload
+    assert payload["exception_posture"]["auto_disable_supported"] is True

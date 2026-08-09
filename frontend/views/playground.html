@@ -1,13 +1,14 @@
 <section id="playground" class="view runtime-config-view">
   <article class="card runtime-config-hero">
     <div class="card-head">
-      <h3>Playground Console</h3>
+      <div>
+        <p class="sig-kicker">Prompt laboratory</p>
+        <h3>Studio &amp; quality</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Laboratory governed</span></p>
+      </div>
       <button id="refreshPlaygroundConsole" class="ghost" type="button">Refresh All</button>
     </div>
-    <p class="card-lead">
-      Compose and run <strong>multimodal prompts</strong>, <strong>judge candidate models</strong>, govern the <strong>prompt registry</strong>, and triage <strong>run quality</strong> from one operator surface.
-      Attach voice or video, compare model outputs, promote registry versions, and escalate low-quality runs.
-    </p>
+    <p class="card-lead">Run prompts, judge models, and triage quality.</p>
     <p id="playgroundConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading playground inventory…</p>
     <div class="view-page-search-toolbar" data-view-search-toolbar>
       <div class="view-page-search-row">
@@ -22,6 +23,24 @@
       </div>
       <p class="view-page-search-status mono" aria-live="polite"></p>
     </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Runs</span>
+        <strong>Ledgered</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Registry</span>
+        <strong>Versioned</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Quality</span>
+        <strong>Triaged</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Promote</span>
+        <strong>Dual-approval</strong>
+      </div>
+    </section>
     <div class="runtime-console-tabs" role="tablist" aria-label="Playground console sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="studio">Studio</button>
@@ -33,7 +52,7 @@
   <div data-console-panel="overview" class="runtime-console-panel active">
     <article class="card">
       <div class="card-head">
-        <h4>How Playground Fits Together</h4>
+        <h4>Laboratory operating sequence</h4>
       </div>
       <div class="runtime-workflow-steps" aria-label="Recommended playground workflow">
         <div class="runtime-workflow-step">
@@ -69,19 +88,54 @@
   <div data-console-panel="studio" class="runtime-console-panel" hidden>
     <article class="card">
       <div class="card-head playground-card-head">
-        <h4>Playground Studio</h4>
+        <div>
+          <p class="sig-kicker">Run ledger</p>
+          <h4>Prompt studio</h4>
+        </div>
         <div class="inline-actions">
           <button id="runPlaygroundPrompt" class="primary" type="button">Run Prompt</button>
           <button id="judgePlaygroundPrompt" class="ghost" type="button">Judge Prompt</button>
           <button id="retryPlaygroundPrompt" class="ghost" type="button">Retry Prompt</button>
         </div>
       </div>
-      <p class="card-lead">Compose a prompt and run it through the gateway. Packaging preview shows attachments; <strong>inference</strong> calls <code>/v1/chat/completions</code> and prints the model response below.</p>
-      <p id="playgroundCredentialStatus" class="runtime-feedback mono" aria-live="polite">Credential readiness: checking gateway binding…</p>
+      <p class="help-copy" data-help-label="About prompt studio">Compose, attach media, and run via the gateway. Models are grouped by provider and tagged live / needs creds from inference readiness.</p>
+      <div class="leadership-status-compact" aria-live="polite">
+        <p id="playgroundCredentialStatus" class="runtime-feedback mono"></p>
+        <p id="playgroundLeadershipTrafficLight" class="runtime-feedback mono"></p>
+        <p id="playgroundAutoRouteMeta" class="runtime-feedback mono"></p>
+        <p id="playgroundLeadershipWarn" class="runtime-feedback mono"></p>
+        <p id="playgroundLeadershipDiagnoseStatus" class="runtime-feedback mono"></p>
+      </div>
+      <div class="chip-row" style="margin:0.25rem 0 0.5rem;flex-wrap:wrap;gap:0.4rem;">
+        <button id="runPlaygroundLeadershipDiagnose" type="button" class="ghost">Leadership diagnose</button>
+      </div>
+      <div class="form-grid" style="margin-bottom: 0.5rem;">
+        <label>
+          Provider filter
+          <select id="playgroundProviderFilter" aria-label="Filter playground models by provider">
+            <option value="" selected>All providers</option>
+          </select>
+        </label>
+        <label class="playground-retry-option" style="align-self:end;">
+          <span>
+            <input id="playgroundPreferLiveReady" name="prefer_live_ready" type="checkbox" checked />
+            Prefer live-ready vendors in model lists
+          </span>
+        </label>
+        <div class="wide-field chip-row" id="playgroundProviderChips" aria-label="Quick provider filters"></div>
+      </div>
       <form id="playgroundRunForm" class="form-grid">
         <label class="wide-field">Prompt Text<textarea name="prompt_text" rows="6" required placeholder="Describe the agent task, constraints, expected output, and safety checks.">Draft a support response for a customer escalation.</textarea></label>
-        <label>Selected Model<select name="selected_model" data-gateway-model-select data-default-model="gpt-4o-mini" required><option value="" disabled hidden selected>Load models first...</option></select></label>
-        <label class="wide-field">Candidate Models (fallback)<select name="candidate_models" data-gateway-model-select-multi data-default-models="gpt-4o-mini,gpt-4o" multiple size="4"><option value="" disabled hidden>Load models first...</option></select></label>
+        <label>Selected Model<select name="selected_model" data-gateway-model-select data-model-filter-scope="playground" data-default-model="gpt-4o-mini" required><option value="" disabled hidden selected>Load models first...</option></select></label>
+        <label class="checkbox-field"><input type="checkbox" name="auto_route" value="true" /> Complexity auto-router (override selected model)</label>
+        <label>Environment
+          <select name="environment" aria-label="Playground environment">
+            <option value="dev" selected>Dev</option>
+            <option value="staging">Staging</option>
+            <option value="prod">Prod</option>
+          </select>
+        </label>
+        <label class="wide-field">Candidate Models (fallback)<select name="candidate_models" data-gateway-model-select-multi data-model-filter-scope="playground" data-default-models="gpt-4o-mini,gpt-4o" multiple size="4"><option value="" disabled hidden>Load models first...</option></select></label>
         <label>Team IDs<input name="team_ids" placeholder="team-platform,team-support" /></label>
         <label>Group IDs<input name="group_ids" placeholder="grp-platform,grp-support" /></label>
         <label>Session ID (memory scope)<input name="session_id" placeholder="session-abc123" /></label>
@@ -120,10 +174,7 @@
           <button id="clearPlaygroundStream" class="ghost" type="button">Clear Stream</button>
         </div>
       </div>
-      <p class="card-lead">
-        Compare every model in <strong>Candidate Models</strong> against the current prompt. Each candidate runs through gateway inference;
-        results are ranked by quality score, then latency. Use <strong>Retry</strong> to re-run with the winning model.
-      </p>
+      <p class="card-lead">Rank candidate models by quality, then latency.</p>
       <details class="playground-judge-help">
         <summary>How judging works</summary>
         <ol class="playground-judge-steps">
@@ -318,16 +369,28 @@
             <option value="false">false</option>
           </select>
         </label>
+        <label>Approver Role (required for prod)
+          <select name="approver_role">
+            <option value="">—</option>
+            <option value="Security Approver">Security Approver</option>
+            <option value="Platform Admin">Platform Admin</option>
+            <option value="AI Ops Approver">AI Ops Approver</option>
+          </select>
+        </label>
+        <label>Approver ID (required for prod)<input name="approver_id" placeholder="security-approver-1" autocomplete="off" /></label>
         <label class="wide-field">Render Variables (one per line as <code>key=value</code>)
           <textarea name="render_variables" rows="4" placeholder="ticket_id=INC-42&#10;customer_tier=gold"></textarea>
         </label>
         <div class="inline-actions">
+          <button id="renderPromptRegistryItem" type="button" class="ghost">Render Prompt</button>
           <button id="previewPromptRegistryPromotion" type="button" class="ghost">Preview Promotion</button>
           <button type="submit" class="primary">Promote Prompt</button>
         </div>
       </form>
       <p id="promptRegistryResult" class="mono"></p>
       <p id="promptRegistryPromotionResult" class="mono"></p>
+      <pre id="promptRegistryRenderPayload" class="mono"></pre>
+      <pre id="promptRegistryVersionPayload" class="mono" aria-live="polite"></pre>
       <div class="table-wrap">
         <table>
           <caption class="sr-only">Prompt registry items</caption>

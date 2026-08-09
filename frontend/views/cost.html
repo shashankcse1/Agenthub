@@ -2,10 +2,11 @@
   <article class="card runtime-config-hero cost-console-hero">
     <div class="card-head cost-console-head">
       <div>
-        <h3>Cost Console</h3>
-        <p class="card-lead cost-console-lead">
-          Monitor spend telemetry, configure model pricing, enforce budget policies, and drill into session-level cost events.
-        </p>
+        <p class="sig-kicker">Spend ledger</p>
+        <h3>Cost governance</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Spend governed</span></p>
+        <p class="card-lead">Ledger spend, budgets, pricing, and session cost attestation.</p>
+        <p class="help-copy" data-help-label="About cost governance">Ledger inference spend, enforce budget posture, price models, and attest session-level cost events on the governance plane.</p>
       </div>
       <div class="inline-actions cost-console-toolbar">
         <label class="cost-workspace-label">
@@ -35,6 +36,24 @@
       </div>
       <p id="costConsoleSearchStatus" class="view-page-search-status mono" aria-live="polite"></p>
     </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Plane</span>
+        <strong>Ledgered</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Budgets</span>
+        <strong>Enforced</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Anomalies</span>
+        <strong>Reviewed</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Scope</span>
+        <strong>Attested</strong>
+      </div>
+    </section>
     <div class="runtime-console-tabs" role="tablist" aria-label="Cost console sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-console-tab="overview">Overview</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-console-tab="telemetry">Telemetry</button>
@@ -47,34 +66,84 @@
   <div data-console-panel="overview" class="runtime-console-panel active">
     <div class="card-grid compact cost-overview-metrics">
       <article class="card metric">
-        <h4>Spend (1h)</h4>
+        <h4>Ledgered spend · 1h</h4>
         <p class="metric-value" id="costOverviewHour">--</p>
       </article>
       <article class="card metric">
-        <h4>Spend (24h)</h4>
+        <h4>Ledgered spend · 24h</h4>
         <p class="metric-value" id="costOverviewDay">--</p>
       </article>
       <article class="card metric">
-        <h4>Events (24h)</h4>
+        <h4>Cost events · 24h</h4>
         <p class="metric-value" id="costOverviewEvents">--</p>
       </article>
       <article class="card metric">
-        <h4>Gateway Est.</h4>
+        <h4>Plane estimate</h4>
         <p class="metric-value" id="costOverviewGateway">--</p>
       </article>
       <article class="card metric">
-        <h4>Budget Policies</h4>
+        <h4>Budget policies</h4>
         <p class="metric-value" id="costOverviewBudgets">--</p>
       </article>
       <article class="card metric">
-        <h4>Anomalies</h4>
+        <h4>Ledger anomalies</h4>
         <p class="metric-value" id="costOverviewAnomalies">--</p>
+      </article>
+      <article class="card metric">
+        <h4>Scope alerts</h4>
+        <p class="metric-value" id="costOverviewHierarchyAlerts">--</p>
       </article>
     </div>
 
     <article class="card">
       <div class="card-head">
-        <h4>How Cost Governance Fits Together</h4>
+        <h4>Hierarchy Budget Alerts</h4>
+        <div class="inline-actions">
+          <button type="button" class="ghost" id="refreshCostHierarchyAlerts">Refresh</button>
+          <button type="button" class="chip" data-cost-budget-jump="hierarchy">Open Budgets Hierarchy</button>
+        </div>
+      </div>
+      <p class="muted">Soft and hard budget alerts across the current actor’s user/team/group hierarchy (membership rollups). Defaults to each policy’s budget window.</p>
+      <form id="costOverviewHierarchyAlertsForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>
+          Window mode
+          <select name="window_mode">
+            <option value="budget" selected>budget (policy window)</option>
+            <option value="hours">hours (trailing)</option>
+          </select>
+        </label>
+        <label>
+          Environment
+          <select name="environment">
+            <option value="">all environments</option>
+            <option value="dev">dev</option>
+            <option value="staging">staging</option>
+            <option value="prod">prod</option>
+          </select>
+        </label>
+        <button type="submit" class="primary">Refresh Alerts</button>
+      </form>
+      <div class="chip-row cost-overview-alert-filters" id="costOverviewAlertFilters" aria-label="Filter hierarchy alerts by decision">
+        <button type="button" class="chip is-active" data-cost-overview-alert-filter="all">All</button>
+        <button type="button" class="chip" data-cost-overview-alert-filter="deny">Blocking</button>
+        <button type="button" class="chip" data-cost-overview-alert-filter="warn">Soft alert</button>
+      </div>
+      <p id="costOverviewHierarchyAlertStatus" class="runtime-feedback mono" aria-live="polite"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Hierarchy budget alerts</caption>
+          <thead>
+            <tr><th>Scope</th><th>Decision</th><th>Severity</th><th>Spend</th><th>Hours $</th><th>Util %</th><th>Effective</th><th>Action</th><th>Window</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="costOverviewHierarchyAlertsTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h4>Spend governance sequence</h4>
       </div>
       <div class="runtime-workflow-steps" aria-label="Recommended cost governance workflow">
         <div class="runtime-workflow-step">
@@ -87,17 +156,18 @@
         </div>
         <div class="runtime-workflow-step">
           <strong>3. Enforce budgets</strong>
-          <span>Create budget policies, evaluate limits, and track spend events by scope.</span>
+          <span>Create budget policies (user/team/group aliases, session caps, RPM/TPM), evaluate limits, and review hierarchy rollups.</span>
         </div>
         <div class="runtime-workflow-step">
           <strong>4. Investigate anomalies</strong>
-          <span>Drill into session and agent cost events when anomalies or soft limits trigger.</span>
+          <span>Review soft/hard scope alerts, explain top contributors, then drill into session and agent cost events.</span>
         </div>
       </div>
       <div class="chip-row" aria-label="Jump to cost workspaces">
         <button type="button" class="chip" data-console-tab-jump="telemetry">Spend Telemetry</button>
         <button type="button" class="chip" data-console-tab-jump="pricing">Pricing &amp; Models</button>
         <button type="button" class="chip" data-console-tab-jump="budgets">Budget Policies</button>
+        <button type="button" class="chip" data-cost-budget-jump="hierarchy">Spend Hierarchy</button>
         <button type="button" class="chip" data-console-tab-jump="drilldown">Cost Drilldown</button>
       </div>
     </article>
@@ -113,6 +183,12 @@
             <option value="group">Group</option>
             <option value="team">Team</option>
             <option value="request_tag">Request Tag</option>
+            <option value="cache_hit">Cache hit / miss</option>
+            <option value="session_path">Session path</option>
+            <option value="has_feedback">Has feedback</option>
+            <option value="rating">Feedback rating</option>
+            <option value="user_id">Helicone user id</option>
+            <option value="scores">Feedback scores</option>
           </select>
           <label class="inline-label" for="costSpendBreakdownRange">Range</label>
           <select id="costSpendBreakdownRange" aria-label="Spend range">
@@ -174,7 +250,7 @@
 
     <article class="card">
       <div class="card-head">
-        <h3>Gateway Analytics</h3>
+        <h3>Gateway spend analytics</h3>
         <button id="loadGatewayAnalytics" class="ghost" type="button">Refresh</button>
       </div>
       <form id="gatewayAnalyticsFilters" class="form-grid compact">
@@ -210,6 +286,78 @@
         <div class="chip">Avg Output Tokens: <span id="gatewayAvgOutput">--</span></div>
         <div class="chip">Window: <span id="gatewayWindowHours">--</span></div>
       </div>
+      <div class="card-grid compact">
+        <div class="chip">On-plane %: <span id="gatewayOnPlaneCoverage">--</span></div>
+        <div class="chip">On-plane events: <span id="gatewayOnPlaneEvents">--</span></div>
+        <div class="chip">Off-plane detected: <span id="gatewayOffPlaneDetected">--</span></div>
+      </div>
+      <div class="card-head" style="margin-top:1rem">
+        <h5>QBR numbers-first</h5>
+        <button id="loadLeadershipQbrSnapshot" class="ghost" type="button">Load QBR snapshot</button>
+      </div>
+      <p id="leadershipQbrResult" class="runtime-feedback mono"></p>
+      <div class="card-grid compact" aria-label="Leader Readiness QBR chips">
+        <div class="chip">Prod NHI zero-ok: <span id="qbrProdUnmanagedOk">--</span></div>
+        <div class="chip">Break-glass active: <span id="qbrBreakGlass">--</span></div>
+        <div class="chip">RT drills 90d: <span id="qbrRtFresh">--</span></div>
+        <div class="chip">Tabletop 180d: <span id="qbrTabletopFresh">--</span></div>
+        <div class="chip">Leader claim: <span id="qbrLeaderClaim">--</span></div>
+        <div class="chip">LRS: <span id="qbrLrsScore">--</span></div>
+        <div class="chip">LRS sustain: <span id="qbrLrsSustain">--</span></div>
+        <div class="chip">Unified: <span id="qbrUnifiedReady">--</span></div>
+        <div class="chip">CPLI: <span id="qbrCpliScore">--</span></div>
+        <div class="chip">CPLI eng ready: <span id="qbrCpliEngReady">--</span></div>
+        <div class="chip">CP release gate: <span id="qbrCpliGate">--</span></div>
+        <div class="chip">CP gate CI: <span id="qbrCpliGateCi">--</span></div>
+        <div class="chip">CP promotion: <span id="qbrCpliPromotion">--</span></div>
+        <div class="chip">CP ready: <span id="qbrCpliReady">--</span></div>
+        <div class="chip">CP contract: <span id="qbrCpliContract">--</span></div>
+        <div class="chip">CP LKG: <span id="qbrCpliLkg">--</span></div>
+        <div class="chip">CP readonly: <span id="qbrCpliReadonly">--</span></div>
+      </div>
+      <div class="card-head" style="margin-top:1rem">
+        <h5>Drill-run attestation</h5>
+        <button id="loadLeadershipDrillRuns" class="ghost" type="button">Load drill runs</button>
+      </div>
+      <p class="mono">Record completed recovery drills (`POST /gateway/governance/drill-runs`) so QBR freshness chips stay honest.</p>
+      <form id="leadershipDrillRunForm" class="form-grid">
+        <label>Drill ID
+          <select name="drill_id" required>
+            <option value="RT-01">RT-01</option>
+            <option value="RT-02">RT-02</option>
+            <option value="Clock-01">Clock-01</option>
+            <option value="Clock-02">Clock-02</option>
+            <option value="Tabletop">Tabletop</option>
+          </select>
+        </label>
+        <label>Performed on<input name="performed_on" type="date" required /></label>
+        <label>Duration (seconds)<input name="duration_seconds" type="number" min="0" max="86400" step="1" placeholder="optional" /></label>
+        <label>Outcome
+          <select name="outcome">
+            <option value="pass" selected>pass</option>
+            <option value="fail">fail</option>
+            <option value="partial">partial</option>
+          </select>
+        </label>
+        <label>Evidence ref<input name="evidence_ref" placeholder="ticket or URL" /></label>
+        <label class="wide-field">Notes<textarea name="notes" rows="2" placeholder="What was exercised and observed"></textarea></label>
+        <button type="submit" class="ghost">Record drill run</button>
+      </form>
+      <form id="leadershipDrillRunFilters" class="form-grid">
+        <label>Filter drill ID<input name="drill_id" placeholder="RT-01" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+        <button type="submit" class="ghost">Apply Filters</button>
+      </form>
+      <p id="leadershipDrillRunsResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Leadership drill run attestations</caption>
+          <thead>
+            <tr><th>Run ID</th><th>Drill</th><th>Performed</th><th>Outcome</th><th>Duration</th><th>Recorded by</th><th>Evidence</th></tr>
+          </thead>
+          <tbody id="leadershipDrillRunsTable"></tbody>
+        </table>
+      </div>
       <div class="table-wrap">
         <table>
           <caption class="sr-only">Top gateway models by event volume and cost</caption>
@@ -232,9 +380,10 @@
 
     <article id="costTimeseriesPanel" class="card cost-timeseries-card">
       <div class="card-head">
-        <h4>Spend timeseries</h4>
+        <h4>Spend ledger series</h4>
         <button id="loadCostTimeseries" class="ghost" type="button">Load</button>
       </div>
+      <p class="muted">User/team/group dimensions include membership hierarchy rollup (member <code>user:</code>/<code>actor:</code> spend rolls into directory teams and groups).</p>
       <form id="costTimeseriesForm" class="form-grid compact">
         <label>
           Dimension
@@ -244,12 +393,23 @@
             <option value="team">Team</option>
             <option value="group">Group</option>
             <option value="request_tag">Request tag</option>
+            <option value="cache_hit">Cache hit / miss</option>
+            <option value="session_path">Session path</option>
+            <option value="has_feedback">Has feedback</option>
+            <option value="rating">Feedback rating</option>
+            <option value="user_id">Helicone user id</option>
+            <option value="scores">Feedback scores</option>
           </select>
         </label>
         <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
         <label>Scope filter<input name="scope_filter" placeholder="optional label filter" /></label>
+        <label>Export property key<input name="property_key" maxlength="64" placeholder="team (optional CSV column)" /></label>
+        <label>Export property value<input name="property_value" maxlength="256" placeholder="optional contains filter" /></label>
       </form>
-      <p id="costTimeseriesSummary" class="mono" aria-live="polite">Load hourly spend timeseries for the selected window.</p>
+      <div class="inline-actions" style="margin: 0.5rem 0 0.75rem">
+        <button id="exportCostEventsCsv" class="ghost" type="button">Export CSV</button>
+      </div>
+      <p id="costTimeseriesSummary" class="mono" aria-live="polite">Load hourly spend ledger series for the selected window.</p>
       <div id="costTimeseriesChart" class="spend-breakdown-chart" role="img" aria-label="Cost telemetry hourly spend chart"></div>
       <div class="table-wrap">
         <table>
@@ -267,6 +427,7 @@
         <h4>Scope breakdown</h4>
         <button id="loadCostScopeBreakdown" class="ghost" type="button">Load</button>
       </div>
+      <p class="muted">Team/group breakdowns roll up member spend the same way budget hierarchy evaluation does.</p>
       <form id="costScopeBreakdownForm" class="form-grid compact">
         <label>
           Dimension
@@ -276,6 +437,12 @@
             <option value="team">Team</option>
             <option value="group">Group</option>
             <option value="request_tag">Request tag</option>
+            <option value="cache_hit">Cache hit / miss</option>
+            <option value="session_path">Session path</option>
+            <option value="has_feedback">Has feedback</option>
+            <option value="rating">Feedback rating</option>
+            <option value="user_id">Helicone user id</option>
+            <option value="scores">Feedback scores</option>
           </select>
         </label>
         <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
@@ -302,8 +469,8 @@
           Section
           <select id="costPricingSectionSelect" aria-label="Pricing workspace section">
             <option value="config">Configuration Shortcuts</option>
-            <option value="calculator">Pricing Calculator</option>
-            <option value="models">Model Intelligence</option>
+            <option value="calculator">Rate worksheet</option>
+            <option value="models">Model rate intelligence</option>
           </select>
         </label>
       </div>
@@ -344,7 +511,7 @@
     <div data-cost-pricing-section="calculator" class="cost-pricing-section" hidden>
       <article class="card">
         <div class="card-head">
-          <h3>Pricing Calculator</h3>
+          <h3>Rate worksheet</h3>
           <div class="inline-actions">
             <button id="loadCostPricingCatalog" class="ghost" type="button">Load Catalog</button>
             <button id="populateCostCalculatorFromCatalog" class="ghost" type="button">Use Catalog Defaults</button>
@@ -387,7 +554,7 @@
     <div data-cost-pricing-section="models" class="cost-pricing-section" hidden>
       <article class="card">
         <div class="card-head">
-          <h3>Model Intelligence</h3>
+          <h3>Model rate intelligence</h3>
           <button id="loadCostModelCatalog" class="ghost" type="button">Load Model Catalog</button>
         </div>
         <p class="field-help">Rank supported models by effective pricing, provider multipliers, discount posture, and context window capacity.</p>
@@ -415,6 +582,8 @@
             <option value="track">Spend Tracking</option>
             <option value="policies">Budget Policies</option>
             <option value="evaluate">Policy Evaluation</option>
+            <option value="hierarchy">Spend Hierarchy</option>
+            <option value="anomalies">Anomalies</option>
           </select>
         </label>
       </div>
@@ -475,7 +644,208 @@
           <label>Currency<input name="currency" value="USD" required /></label>
           <button type="submit" class="primary">Track Spend Event</button>
         </form>
+        <p class="muted"><code>actor</code>/<code>owner</code> scopes normalize to <code>user:{id}</code> attribution tags so hierarchy and analytics stay aligned with gateway inference.</p>
         <p id="costSpendTrackResult" class="runtime-feedback mono"></p>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Score Stats</h3>
+          <button id="loadCostScoreStats" class="ghost" type="button">Load Stats</button>
+        </div>
+        <p class="muted">Helicone-style structured aggregation of feedback scores (avg/min/max).</p>
+        <form id="costScoreStatsForm" class="form-grid compact">
+          <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+          <label>Score key filter<input name="score_key" placeholder="relevance" /></label>
+          <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+          <button type="submit" class="primary">Load</button>
+        </form>
+        <p id="costScoreStatsResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Feedback score statistics</caption>
+            <thead>
+              <tr><th>Key</th><th>Count</th><th>Avg</th><th>Min</th><th>Max</th><th>Spend (cents)</th></tr>
+            </thead>
+            <tbody id="costScoreStatsTable"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Score ledger series</h3>
+          <button id="loadCostScoreTimeseries" class="ghost" type="button">Load Series</button>
+        </div>
+        <p class="muted">Helicone-style hourly quality charts for top feedback score keys.</p>
+        <form id="costScoreTimeseriesForm" class="form-grid compact">
+          <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+          <label>Score key filter<input name="score_key" placeholder="optional contains" /></label>
+          <label>Top keys<input name="top_keys" type="number" min="1" max="20" step="1" value="8" /></label>
+          <button type="submit" class="primary">Load</button>
+        </form>
+        <p id="costScoreTimeseriesResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Feedback score hourly series</caption>
+            <thead>
+              <tr><th>Key</th><th>Hour</th><th>Count</th><th>Avg</th><th>Spend (cents)</th></tr>
+            </thead>
+            <tbody id="costScoreTimeseriesTable"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Latency ledger series</h3>
+          <button id="loadCostLatencyTimeseries" class="ghost" type="button">Load Series</button>
+        </div>
+        <p class="muted">Helicone-style hourly latency (avg/p95) from cost event `latency_ms` properties.</p>
+        <form id="costLatencyTimeseriesForm" class="form-grid compact">
+          <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+          <label>Model filter<input name="model_filter" maxlength="128" placeholder="optional contains" /></label>
+          <label>Top models<input name="top_models" type="number" min="1" max="20" step="1" value="8" /></label>
+          <button type="submit" class="primary">Load</button>
+        </form>
+        <p id="costLatencyTimeseriesResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Model hourly latency</caption>
+            <thead>
+              <tr><th>Model</th><th>Hour</th><th>Count</th><th>Avg ms</th><th>P95 ms</th><th>Spend</th></tr>
+            </thead>
+            <tbody id="costLatencyTimeseriesTable"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Cache-hit ledger series</h3>
+          <button id="loadCostCacheTimeseries" class="ghost" type="button">Load Series</button>
+        </div>
+        <p class="muted">Helicone-style hourly cache hit-rate from cost event `cache_hit`.</p>
+        <form id="costCacheTimeseriesForm" class="form-grid compact">
+          <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+          <label>Model filter<input name="model_filter" maxlength="128" placeholder="optional contains" /></label>
+          <label>Top models<input name="top_models" type="number" min="1" max="20" step="1" value="8" /></label>
+          <button type="submit" class="primary">Load</button>
+        </form>
+        <p id="costCacheTimeseriesResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Model hourly cache hit rate</caption>
+            <thead>
+              <tr><th>Model</th><th>Hour</th><th>Hits</th><th>Misses</th><th>Hit rate</th><th>Spend</th></tr>
+            </thead>
+            <tbody id="costCacheTimeseriesTable"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Rating ledger series</h3>
+          <button id="loadCostRatingTimeseries" class="ghost" type="button">Load Series</button>
+        </div>
+        <p class="muted">Helicone-style hourly charts for feedback ratings (1–5).</p>
+        <form id="costRatingTimeseriesForm" class="form-grid compact">
+          <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+          <label>Rating filter<input name="rating_filter" maxlength="32" placeholder="rating:5" /></label>
+          <label>Top labels<input name="top_labels" type="number" min="1" max="20" step="1" value="6" /></label>
+          <label>Include unrated
+            <select name="include_unrated">
+              <option value="false" selected>No</option>
+              <option value="true">Yes</option>
+            </select>
+          </label>
+          <button type="submit" class="primary">Load</button>
+        </form>
+        <p id="costRatingTimeseriesResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Feedback rating hourly series</caption>
+            <thead>
+              <tr><th>Rating</th><th>Hour</th><th>Count</th><th>Avg</th><th>Spend (cents)</th></tr>
+            </thead>
+            <tbody id="costRatingTimeseriesTable"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Property Stats</h3>
+          <button id="loadCostPropertyStats" class="ghost" type="button">Load Stats</button>
+        </div>
+        <p class="muted">Helicone-style aggregation of flat custom cost properties (spend + event count by value).</p>
+        <form id="costPropertyStatsForm" class="form-grid compact">
+          <label>Property key<input name="property_key" required maxlength="64" placeholder="team" value="team" /></label>
+          <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+          <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+          <button type="submit" class="primary">Load</button>
+        </form>
+        <p id="costPropertyStatsResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Custom property statistics</caption>
+            <thead>
+              <tr><th>Value</th><th>Events</th><th>Spend (cents)</th></tr>
+            </thead>
+            <tbody id="costPropertyStatsTable"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Property ledger series</h3>
+          <button id="loadCostPropertyTimeseries" class="ghost" type="button">Load Series</button>
+        </div>
+        <p class="muted">Helicone-style hourly burn for the top values of a custom cost property.</p>
+        <form id="costPropertyTimeseriesForm" class="form-grid compact">
+          <label>Property key<input name="property_key" required maxlength="64" placeholder="team" value="team" /></label>
+          <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+          <label>Value filter<input name="value_filter" maxlength="256" placeholder="optional contains" /></label>
+          <label>Top values<input name="top_values" type="number" min="1" max="20" step="1" value="8" /></label>
+          <button type="submit" class="primary">Load</button>
+        </form>
+        <p id="costPropertyTimeseriesResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Custom property hourly spend</caption>
+            <thead>
+              <tr><th>Value</th><th>Hour</th><th>Events</th><th>Spend (cents)</th></tr>
+            </thead>
+            <tbody id="costPropertyTimeseriesTable"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Request Feedback</h3>
+          <p class="muted">Helicone-style rating/scores attached to cost events by request id.</p>
+        </div>
+        <form id="costEventFeedbackForm" class="form-grid compact">
+          <label>Request ID<input name="request_id" required maxlength="128" placeholder="req-…" /></label>
+          <label>Trace ID<input name="trace_id" maxlength="128" placeholder="optional" /></label>
+          <label>
+            Rating (1–5)
+            <input name="rating" type="number" min="1" max="5" step="1" />
+          </label>
+          <label>
+            Scores JSON
+            <input name="scores_json" placeholder='{"relevance":0.9}' />
+          </label>
+          <label class="full">Comment<input name="comment" maxlength="2048" placeholder="optional" /></label>
+          <div class="inline-actions full">
+            <button type="submit" class="primary">Submit Feedback</button>
+            <button id="lookupCostEventFeedback" class="ghost" type="button">Lookup Feedback</button>
+          </div>
+        </form>
+        <p id="costEventFeedbackResult" class="runtime-feedback mono"></p>
       </article>
     </div>
 
@@ -484,10 +854,22 @@
         <div class="card-head">
           <h3>Budget Policies</h3>
           <div class="inline-actions">
+            <button id="exportCostBudgets" class="ghost" type="button">Export CSV</button>
             <button id="loadCostBudgets" class="ghost" type="button">Load Budgets</button>
-            <button id="loadCostAnomalies" class="ghost" type="button">Load Anomalies</button>
           </div>
         </div>
+        <form id="costBudgetListFilters" class="form-grid compact">
+          <label>
+            Environment
+            <select name="environment">
+              <option value="">all environments</option>
+              <option value="dev">dev</option>
+              <option value="staging">staging</option>
+              <option value="prod">prod</option>
+            </select>
+          </label>
+          <button type="submit" class="ghost">Apply Env Filter</button>
+        </form>
         <form id="costBudgetForm" class="form-grid compact">
           <label>Policy ID (for update)<input name="budget_policy_id" placeholder="budget-policy-id" /></label>
           <label>
@@ -552,21 +934,93 @@
             <button id="resetCostBudgetForm" type="button" class="ghost">Reset</button>
           </div>
         </form>
+        <p class="muted">
+          Spend/utilization on the table uses membership rollup for team/group and treats <code>user</code>/<code>actor</code>/<code>owner</code> as interchangeable person scopes.
+          Session budget and iteration caps are enforced on gateway inference when <code>session_id</code> is present. RPM/TPM bind to the policy scope rollup.
+          Decision is derived from current rollup utilization vs soft/hard thresholds.
+        </p>
+        <div class="chip-row cost-budget-filters" id="costBudgetDecisionFilters" aria-label="Filter budgets by decision">
+          <button type="button" class="chip is-active" data-cost-budget-filter="all">All</button>
+          <button type="button" class="chip" data-cost-budget-filter="deny">Blocking</button>
+          <button type="button" class="chip" data-cost-budget-filter="warn">Warn</button>
+          <button type="button" class="chip" data-cost-budget-filter="soft">Soft alert active</button>
+          <button type="button" class="chip" data-cost-budget-filter="allow">Allow</button>
+        </div>
         <p id="costBudgetResult" class="runtime-feedback mono"></p>
         <div class="table-wrap">
           <table>
             <caption class="sr-only">Created budget policies</caption>
             <thead>
-              <tr><th>Policy ID</th><th>Scope</th><th>Budget</th><th>Window</th><th>Limits</th><th>Controls</th><th>Status</th><th>Actions</th></tr>
+              <tr><th>Policy ID</th><th>Scope</th><th>Budget</th><th>Window</th><th>Spend</th><th>Hours $</th><th>Util %</th><th>Decision</th><th>Action</th><th>Limits</th><th>Controls</th><th>Status</th><th>Actions</th></tr>
             </thead>
             <tbody id="costBudgetTable"></tbody>
           </table>
         </div>
+      </article>
+    </div>
+
+    <div data-cost-budget-section="anomalies" class="cost-budget-section" hidden>
+      <article class="card">
+        <div class="card-head">
+          <h3>Budget Anomalies</h3>
+          <div class="inline-actions">
+            <button id="exportCostAnomalies" class="ghost" type="button">Export CSV</button>
+            <button id="loadCostAnomalies" class="ghost" type="button">Load Anomalies</button>
+          </div>
+        </div>
+        <p class="muted">Soft and hard threshold breaches using membership-aware rollup spend. Soft alerts respect <code>soft_alert_enabled</code>. Rows include utilization, recommended action, and policy window. Results sort critical first.</p>
+        <form id="costAnomaliesForm" class="form-grid compact">
+          <label>
+            Environment
+            <select name="environment">
+              <option value="">all environments</option>
+              <option value="dev">dev</option>
+              <option value="staging">staging</option>
+              <option value="prod">prod</option>
+            </select>
+          </label>
+          <label>
+            Severity
+            <select name="severity">
+              <option value="">all severities</option>
+              <option value="critical">critical</option>
+              <option value="high">high</option>
+              <option value="medium">medium</option>
+            </select>
+          </label>
+          <label>
+            Scope type
+            <select name="scope_type">
+              <option value="">all scopes</option>
+              <option value="user">user</option>
+              <option value="team">team</option>
+              <option value="group">group</option>
+              <option value="agent">agent</option>
+            </select>
+          </label>
+          <label>Min util %<input name="min_utilization" type="number" min="0" max="1000" step="1" placeholder="optional" /></label>
+          <button type="submit" class="primary">Load</button>
+        </form>
+        <p id="costAnomaliesResult" class="runtime-feedback mono"></p>
         <div class="table-wrap">
           <table>
             <caption class="sr-only">Cost anomalies</caption>
             <thead>
-              <tr><th>Anomaly</th><th>Type</th><th>Severity</th><th>Scope</th><th>Observed</th><th>Threshold</th><th>Detected</th></tr>
+              <tr>
+                <th>Type</th>
+                <th>Severity</th>
+                <th>Decision</th>
+                <th>Scope</th>
+                <th>Observed</th>
+                <th>Hours $</th>
+                <th>Threshold</th>
+                <th>Util %</th>
+                <th>Effective</th>
+                <th>Action</th>
+                <th>Window</th>
+                <th>Detected</th>
+                <th>Actions</th>
+              </tr>
             </thead>
             <tbody id="costAnomaliesTable"></tbody>
           </table>
@@ -605,13 +1059,31 @@
               <option value="yearly">yearly</option>
             </select>
           </label>
+          <label>
+            Environment
+            <select name="environment">
+              <option value="">all environments</option>
+              <option value="dev">dev</option>
+              <option value="staging">staging</option>
+              <option value="prod">prod</option>
+            </select>
+          </label>
           <button type="submit" class="primary">Evaluate Budget Policy</button>
         </form>
         <p id="costPolicyEvalResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Policy evaluation result</caption>
+            <thead>
+              <tr><th>Field</th><th>Value</th></tr>
+            </thead>
+            <tbody id="costPolicyEvalTable"></tbody>
+          </table>
+        </div>
         <form id="costLimitEvalForm" class="form-grid compact">
           <label>Actor ID<input name="actor_id" value="ui-operator" /></label>
-          <label>Team IDs JSON<input name="team_ids" value='["team-platform"]' /></label>
-          <label>Group IDs JSON<input name="group_ids" value='["grp-platform"]' /></label>
+          <label>Team IDs JSON<input name="team_ids" value="" placeholder='[] or omit for directory memberships' /></label>
+          <label>Group IDs JSON<input name="group_ids" value="" placeholder='[] or omit for directory memberships' /></label>
           <label>Agent IDs JSON<input name="agent_ids" value='["agent-ui"]' /></label>
           <label>
             Window
@@ -624,17 +1096,130 @@
               <option value="yearly">yearly</option>
             </select>
           </label>
+          <label>
+            Environment
+            <select name="environment">
+              <option value="">all environments</option>
+              <option value="dev">dev</option>
+              <option value="staging">staging</option>
+              <option value="prod">prod</option>
+            </select>
+          </label>
           <label>Projected Additional Cost (cents)<input name="projected_additional_cost_cents" type="number" min="0" step="1" value="120" /></label>
-          <button type="submit" class="ghost">Evaluate Aggregated Limits</button>
+          <div class="inline-actions">
+            <button type="button" class="ghost" id="costLimitUseMemberships">Use my directory memberships</button>
+            <button type="submit" class="ghost">Evaluate Aggregated Limits</button>
+          </div>
         </form>
+        <p class="muted">Empty team/group lists auto-resolve from directory memberships. Team/group budgets roll up member <code>user:</code> / <code>actor:</code> spend.</p>
         <p id="costLimitEvalResult" class="runtime-feedback mono"></p>
         <div class="table-wrap">
           <table>
             <caption class="sr-only">Aggregated limit decisions</caption>
             <thead>
-              <tr><th>Scope</th><th>Policy</th><th>Spend</th><th>Budget</th><th>Effective Budget</th><th>Utilization</th><th>Projected</th><th>Basis</th><th>Decision</th><th>Action</th><th>Soft Alert</th></tr>
+              <tr><th>Scope</th><th>Policy</th><th>Spend</th><th>Hours $</th><th>Budget</th><th>Effective Budget</th><th>Utilization</th><th>Projected</th><th>Basis</th><th>Decision</th><th>Action</th><th>Soft Alert</th><th>Actions</th></tr>
             </thead>
             <tbody id="costLimitTable"></tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+
+    <div data-cost-budget-section="hierarchy" class="cost-budget-section" hidden>
+      <article class="card">
+        <div class="card-head">
+          <h3>Spend Hierarchy</h3>
+          <div class="inline-actions">
+            <button id="exportCostHierarchy" class="ghost" type="button">Export JSON</button>
+            <button id="loadCostHierarchy" class="ghost" type="button">Load Hierarchy</button>
+          </div>
+        </div>
+        <p class="muted">
+          User spend uses CostEvent <code>owner_scope</code> (<code>user:{actor}</code>). Helicone <code>user</code> / <code>user_id</code> properties are analytics labels and are not the budget ledger key.
+          Team/group rows show membership rollups, tagged vs member spend, top contributors, budget-window spend, temporary increases, and session/rate caps.
+          Choose <strong>budget</strong> window mode to align utilization with each policy’s reset window.
+          Hours spend always reflects the trailing hours window for dual compare against budget-window spend.
+        </p>
+        <form id="costHierarchyForm" class="form-grid compact">
+          <label>Actor ID<input name="actor_id" placeholder="defaults to current actor" /></label>
+          <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+          <label>
+            Window mode
+            <select name="window_mode">
+              <option value="hours" selected>hours (trailing)</option>
+              <option value="budget">budget (policy window)</option>
+            </select>
+          </label>
+          <label>
+            Environment
+            <select name="environment">
+              <option value="">all environments</option>
+              <option value="dev">dev</option>
+              <option value="staging">staging</option>
+              <option value="prod">prod</option>
+            </select>
+          </label>
+          <label>Top members<input name="top_members" type="number" min="1" max="50" step="1" value="5" /></label>
+          <label class="checkbox-label"><input name="include_members" type="checkbox" checked /> Include member breakdown</label>
+          <button type="submit" class="primary">Load</button>
+        </form>
+        <div class="chip-row cost-hierarchy-filters" id="costHierarchyFilters" aria-label="Filter hierarchy by decision">
+          <button type="button" class="chip is-active" data-cost-hierarchy-filter="all">All</button>
+          <button type="button" class="chip" data-cost-hierarchy-filter="deny">Blocking</button>
+          <button type="button" class="chip" data-cost-hierarchy-filter="warn">Soft alert</button>
+          <button type="button" class="chip" data-cost-hierarchy-filter="allow">Allow</button>
+          <button type="button" class="chip" data-cost-hierarchy-filter="none">No budget</button>
+        </div>
+        <p id="costHierarchySoftAlert" class="runtime-feedback mono" aria-live="polite"></p>
+        <p id="costHierarchyResult" class="runtime-feedback mono"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Cost hierarchy rollups</caption>
+            <thead>
+              <tr>
+                <th>Scope</th>
+                <th>Members</th>
+                <th>Spend</th>
+                <th>Hours $</th>
+                <th>Tagged</th>
+                <th>Member spend</th>
+                <th>Budget window $</th>
+                <th>Budget</th>
+                <th>Effective</th>
+                <th>Util %</th>
+                <th>Decision</th>
+                <th>Action</th>
+                <th>Window</th>
+                <th>Temp</th>
+                <th>Session / Rate</th>
+                <th>Top members</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="costHierarchyTable"></tbody>
+          </table>
+        </div>
+        <div class="card-head" style="margin-top:1rem">
+          <h4>Hierarchy Explain</h4>
+          <button id="copyCostHierarchyExplain" class="ghost" type="button">Copy Explain JSON</button>
+        </div>
+        <p id="costHierarchyExplainResult" class="runtime-feedback mono" aria-live="polite">Select Explain on a hierarchy row to inspect rollup contributors and budget posture.</p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Hierarchy explain posture</caption>
+            <thead>
+              <tr><th>Field</th><th>Value</th></tr>
+            </thead>
+            <tbody id="costHierarchyExplainMetaTable"></tbody>
+          </table>
+        </div>
+        <div class="table-wrap" style="margin-top:0.75rem">
+          <table>
+            <caption class="sr-only">Hierarchy explain members</caption>
+            <thead>
+              <tr><th>User</th><th>Spend</th><th>Share</th></tr>
+            </thead>
+            <tbody id="costHierarchyExplainTable"></tbody>
           </table>
         </div>
       </article>
@@ -642,6 +1227,2603 @@
   </div>
 
   <div data-console-panel="drilldown" class="runtime-console-panel" hidden>
+    <article class="card">
+      <div class="card-head">
+        <h3>Sessions by Path</h3>
+        <button id="loadCostSessions" class="ghost" type="button">Load Sessions</button>
+      </div>
+      <p class="muted">Helicone-style session aggregation from cost event properties (`session_path` / `session_name`).</p>
+      <form id="costSessionsForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Path prefix<input name="path_prefix" placeholder="/chat or session id fragment" /></label>
+        <label>Property key<input name="property_key" placeholder="team or env" /></label>
+        <label>Property value<input name="property_value" placeholder="optional contains filter" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costSessionsResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cost sessions by path</caption>
+          <thead>
+            <tr><th>Session ID</th><th>Path</th><th>Name</th><th>Events</th><th>Spend (cents)</th><th>Last seen</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="costSessionsTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Session ledger series</h3>
+        <button id="loadCostSessionTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly spend for the top sessions by `session_id` / `session_path`.</p>
+      <form id="costSessionTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Path prefix<input name="path_prefix" maxlength="256" placeholder="/chat or session id fragment" /></label>
+        <label>Top sessions<input name="top_sessions" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costSessionTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Session hourly spend</caption>
+          <thead>
+            <tr><th>Session</th><th>Path</th><th>Hour</th><th>Events</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costSessionTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Users by Spend</h3>
+        <button id="loadCostUsers" class="ghost" type="button">Load Users</button>
+      </div>
+      <p class="muted">Helicone-style end-user spend from cost properties (`user` / `user_id`), falling back to gateway `owner_scope` `user:`/`actor:`/`owner:` tags when properties are empty.</p>
+      <form id="costUsersForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>User filter<input name="user_filter" placeholder="optional user id fragment" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costUsersResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cost users by spend</caption>
+          <thead>
+            <tr><th>User ID</th><th>Sessions</th><th>Events</th><th>Spend (cents)</th><th>Last seen</th></tr>
+          </thead>
+          <tbody id="costUsersTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>User ledger series</h3>
+        <button id="loadCostUserTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly spend for the top users by cost properties (`user` / `user_id`), with the same `owner_scope` fallback as Users by Spend.</p>
+      <form id="costUserTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>User filter<input name="user_filter" maxlength="128" placeholder="optional user id fragment" /></label>
+        <label>Top users<input name="top_users" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costUserTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">User hourly spend</caption>
+          <thead>
+            <tr><th>User</th><th>Hour</th><th>Sessions</th><th>Events</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costUserTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Models by Spend</h3>
+        <button id="loadCostModelStats" class="ghost" type="button">Load Models</button>
+      </div>
+      <p class="muted">Helicone-style model burn from cost events (`model_name`, tokens, spend).</p>
+      <form id="costModelStatsForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Model filter<input name="model_filter" placeholder="optional model name fragment" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costModelStatsResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cost models by spend</caption>
+          <thead>
+            <tr><th>Model</th><th>Events</th><th>Tokens</th><th>Spend (cents)</th><th>Last seen</th></tr>
+          </thead>
+          <tbody id="costModelStatsTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Model ledger series</h3>
+        <button id="loadCostModelTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for the top models by spend.</p>
+      <form id="costModelTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Model filter<input name="model_filter" maxlength="128" placeholder="optional contains" /></label>
+        <label>Top models<input name="top_models" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costModelTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Model hourly spend</caption>
+          <thead>
+            <tr><th>Model</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend (cents)</th></tr>
+          </thead>
+          <tbody id="costModelTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Request Tag ledger series</h3>
+        <button id="loadCostTagTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for the top `request_tag` values.</p>
+      <form id="costTagTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Tag filter<input name="tag_filter" maxlength="64" placeholder="optional tag fragment" /></label>
+        <label>Top tags<input name="top_tags" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costTagTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Request tag hourly spend</caption>
+          <thead>
+            <tr><th>Tag</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costTagTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Endpoint Family ledger series</h3>
+        <button id="loadCostEndpointTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `endpoint_family` values (chat, responses, embeddings, …).</p>
+      <form id="costEndpointTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Endpoint filter<input name="endpoint_filter" maxlength="128" placeholder="optional family fragment" /></label>
+        <label>Top endpoints<input name="top_endpoints" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costEndpointTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Endpoint family hourly spend</caption>
+          <thead>
+            <tr><th>Endpoint</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costEndpointTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Agent ledger series</h3>
+        <button id="loadCostAgentTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top agents by spend.</p>
+      <form id="costAgentTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Agent filter<input name="agent_filter" maxlength="64" placeholder="optional agent id fragment" /></label>
+        <label>Top agents<input name="top_agents" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costAgentTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Agent hourly spend</caption>
+          <thead>
+            <tr><th>Agent</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costAgentTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Environment ledger series</h3>
+        <button id="loadCostEnvironmentTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top environments (dev/staging/prod).</p>
+      <form id="costEnvironmentTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Environment filter<input name="environment_filter" maxlength="64" placeholder="optional env fragment" /></label>
+        <label>Top environments<input name="top_environments" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costEnvironmentTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Environment hourly spend</caption>
+          <thead>
+            <tr><th>Environment</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costEnvironmentTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Owner Scope ledger series</h3>
+        <button id="loadCostOwnerTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">
+        Helicone-style hourly burn for top <code>owner_scope</code> values.
+        Typed filters like <code>team:{id}</code>, <code>group:{id}</code>, or <code>user:{id}</code> include membership rollup aliases (member spend appears under team/group filters).
+      </p>
+      <form id="costOwnerTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Owner filter<input name="owner_filter" maxlength="128" placeholder="team:acme or user:alice" /></label>
+        <label>Top owners<input name="top_owners" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costOwnerTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Owner scope hourly spend</caption>
+          <thead>
+            <tr><th>Owner</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costOwnerTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Currency ledger series</h3>
+        <button id="loadCostCurrencyTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn by currency code (USD, EUR, …).</p>
+      <form id="costCurrencyTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Currency filter<input name="currency_filter" maxlength="8" placeholder="optional currency code" /></label>
+        <label>Top currencies<input name="top_currencies" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costCurrencyTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Currency hourly spend</caption>
+          <thead>
+            <tr><th>Currency</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costCurrencyTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Provider ledger series</h3>
+        <button id="loadCostProviderTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn by inferred provider (from model name).</p>
+      <form id="costProviderTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Provider filter<input name="provider_filter" maxlength="64" placeholder="optional provider fragment" /></label>
+        <label>Top providers<input name="top_providers" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costProviderTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Provider hourly spend</caption>
+          <thead>
+            <tr><th>Provider</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costProviderTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Team ledger series</h3>
+        <button id="loadCostTeamTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Hourly burn for directory teams including member <code>user:</code>/<code>actor:</code> rollup (not only events tagged <code>team:</code>).</p>
+      <form id="costTeamTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Team filter<input name="team_filter" maxlength="128" placeholder="optional team fragment" /></label>
+        <label>Top teams<input name="top_teams" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costTeamTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Team hourly spend</caption>
+          <thead>
+            <tr><th>Team</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costTeamTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Group ledger series</h3>
+        <button id="loadCostGroupTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Hourly burn for directory groups including member <code>user:</code>/<code>actor:</code> rollup (not only events tagged <code>group:</code>).</p>
+      <form id="costGroupTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Group filter<input name="group_filter" maxlength="128" placeholder="optional group fragment" /></label>
+        <label>Top groups<input name="top_groups" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costGroupTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Group hourly spend</caption>
+          <thead>
+            <tr><th>Group</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costGroupTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Project ledger series</h3>
+        <button id="loadCostProjectTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn by project property (`project` / `Helicone-Project-Id`).</p>
+      <form id="costProjectTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Project filter<input name="project_filter" maxlength="128" placeholder="optional project fragment" /></label>
+        <label>Top projects<input name="top_projects" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costProjectTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Project hourly spend</caption>
+          <thead>
+            <tr><th>Project</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costProjectTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Feedback ledger series</h3>
+        <button id="loadCostFeedbackTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for feedback presence (`has_feedback` / `no_feedback`).</p>
+      <form id="costFeedbackTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Feedback filter<input name="feedback_filter" maxlength="32" placeholder="has_feedback | no_feedback" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costFeedbackTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Feedback hourly spend</caption>
+          <thead>
+            <tr><th>State</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costFeedbackTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Session Path ledger series</h3>
+        <button id="loadCostSessionPathTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `session_path` property values.</p>
+      <form id="costSessionPathTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Path filter<input name="path_filter" maxlength="128" placeholder="optional path fragment" /></label>
+        <label>Top paths<input name="top_paths" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costSessionPathTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Session path hourly spend</caption>
+          <thead>
+            <tr><th>Path</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costSessionPathTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Session Name ledger series</h3>
+        <button id="loadCostSessionNameTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `session_name` property values.</p>
+      <form id="costSessionNameTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Name filter<input name="name_filter" maxlength="128" placeholder="optional name fragment" /></label>
+        <label>Top names<input name="top_names" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costSessionNameTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Session name hourly spend</caption>
+          <thead>
+            <tr><th>Name</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costSessionNameTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Prompt ID ledger series</h3>
+        <button id="loadCostPromptIdTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone/Portkey-style hourly burn for top `prompt_id` / `prompt_registry_id` property values.</p>
+      <form id="costPromptIdTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Prompt filter<input name="prompt_filter" maxlength="128" placeholder="optional prompt id fragment" /></label>
+        <label>Top prompts<input name="top_prompts" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costPromptIdTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Prompt id hourly spend</caption>
+          <thead>
+            <tr><th>Prompt</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costPromptIdTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Application ledger series</h3>
+        <button id="loadCostApplicationTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `application` / `app` / `app_name` property values.</p>
+      <form id="costApplicationTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Application filter<input name="application_filter" maxlength="128" placeholder="optional app fragment" /></label>
+        <label>Top apps<input name="top_applications" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costApplicationTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Application hourly spend</caption>
+          <thead>
+            <tr><th>Application</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costApplicationTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Customer ledger series</h3>
+        <button id="loadCostCustomerTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `customer_id` / `customer` / `account_id` property values.</p>
+      <form id="costCustomerTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Customer filter<input name="customer_filter" maxlength="128" placeholder="optional customer fragment" /></label>
+        <label>Top customers<input name="top_customers" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costCustomerTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Customer hourly spend</caption>
+          <thead>
+            <tr><th>Customer</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costCustomerTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Department ledger series</h3>
+        <button id="loadCostDepartmentTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `department` / `dept` / `cost_center` property values.</p>
+      <form id="costDepartmentTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Department filter<input name="department_filter" maxlength="128" placeholder="optional department fragment" /></label>
+        <label>Top departments<input name="top_departments" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costDepartmentTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Department hourly spend</caption>
+          <thead>
+            <tr><th>Department</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costDepartmentTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Feature ledger series</h3>
+        <button id="loadCostFeatureTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `feature` / `feature_flag` / `feature_name` property values.</p>
+      <form id="costFeatureTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Feature filter<input name="feature_filter" maxlength="128" placeholder="optional feature fragment" /></label>
+        <label>Top features<input name="top_features" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costFeatureTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Feature hourly spend</caption>
+          <thead>
+            <tr><th>Feature</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costFeatureTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Region ledger series</h3>
+        <button id="loadCostRegionTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `region` / `aws_region` / `country` / `geo` property values.</p>
+      <form id="costRegionTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Region filter<input name="region_filter" maxlength="128" placeholder="optional region fragment" /></label>
+        <label>Top regions<input name="top_regions" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costRegionTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Region hourly spend</caption>
+          <thead>
+            <tr><th>Region</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costRegionTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Workspace ledger series</h3>
+        <button id="loadCostWorkspaceTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `workspace` / `workspace_id` / `org` property values.</p>
+      <form id="costWorkspaceTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Workspace filter<input name="workspace_filter" maxlength="128" placeholder="optional workspace fragment" /></label>
+        <label>Top workspaces<input name="top_workspaces" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costWorkspaceTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Workspace hourly spend</caption>
+          <thead>
+            <tr><th>Workspace</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costWorkspaceTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Product ledger series</h3>
+        <button id="loadCostProductTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `product` / `product_id` / `sku` property values.</p>
+      <form id="costProductTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Product filter<input name="product_filter" maxlength="128" placeholder="optional product fragment" /></label>
+        <label>Top products<input name="top_products" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costProductTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Product hourly spend</caption>
+          <thead>
+            <tr><th>Product</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costProductTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Service ledger series</h3>
+        <button id="loadCostServiceTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `service` / `service_name` / `microservice` property values.</p>
+      <form id="costServiceTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Service filter<input name="service_filter" maxlength="128" placeholder="optional service fragment" /></label>
+        <label>Top services<input name="top_services" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costServiceTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Service hourly spend</caption>
+          <thead>
+            <tr><th>Service</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costServiceTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Tenant ledger series</h3>
+        <button id="loadCostTenantTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `tenant` / `tenant_id` / `account` property values.</p>
+      <form id="costTenantTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Tenant filter<input name="tenant_filter" maxlength="128" placeholder="optional tenant fragment" /></label>
+        <label>Top tenants<input name="top_tenants" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costTenantTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Tenant hourly spend</caption>
+          <thead>
+            <tr><th>Tenant</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costTenantTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Channel ledger series</h3>
+        <button id="loadCostChannelTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `channel` / `channel_id` / `utm_source` property values.</p>
+      <form id="costChannelTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Channel filter<input name="channel_filter" maxlength="128" placeholder="optional channel fragment" /></label>
+        <label>Top channels<input name="top_channels" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costChannelTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Channel hourly spend</caption>
+          <thead>
+            <tr><th>Channel</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costChannelTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Campaign ledger series</h3>
+        <button id="loadCostCampaignTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `campaign` / `campaign_id` / `utm_campaign` property values.</p>
+      <form id="costCampaignTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Campaign filter<input name="campaign_filter" maxlength="128" placeholder="optional campaign fragment" /></label>
+        <label>Top campaigns<input name="top_campaigns" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costCampaignTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Campaign hourly spend</caption>
+          <thead>
+            <tr><th>Campaign</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costCampaignTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Brand ledger series</h3>
+        <button id="loadCostBrandTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `brand` / `brand_id` / `brand_name` property values.</p>
+      <form id="costBrandTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Brand filter<input name="brand_filter" maxlength="128" placeholder="optional brand fragment" /></label>
+        <label>Top brands<input name="top_brands" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costBrandTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Brand hourly spend</caption>
+          <thead>
+            <tr><th>Brand</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costBrandTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Market ledger series</h3>
+        <button id="loadCostMarketTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `market` / `market_id` / `market_code` property values.</p>
+      <form id="costMarketTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Market filter<input name="market_filter" maxlength="128" placeholder="optional market fragment" /></label>
+        <label>Top markets<input name="top_markets" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costMarketTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Market hourly spend</caption>
+          <thead>
+            <tr><th>Market</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costMarketTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Segment ledger series</h3>
+        <button id="loadCostSegmentTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `segment` / `segment_id` / `audience` property values.</p>
+      <form id="costSegmentTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Segment filter<input name="segment_filter" maxlength="128" placeholder="optional segment fragment" /></label>
+        <label>Top segments<input name="top_segments" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costSegmentTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Segment hourly spend</caption>
+          <thead>
+            <tr><th>Segment</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costSegmentTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Account ledger series</h3>
+        <button id="loadCostAccountTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `account` / `account_id` / `account_name` property values.</p>
+      <form id="costAccountTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Account filter<input name="account_filter" maxlength="128" placeholder="optional account fragment" /></label>
+        <label>Top accounts<input name="top_accounts" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costAccountTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Account hourly spend</caption>
+          <thead>
+            <tr><th>Account</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costAccountTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Org ledger series</h3>
+        <button id="loadCostOrgTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `org` / `org_id` / `organization` property values.</p>
+      <form id="costOrgTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Org filter<input name="org_filter" maxlength="128" placeholder="optional org fragment" /></label>
+        <label>Top orgs<input name="top_orgs" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costOrgTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Org hourly spend</caption>
+          <thead>
+            <tr><th>Org</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costOrgTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Cost Center ledger series</h3>
+        <button id="loadCostCostCenterTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `cost_center` / `cost_center_id` / `charge_code` property values.</p>
+      <form id="costCostCenterTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Cost center filter<input name="cost_center_filter" maxlength="128" placeholder="optional cost center fragment" /></label>
+        <label>Top cost centers<input name="top_cost_centers" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costCostCenterTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cost center hourly spend</caption>
+          <thead>
+            <tr><th>Cost center</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costCostCenterTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Business Unit ledger series</h3>
+        <button id="loadCostBusinessUnitTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `business_unit` / `bu` / `division` property values.</p>
+      <form id="costBusinessUnitTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Business unit filter<input name="business_unit_filter" maxlength="128" placeholder="optional BU fragment" /></label>
+        <label>Top business units<input name="top_business_units" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costBusinessUnitTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Business unit hourly spend</caption>
+          <thead>
+            <tr><th>Business unit</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costBusinessUnitTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Site ledger series</h3>
+        <button id="loadCostSiteTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `site` / `site_id` / `location` property values.</p>
+      <form id="costSiteTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Site filter<input name="site_filter" maxlength="128" placeholder="optional site fragment" /></label>
+        <label>Top sites<input name="top_sites" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costSiteTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Site hourly spend</caption>
+          <thead>
+            <tr><th>Site</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costSiteTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>SKU ledger series</h3>
+        <button id="loadCostSkuTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `sku` / `sku_id` / `product_sku` property values.</p>
+      <form id="costSkuTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>SKU filter<input name="sku_filter" maxlength="128" placeholder="optional SKU fragment" /></label>
+        <label>Top SKUs<input name="top_skus" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costSkuTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">SKU hourly spend</caption>
+          <thead>
+            <tr><th>SKU</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costSkuTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Line ledger series</h3>
+        <button id="loadCostLineTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `line` / `line_of_business` / `lob` property values.</p>
+      <form id="costLineTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Line filter<input name="line_filter" maxlength="128" placeholder="optional line fragment" /></label>
+        <label>Top lines<input name="top_lines" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costLineTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Line-of-business hourly spend</caption>
+          <thead>
+            <tr><th>Line</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costLineTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Tier ledger series</h3>
+        <button id="loadCostTierTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `tier` / `plan_tier` / `pricing_tier` property values.</p>
+      <form id="costTierTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Tier filter<input name="tier_filter" maxlength="128" placeholder="optional tier fragment" /></label>
+        <label>Top tiers<input name="top_tiers" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costTierTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Tier hourly spend</caption>
+          <thead>
+            <tr><th>Tier</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costTierTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Stage ledger series</h3>
+        <button id="loadCostStageTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `stage` / `pipeline_stage` / `lifecycle_stage` property values.</p>
+      <form id="costStageTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Stage filter<input name="stage_filter" maxlength="128" placeholder="optional stage fragment" /></label>
+        <label>Top stages<input name="top_stages" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costStageTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Stage hourly spend</caption>
+          <thead>
+            <tr><th>Stage</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costStageTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Platform ledger series</h3>
+        <button id="loadCostPlatformTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `platform` / `platform_id` / `runtime_platform` property values.</p>
+      <form id="costPlatformTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Platform filter<input name="platform_filter" maxlength="128" placeholder="optional platform fragment" /></label>
+        <label>Top platforms<input name="top_platforms" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costPlatformTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Platform hourly spend</caption>
+          <thead>
+            <tr><th>Platform</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costPlatformTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Device ledger series</h3>
+        <button id="loadCostDeviceTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `device` / `device_id` / `device_type` property values.</p>
+      <form id="costDeviceTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Device filter<input name="device_filter" maxlength="128" placeholder="optional device fragment" /></label>
+        <label>Top devices<input name="top_devices" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costDeviceTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Device hourly spend</caption>
+          <thead>
+            <tr><th>Device</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costDeviceTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Client ledger series</h3>
+        <button id="loadCostClientTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `client` / `client_id` / `sdk_client` property values.</p>
+      <form id="costClientTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Client filter<input name="client_filter" maxlength="128" placeholder="optional client fragment" /></label>
+        <label>Top clients<input name="top_clients" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costClientTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Client hourly spend</caption>
+          <thead>
+            <tr><th>Client</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costClientTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Browser ledger series</h3>
+        <button id="loadCostBrowserTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `browser` / `browser_name` / `ua_browser` property values.</p>
+      <form id="costBrowserTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Browser filter<input name="browser_filter" maxlength="128" placeholder="optional browser fragment" /></label>
+        <label>Top browsers<input name="top_browsers" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costBrowserTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Browser hourly spend</caption>
+          <thead>
+            <tr><th>Browser</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costBrowserTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Release ledger series</h3>
+        <button id="loadCostReleaseTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `release` / `release_version` / `version` property values.</p>
+      <form id="costReleaseTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Release filter<input name="release_filter" maxlength="128" placeholder="optional release fragment" /></label>
+        <label>Top releases<input name="top_releases" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costReleaseTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Release hourly spend</caption>
+          <thead>
+            <tr><th>Release</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costReleaseTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Locale ledger series</h3>
+        <button id="loadCostLocaleTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `locale` / `locale_code` / `lang` property values.</p>
+      <form id="costLocaleTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Locale filter<input name="locale_filter" maxlength="128" placeholder="optional locale fragment" /></label>
+        <label>Top locales<input name="top_locales" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costLocaleTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Locale hourly spend</caption>
+          <thead>
+            <tr><th>Locale</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costLocaleTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Country ledger series</h3>
+        <button id="loadCostCountryTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `country` / `country_code` / `geo_country` property values.</p>
+      <form id="costCountryTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Country filter<input name="country_filter" maxlength="128" placeholder="optional country fragment" /></label>
+        <label>Top countries<input name="top_countries" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costCountryTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Country hourly spend</caption>
+          <thead>
+            <tr><th>Country</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costCountryTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>OS ledger series</h3>
+        <button id="loadCostOsTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `os` / `os_name` / `operating_system` property values.</p>
+      <form id="costOsTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>OS filter<input name="os_filter" maxlength="128" placeholder="optional os fragment" /></label>
+        <label>Top os<input name="top_os" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costOsTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">OS hourly spend</caption>
+          <thead>
+            <tr><th>OS</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costOsTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Timezone ledger series</h3>
+        <button id="loadCostTimezoneTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `timezone` / `time_zone` / `tz` property values.</p>
+      <form id="costTimezoneTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Timezone filter<input name="timezone_filter" maxlength="128" placeholder="optional timezone fragment" /></label>
+        <label>Top timezones<input name="top_timezones" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costTimezoneTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Timezone hourly spend</caption>
+          <thead>
+            <tr><th>Timezone</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costTimezoneTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Language ledger series</h3>
+        <button id="loadCostLanguageTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `language` / `lang_code` / `content_language` property values.</p>
+      <form id="costLanguageTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Language filter<input name="language_filter" maxlength="128" placeholder="optional language fragment" /></label>
+        <label>Top languages<input name="top_languages" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costLanguageTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Language hourly spend</caption>
+          <thead>
+            <tr><th>Language</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costLanguageTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>City ledger series</h3>
+        <button id="loadCostCityTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `city` / `city_name` / `geo_city` property values.</p>
+      <form id="costCityTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>City filter<input name="city_filter" maxlength="128" placeholder="optional city fragment" /></label>
+        <label>Top cities<input name="top_cities" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costCityTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">City hourly spend</caption>
+          <thead>
+            <tr><th>City</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costCityTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Continent ledger series</h3>
+        <button id="loadCostContinentTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `continent` / `continent_code` / `geo_continent` property values.</p>
+      <form id="costContinentTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Continent filter<input name="continent_filter" maxlength="128" placeholder="optional continent fragment" /></label>
+        <label>Top continents<input name="top_continents" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costContinentTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Continent hourly spend</caption>
+          <thead>
+            <tr><th>Continent</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costContinentTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>ISP ledger series</h3>
+        <button id="loadCostIspTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `isp` / `isp_name` / `asn_org` property values.</p>
+      <form id="costIspTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>ISP filter<input name="isp_filter" maxlength="128" placeholder="optional isp fragment" /></label>
+        <label>Top isps<input name="top_isps" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costIspTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">ISP hourly spend</caption>
+          <thead>
+            <tr><th>ISP</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costIspTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>ASN ledger series</h3>
+        <button id="loadCostAsnTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `asn` / `asn_number` / `network_asn` property values.</p>
+      <form id="costAsnTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>ASN filter<input name="asn_filter" maxlength="128" placeholder="optional asn fragment" /></label>
+        <label>Top asns<input name="top_asns" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costAsnTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">ASN hourly spend</caption>
+          <thead>
+            <tr><th>ASN</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costAsnTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>SDK ledger series</h3>
+        <button id="loadCostSdkTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `sdk` / `sdk_name` / `client_sdk` property values.</p>
+      <form id="costSdkTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>SDK filter<input name="sdk_filter" maxlength="128" placeholder="optional sdk fragment" /></label>
+        <label>Top sdks<input name="top_sdks" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costSdkTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">SDK hourly spend</caption>
+          <thead>
+            <tr><th>SDK</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costSdkTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Framework ledger series</h3>
+        <button id="loadCostFrameworkTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `framework` / `framework_name` / `ml_framework` property values.</p>
+      <form id="costFrameworkTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Framework filter<input name="framework_filter" maxlength="128" placeholder="optional framework fragment" /></label>
+        <label>Top frameworks<input name="top_frameworks" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costFrameworkTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Framework hourly spend</caption>
+          <thead>
+            <tr><th>Framework</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costFrameworkTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Runtime ledger series</h3>
+        <button id="loadCostRuntimeTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `runtime` / `runtime_name` / `execution_runtime` property values.</p>
+      <form id="costRuntimeTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Runtime filter<input name="runtime_filter" maxlength="128" placeholder="optional runtime fragment" /></label>
+        <label>Top runtimes<input name="top_runtimes" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costRuntimeTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Runtime hourly spend</caption>
+          <thead>
+            <tr><th>Runtime</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costRuntimeTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Library ledger series</h3>
+        <button id="loadCostLibraryTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `library` / `library_name` / `client_library` property values.</p>
+      <form id="costLibraryTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Library filter<input name="library_filter" maxlength="128" placeholder="optional library fragment" /></label>
+        <label>Top libraries<input name="top_libraries" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costLibraryTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Library hourly spend</caption>
+          <thead>
+            <tr><th>Library</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costLibraryTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Host ledger series</h3>
+        <button id="loadCostHostTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `host` / `hostname` / `server_host` property values.</p>
+      <form id="costHostTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Host filter<input name="host_filter" maxlength="128" placeholder="optional host fragment" /></label>
+        <label>Top hosts<input name="top_hosts" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costHostTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Host hourly spend</caption>
+          <thead>
+            <tr><th>Host</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costHostTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Datacenter ledger series</h3>
+        <button id="loadCostDatacenterTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `datacenter` / `data_center` / `dc` property values.</p>
+      <form id="costDatacenterTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Datacenter filter<input name="datacenter_filter" maxlength="128" placeholder="optional datacenter fragment" /></label>
+        <label>Top datacenters<input name="top_datacenters" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costDatacenterTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Datacenter hourly spend</caption>
+          <thead>
+            <tr><th>Datacenter</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costDatacenterTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>AZ ledger series</h3>
+        <button id="loadCostAzTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `az` / `availability_zone` / `zone` property values.</p>
+      <form id="costAzTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>AZ filter<input name="az_filter" maxlength="128" placeholder="optional az fragment" /></label>
+        <label>Top azs<input name="top_azs" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costAzTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">AZ hourly spend</caption>
+          <thead>
+            <tr><th>AZ</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costAzTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Edge ledger series</h3>
+        <button id="loadCostEdgeTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `edge` / `edge_location` / `cdn_edge` property values.</p>
+      <form id="costEdgeTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Edge filter<input name="edge_filter" maxlength="128" placeholder="optional edge fragment" /></label>
+        <label>Top edges<input name="top_edges" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costEdgeTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Edge hourly spend</caption>
+          <thead>
+            <tr><th>Edge</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costEdgeTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Colo ledger series</h3>
+        <button id="loadCostColoTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `colo` / `colo_name` / `colocation` property values.</p>
+      <form id="costColoTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Colo filter<input name="colo_filter" maxlength="128" placeholder="optional colo fragment" /></label>
+        <label>Top colos<input name="top_colos" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costColoTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Colo hourly spend</caption>
+          <thead>
+            <tr><th>Colo</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costColoTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Cluster ledger series</h3>
+        <button id="loadCostClusterTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `cluster` / `cluster_name` / `k8s_cluster` property values.</p>
+      <form id="costClusterTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Cluster filter<input name="cluster_filter" maxlength="128" placeholder="optional cluster fragment" /></label>
+        <label>Top clusters<input name="top_clusters" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costClusterTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cluster hourly spend</caption>
+          <thead>
+            <tr><th>Cluster</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costClusterTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Pod ledger series</h3>
+        <button id="loadCostPodTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `pod` / `pod_name` / `k8s_pod` property values.</p>
+      <form id="costPodTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Pod filter<input name="pod_filter" maxlength="128" placeholder="optional pod fragment" /></label>
+        <label>Top pods<input name="top_pods" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costPodTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Pod hourly spend</caption>
+          <thead>
+            <tr><th>Pod</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costPodTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Namespace ledger series</h3>
+        <button id="loadCostNamespaceTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `namespace` / `k8s_namespace` / `ns` property values.</p>
+      <form id="costNamespaceTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Namespace filter<input name="namespace_filter" maxlength="128" placeholder="optional namespace fragment" /></label>
+        <label>Top namespaces<input name="top_namespaces" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costNamespaceTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Namespace hourly spend</caption>
+          <thead>
+            <tr><th>Namespace</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costNamespaceTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Node ledger series</h3>
+        <button id="loadCostNodeTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `node` / `node_name` / `k8s_node` property values.</p>
+      <form id="costNodeTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Node filter<input name="node_filter" maxlength="128" placeholder="optional node fragment" /></label>
+        <label>Top nodes<input name="top_nodes" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costNodeTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Node hourly spend</caption>
+          <thead>
+            <tr><th>Node</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costNodeTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Tool ledger series</h3>
+        <button id="loadCostToolTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `tool` / `tool_name` / `function_name` property values.</p>
+      <form id="costToolTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Tool filter<input name="tool_filter" maxlength="128" placeholder="optional tool fragment" /></label>
+        <label>Top tools<input name="top_tools" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costToolTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Tool hourly spend</caption>
+          <thead>
+            <tr><th>Tool</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costToolTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Workflow ledger series</h3>
+        <button id="loadCostWorkflowTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `workflow` / `flow_id` / `orchestration_flow_id` property values.</p>
+      <form id="costWorkflowTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Workflow filter<input name="workflow_filter" maxlength="128" placeholder="optional workflow fragment" /></label>
+        <label>Top workflows<input name="top_workflows" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costWorkflowTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Workflow hourly spend</caption>
+          <thead>
+            <tr><th>Workflow</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costWorkflowTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Experiment ledger series</h3>
+        <button id="loadCostExperimentTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `experiment` / `experiment_id` / `ab_test` property values.</p>
+      <form id="costExperimentTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Experiment filter<input name="experiment_filter" maxlength="128" placeholder="optional experiment fragment" /></label>
+        <label>Top experiments<input name="top_experiments" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costExperimentTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Experiment hourly spend</caption>
+          <thead>
+            <tr><th>Experiment</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costExperimentTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Variant ledger series</h3>
+        <button id="loadCostVariantTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `variant` / `treatment` / `arm` property values.</p>
+      <form id="costVariantTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Variant filter<input name="variant_filter" maxlength="128" placeholder="optional variant fragment" /></label>
+        <label>Top variants<input name="top_variants" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costVariantTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Variant hourly spend</caption>
+          <thead>
+            <tr><th>Variant</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costVariantTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Deployment ledger series</h3>
+        <button id="loadCostDeploymentTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `deployment` / `deployment_id` / `model_deployment` property values.</p>
+      <form id="costDeploymentTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Deployment filter<input name="deployment_filter" maxlength="128" placeholder="optional deployment fragment" /></label>
+        <label>Top deployments<input name="top_deployments" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costDeploymentTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Deployment hourly spend</caption>
+          <thead>
+            <tr><th>Deployment</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costDeploymentTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Version ledger series</h3>
+        <button id="loadCostVersionTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `version` / `app_version` / `model_version` property values.</p>
+      <form id="costVersionTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Version filter<input name="version_filter" maxlength="128" placeholder="optional version fragment" /></label>
+        <label>Top versions<input name="top_versions" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costVersionTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Version hourly spend</caption>
+          <thead>
+            <tr><th>Version</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costVersionTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Canary ledger series</h3>
+        <button id="loadCostCanaryTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `canary` / `canary_id` / `rollout_canary` property values.</p>
+      <form id="costCanaryTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Canary filter<input name="canary_filter" maxlength="128" placeholder="optional canary fragment" /></label>
+        <label>Top canaries<input name="top_canaries" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costCanaryTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Canary hourly spend</caption>
+          <thead>
+            <tr><th>Canary</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costCanaryTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Shadow ledger series</h3>
+        <button id="loadCostShadowTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `shadow` / `mirror` / `traffic_mirror` property values.</p>
+      <form id="costShadowTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Shadow filter<input name="shadow_filter" maxlength="128" placeholder="optional shadow fragment" /></label>
+        <label>Top shadows<input name="top_shadows" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costShadowTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Shadow hourly spend</caption>
+          <thead>
+            <tr><th>Shadow</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costShadowTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Rollout ledger series</h3>
+        <button id="loadCostRolloutTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `rollout` / `rollout_id` / `feature_rollout` property values.</p>
+      <form id="costRolloutTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Rollout filter<input name="rollout_filter" maxlength="128" placeholder="optional rollout fragment" /></label>
+        <label>Top rollouts<input name="top_rollouts" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costRolloutTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Rollout hourly spend</caption>
+          <thead>
+            <tr><th>Rollout</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costRolloutTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Route ledger series</h3>
+        <button id="loadCostRouteTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `route` / `route_policy_id` / `config_id` property values.</p>
+      <form id="costRouteTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Route filter<input name="route_filter" maxlength="128" placeholder="optional route fragment" /></label>
+        <label>Top routes<input name="top_routes" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costRouteTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Route hourly spend</caption>
+          <thead>
+            <tr><th>Route</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costRouteTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Batch ledger series</h3>
+        <button id="loadCostBatchTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `batch` / `batch_id` / `job_batch` property values.</p>
+      <form id="costBatchTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Batch filter<input name="batch_filter" maxlength="128" placeholder="optional batch fragment" /></label>
+        <label>Top batches<input name="top_batches" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costBatchTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Batch hourly spend</caption>
+          <thead>
+            <tr><th>Batch</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costBatchTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Job ledger series</h3>
+        <button id="loadCostJobTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `job` / `job_id` / `pipeline_job` property values.</p>
+      <form id="costJobTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Job filter<input name="job_filter" maxlength="128" placeholder="optional job fragment" /></label>
+        <label>Top jobs<input name="top_jobs" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costJobTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Job hourly spend</caption>
+          <thead>
+            <tr><th>Job</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costJobTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Queue ledger series</h3>
+        <button id="loadCostQueueTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `queue` / `queue_id` / `sqs_queue` property values.</p>
+      <form id="costQueueTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Queue filter<input name="queue_filter" maxlength="128" placeholder="optional queue fragment" /></label>
+        <label>Top queues<input name="top_queues" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costQueueTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Queue hourly spend</caption>
+          <thead>
+            <tr><th>Queue</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costQueueTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Topic ledger series</h3>
+        <button id="loadCostTopicTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `topic` / `topic_id` / `kafka_topic` property values.</p>
+      <form id="costTopicTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Topic filter<input name="topic_filter" maxlength="128" placeholder="optional topic fragment" /></label>
+        <label>Top topics<input name="top_topics" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costTopicTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Topic hourly spend</caption>
+          <thead>
+            <tr><th>Topic</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costTopicTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Pipeline ledger series</h3>
+        <button id="loadCostPipelineTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `pipeline` / `pipeline_id` / `data_pipeline` property values.</p>
+      <form id="costPipelineTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Pipeline filter<input name="pipeline_filter" maxlength="128" placeholder="optional pipeline fragment" /></label>
+        <label>Top pipelines<input name="top_pipelines" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costPipelineTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Pipeline hourly spend</caption>
+          <thead>
+            <tr><th>Pipeline</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costPipelineTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Run ledger series</h3>
+        <button id="loadCostRunTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `run` / `run_id` / `pipeline_run` property values.</p>
+      <form id="costRunTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Run filter<input name="run_filter" maxlength="128" placeholder="optional run fragment" /></label>
+        <label>Top runs<input name="top_runs" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costRunTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Run hourly spend</caption>
+          <thead>
+            <tr><th>Run</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costRunTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Worker ledger series</h3>
+        <button id="loadCostWorkerTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `worker` / `worker_id` / `worker_pool` property values.</p>
+      <form id="costWorkerTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Worker filter<input name="worker_filter" maxlength="128" placeholder="optional worker fragment" /></label>
+        <label>Top workers<input name="top_workers" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costWorkerTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Worker hourly spend</caption>
+          <thead>
+            <tr><th>Worker</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costWorkerTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Slot ledger series</h3>
+        <button id="loadCostSlotTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `slot` / `slot_id` / `capacity_slot` property values.</p>
+      <form id="costSlotTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Slot filter<input name="slot_filter" maxlength="128" placeholder="optional slot fragment" /></label>
+        <label>Top slots<input name="top_slots" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costSlotTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Slot hourly spend</caption>
+          <thead>
+            <tr><th>Slot</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costSlotTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Task ledger series</h3>
+        <button id="loadCostTaskTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `task` / `task_id` / `workflow_task` property values.</p>
+      <form id="costTaskTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Task filter<input name="task_filter" maxlength="128" placeholder="optional task fragment" /></label>
+        <label>Top tasks<input name="top_tasks" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costTaskTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Task hourly spend</caption>
+          <thead>
+            <tr><th>Task</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costTaskTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Step ledger series</h3>
+        <button id="loadCostStepTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `step` / `step_id` / `pipeline_step` property values.</p>
+      <form id="costStepTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Step filter<input name="step_filter" maxlength="128" placeholder="optional step fragment" /></label>
+        <label>Top steps<input name="top_steps" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costStepTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Step hourly spend</caption>
+          <thead>
+            <tr><th>Step</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costStepTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Replica ledger series</h3>
+        <button id="loadCostReplicaTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `replica` / `replica_id` / `service_replica` property values.</p>
+      <form id="costReplicaTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Replica filter<input name="replica_filter" maxlength="128" placeholder="optional replica fragment" /></label>
+        <label>Top replicas<input name="top_replicas" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costReplicaTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Replica hourly spend</caption>
+          <thead>
+            <tr><th>Replica</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costReplicaTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Shard ledger series</h3>
+        <button id="loadCostShardTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `shard` / `shard_id` / `data_shard` property values.</p>
+      <form id="costShardTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Shard filter<input name="shard_filter" maxlength="128" placeholder="optional shard fragment" /></label>
+        <label>Top shards<input name="top_shards" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costShardTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Shard hourly spend</caption>
+          <thead>
+            <tr><th>Shard</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costShardTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Partition ledger series</h3>
+        <button id="loadCostPartitionTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `partition` / `partition_id` / `kafka_partition` property values.</p>
+      <form id="costPartitionTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Partition filter<input name="partition_filter" maxlength="128" placeholder="optional partition fragment" /></label>
+        <label>Top partitions<input name="top_partitions" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costPartitionTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Partition hourly spend</caption>
+          <thead>
+            <tr><th>Partition</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costPartitionTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Consumer ledger series</h3>
+        <button id="loadCostConsumerTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `consumer` / `consumer_id` / `consumer_group` property values.</p>
+      <form id="costConsumerTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Consumer filter<input name="consumer_filter" maxlength="128" placeholder="optional consumer fragment" /></label>
+        <label>Top consumers<input name="top_consumers" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costConsumerTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Consumer hourly spend</caption>
+          <thead>
+            <tr><th>Consumer</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costConsumerTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Producer ledger series</h3>
+        <button id="loadCostProducerTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `producer` / `producer_id` / `kafka_producer` property values.</p>
+      <form id="costProducerTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Producer filter<input name="producer_filter" maxlength="128" placeholder="optional producer fragment" /></label>
+        <label>Top producers<input name="top_producers" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costProducerTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Producer hourly spend</caption>
+          <thead>
+            <tr><th>Producer</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costProducerTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>GPU ledger series</h3>
+        <button id="loadCostGpuTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `gpu` / `gpu_id` / `accelerator_gpu` property values.</p>
+      <form id="costGpuTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>GPU filter<input name="gpu_filter" maxlength="128" placeholder="optional gpu fragment" /></label>
+        <label>Top gpus<input name="top_gpus" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costGpuTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">GPU hourly spend</caption>
+          <thead>
+            <tr><th>GPU</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costGpuTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Accelerator ledger series</h3>
+        <button id="loadCostAcceleratorTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `accelerator` / `accelerator_id` / `ml_accelerator` property values.</p>
+      <form id="costAcceleratorTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Accelerator filter<input name="accelerator_filter" maxlength="128" placeholder="optional accelerator fragment" /></label>
+        <label>Top accelerators<input name="top_accelerators" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costAcceleratorTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Accelerator hourly spend</caption>
+          <thead>
+            <tr><th>Accelerator</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costAcceleratorTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Cell ledger series</h3>
+        <button id="loadCostCellTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `cell` / `cell_id` / `availability_cell` property values.</p>
+      <form id="costCellTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Cell filter<input name="cell_filter" maxlength="128" placeholder="optional cell fragment" /></label>
+        <label>Top cells<input name="top_cells" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costCellTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cell hourly spend</caption>
+          <thead>
+            <tr><th>Cell</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costCellTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Zone ledger series</h3>
+        <button id="loadCostZoneTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `zone` / `zone_id` / `availability_zone` property values.</p>
+      <form id="costZoneTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Zone filter<input name="zone_filter" maxlength="128" placeholder="optional zone fragment" /></label>
+        <label>Top zones<input name="top_zones" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costZoneTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Zone hourly spend</caption>
+          <thead>
+            <tr><th>Zone</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costZoneTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Rack ledger series</h3>
+        <button id="loadCostRackTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `rack` / `rack_id` / `server_rack` property values.</p>
+      <form id="costRackTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Rack filter<input name="rack_filter" maxlength="128" placeholder="optional rack fragment" /></label>
+        <label>Top racks<input name="top_racks" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costRackTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Rack hourly spend</caption>
+          <thead>
+            <tr><th>Rack</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costRackTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Pool ledger series</h3>
+        <button id="loadCostPoolTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `pool` / `pool_id` / `worker_pool` property values.</p>
+      <form id="costPoolTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Pool filter<input name="pool_filter" maxlength="128" placeholder="optional pool fragment" /></label>
+        <label>Top pools<input name="top_pools" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costPoolTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Pool hourly spend</caption>
+          <thead>
+            <tr><th>Pool</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costPoolTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Fleet ledger series</h3>
+        <button id="loadCostFleetTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `fleet` / `fleet_id` / `compute_fleet` property values.</p>
+      <form id="costFleetTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Fleet filter<input name="fleet_filter" maxlength="128" placeholder="optional fleet fragment" /></label>
+        <label>Top fleets<input name="top_fleets" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costFleetTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Fleet hourly spend</caption>
+          <thead>
+            <tr><th>Fleet</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costFleetTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Lease ledger series</h3>
+        <button id="loadCostLeaseTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `lease` / `lease_id` / `capacity_lease` property values.</p>
+      <form id="costLeaseTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Lease filter<input name="lease_filter" maxlength="128" placeholder="optional lease fragment" /></label>
+        <label>Top leases<input name="top_leases" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costLeaseTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Lease hourly spend</caption>
+          <thead>
+            <tr><th>Lease</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costLeaseTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Quota ledger series</h3>
+        <button id="loadCostQuotaTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `quota` / `quota_id` / `service_quota` property values.</p>
+      <form id="costQuotaTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Quota filter<input name="quota_filter" maxlength="128" placeholder="optional quota fragment" /></label>
+        <label>Top quotas<input name="top_quotas" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costQuotaTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Quota hourly spend</caption>
+          <thead>
+            <tr><th>Quota</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costQuotaTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Capacity ledger series</h3>
+        <button id="loadCostCapacityTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `capacity` / `capacity_id` / `reserved_capacity` property values.</p>
+      <form id="costCapacityTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Capacity filter<input name="capacity_filter" maxlength="128" placeholder="optional capacity fragment" /></label>
+        <label>Top capacities<input name="top_capacities" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costCapacityTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Capacity hourly spend</caption>
+          <thead>
+            <tr><th>Capacity</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costCapacityTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Reservation ledger series</h3>
+        <button id="loadCostReservationTimeseries" class="ghost" type="button">Load Series</button>
+      </div>
+      <p class="muted">Helicone-style hourly burn for top `reservation` / `reservation_id` / `capacity_reservation` property values.</p>
+      <form id="costReservationTimeseriesForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Reservation filter<input name="reservation_filter" maxlength="128" placeholder="optional reservation fragment" /></label>
+        <label>Top reservations<input name="top_reservations" type="number" min="1" max="20" step="1" value="8" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costReservationTimeseriesResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Reservation hourly spend</caption>
+          <thead>
+            <tr><th>Reservation</th><th>Hour</th><th>Events</th><th>Tokens</th><th>Spend</th></tr>
+          </thead>
+          <tbody id="costReservationTimeseriesTable"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <h3>Request Search</h3>
+        <div class="card-actions">
+          <button id="exportCostRequests" class="ghost" type="button">Export CSV</button>
+          <button id="loadCostRequests" class="ghost" type="button">Load Requests</button>
+        </div>
+      </div>
+      <p class="muted">Helicone-style request drilldown (metadata + spend only; no prompt bodies).</p>
+      <form id="costRequestsForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>User id<input name="user_id" placeholder="optional user fragment" /></label>
+        <label>Model<input name="model" placeholder="optional model fragment" /></label>
+        <label>Property key<input name="property_key" maxlength="64" placeholder="team" /></label>
+        <label>Property value<input name="property_value" maxlength="256" placeholder="optional contains filter" /></label>
+        <label>Cache hit
+          <select name="cache_hit">
+            <option value="" selected>Any</option>
+            <option value="true">Hit</option>
+            <option value="false">Miss</option>
+          </select>
+        </label>
+        <label>Has feedback
+          <select name="has_feedback">
+            <option value="" selected>Any</option>
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+        </label>
+        <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costRequestsResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cost request search results</caption>
+          <thead>
+            <tr><th>Request</th><th>Model</th><th>User</th><th>Cache</th><th>Spend</th><th>Tokens</th><th>When</th></tr>
+          </thead>
+          <tbody id="costRequestsTable"></tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-head">
+        <h3>Session Path Tree</h3>
+        <button id="loadCostSessionTree" class="ghost" type="button">Load Tree</button>
+      </div>
+      <p class="muted">Helicone-style hierarchical aggregation of `session_path` prefixes.</p>
+      <form id="costSessionTreeForm" class="form-grid compact">
+        <label>Window (hours)<input name="window_hours" type="number" min="1" max="720" step="1" value="24" /></label>
+        <label>Path prefix<input name="path_prefix" placeholder="/chat" /></label>
+        <label>Max depth<input name="max_depth" type="number" min="1" max="16" step="1" value="4" /></label>
+        <label>Limit<input name="limit" type="number" min="1" max="200" step="1" value="50" /></label>
+        <button type="submit" class="primary">Load</button>
+      </form>
+      <p id="costSessionTreeResult" class="runtime-feedback mono"></p>
+      <div class="table-wrap">
+        <table>
+          <caption class="sr-only">Cost session path tree</caption>
+          <thead>
+            <tr><th>Path</th><th>Depth</th><th>Sessions</th><th>Events</th><th>Spend (cents)</th><th>Children</th></tr>
+          </thead>
+          <tbody id="costSessionTreeTable"></tbody>
+        </table>
+      </div>
+    </article>
     <article class="card">
       <div class="card-head">
         <h3>Cost Drilldown</h3>
@@ -669,7 +3851,7 @@
         <table>
           <caption class="sr-only">Cost event drilldown</caption>
           <thead>
-            <tr><th>Time</th><th>Request</th><th>Tag</th><th>Trace</th><th>Model</th><th>Endpoint</th><th>Input</th><th>Output</th><th>Cost (cents)</th></tr>
+            <tr><th>Time</th><th>Request</th><th>Tag</th><th>Cache</th><th>Properties</th><th>Trace</th><th>Model</th><th>Endpoint</th><th>Input</th><th>Output</th><th>Cost (cents)</th></tr>
           </thead>
           <tbody id="costDrilldownTable"></tbody>
         </table>

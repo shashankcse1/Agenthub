@@ -19,6 +19,7 @@ RUNTIME_CONFIG_GATEWAY_LEAST_PRIVILEGE_REQUIRE_CHANGE_TICKET = (
     "gateway.least_privilege.require_change_ticket"
 )
 RUNTIME_CONFIG_GATEWAY_PROMPT_INJECTION_DEFAULT_MODE = "gateway.prompt_injection.default_mode"
+RUNTIME_CONFIG_GATEWAY_RUNTIME_RISK_JSON = "gateway.runtime_risk_json"
 RUNTIME_CONFIG_GATEWAY_CACHE_DEFAULT_MODE = "gateway.cache.default_mode"
 RUNTIME_CONFIG_GATEWAY_CACHE_DEFAULT_SIMILARITY_THRESHOLD = "gateway.cache.default_similarity_threshold"
 RUNTIME_CONFIG_GATEWAY_CACHE_DEFAULT_TTL_SECONDS = "gateway.cache.default_ttl_seconds"
@@ -36,6 +37,11 @@ RUNTIME_CONFIG_GATEWAY_NOTIFICATION_MAX_SENDS_PER_CHANNEL_PER_MINUTE = (
 RUNTIME_CONFIG_GATEWAY_NOTIFICATION_MAX_RETRIES = "gateway.notification.max_retries"
 RUNTIME_CONFIG_GATEWAY_NOTIFICATION_RETRY_BACKOFF_MS = "gateway.notification.retry_backoff_ms"
 RUNTIME_CONFIG_GATEWAY_JIT_DECISION_NOTIFY_JSON = "gateway.jit.decision_notify_json"
+RUNTIME_CONFIG_GATEWAY_JIT_ACTION_JTI_JSON = "gateway.jit.action_jti_used_json"
+RUNTIME_CONFIG_GATEWAY_JIT_CONFIRM_NONCE_JSON = "gateway.jit.confirm_nonce_json"
+RUNTIME_CONFIG_GATEWAY_NHI_IGA_EXPORT_JSON = "gateway.nhi.iga_export_json"
+RUNTIME_CONFIG_GATEWAY_NHI_IGA_DENY_JSON = "gateway.nhi.iga_deny_json"
+RUNTIME_CONFIG_GATEWAY_NHI_GOVERNANCE_JSON = "gateway.nhi.governance_json"
 RUNTIME_CONFIG_COST_MODEL_TOKEN_RATES_JSON = "cost.model_token_rates_json"
 RUNTIME_CONFIG_COST_CLOUD_COMPONENT_MULTIPLIERS_JSON = "cost.cloud_component_multipliers_json"
 RUNTIME_CONFIG_COST_PROVIDER_DISCOUNTS_JSON = "cost.provider_discounts_json"
@@ -62,6 +68,8 @@ RUNTIME_CONFIG_PLATFORM_MAINTENANCE_MESSAGE = "platform.maintenance_message"
 RUNTIME_CONFIG_PLATFORM_SLOW_RESPONSE_THRESHOLD_MS = "platform.slow_response_threshold_ms"
 RUNTIME_CONFIG_PLATFORM_FEEDBACK_ENABLED = "platform.feedback.enabled"
 RUNTIME_CONFIG_PLANE_POLICY_GENERATION_JSON = "plane.policy_generation_json"
+RUNTIME_CONFIG_PLANE_FAIL_CLOSED_MODE = "plane.fail_closed_mode"
+RUNTIME_CONFIG_PLANE_ISOLATION_CONTRACT_JSON = "plane.isolation_contract_json"
 RUNTIME_CONFIG_PLATFORM_UI_MODELS_CATALOG_STATUSES = "platform.ui_models.catalog_statuses"
 RUNTIME_CONFIG_PLATFORM_UI_MODELS_REQUIRE_APPROVAL = "platform.ui_models.require_approval"
 RUNTIME_CONFIG_PLATFORM_UI_MODELS_ENFORCE_TENANT_ENTITLEMENTS = "platform.ui_models.enforce_tenant_entitlements"
@@ -75,6 +83,7 @@ RUNTIME_CONFIG_GATEWAY_TUNNEL_BASE_URL = "gateway.tunnel.base_url"
 RUNTIME_CONFIG_GATEWAY_FINE_TUNING_LIVE_ENABLED = "gateway.fine_tuning.live_enabled"
 RUNTIME_CONFIG_GATEWAY_FILES_CONTENT_STORE_ENABLED = "gateway.files.content_store_enabled"
 RUNTIME_CONFIG_GATEWAY_FILES_CONTENT_MAX_BYTES = "gateway.files.content_max_bytes"
+RUNTIME_CONFIG_GATEWAY_LEADERSHIP_LRS_ATTESTATION_JSON = "gateway.leadership.lrs_attestation_json"
 RUNTIME_CONFIG_GATEWAY_PASSTHROUGH_ALLOWED_PATHS_JSON = "gateway.passthrough.allowed_paths_json"
 RUNTIME_CONFIG_GATEWAY_PASSTHROUGH_PROVIDER_BASE_URLS_JSON = "gateway.passthrough.provider_base_urls_json"
 RUNTIME_CONFIG_ORCHESTRATION_LIVE_EXECUTOR_ENABLED = "orchestration.live_executor_enabled"
@@ -97,11 +106,16 @@ SENSITIVE_RUNTIME_CONFIG_KEYS: frozenset[str] = frozenset(
         RUNTIME_CONFIG_GATEWAY_VECTOR_STORES_JSON,
         RUNTIME_CONFIG_GATEWAY_NOTIFICATION_CHANNELS_JSON,
         RUNTIME_CONFIG_GATEWAY_JIT_DECISION_NOTIFY_JSON,
+        RUNTIME_CONFIG_GATEWAY_NHI_IGA_EXPORT_JSON,
+        RUNTIME_CONFIG_GATEWAY_NHI_IGA_DENY_JSON,
+        RUNTIME_CONFIG_GATEWAY_NHI_GOVERNANCE_JSON,
         RUNTIME_CONFIG_GATEWAY_CACHE_INFERENCE_SHORT_CIRCUIT_ENABLED,
         RUNTIME_CONFIG_GATEWAY_FILES_CONTENT_STORE_ENABLED,
         RUNTIME_CONFIG_ORCHESTRATION_LIVE_EXECUTOR_ENABLED,
         RUNTIME_CONFIG_ORCHESTRATION_LIVE_EXECUTOR_PROD_ENABLED,
         RUNTIME_CONFIG_ORCHESTRATION_HTTP_ALLOWED_HOSTS_JSON,
+        RUNTIME_CONFIG_PLANE_FAIL_CLOSED_MODE,
+        RUNTIME_CONFIG_PLANE_ISOLATION_CONTRACT_JSON,
     }
 )
 
@@ -124,6 +138,11 @@ RUNTIME_CONFIG_DEFAULTS: dict[str, str] = {
     RUNTIME_CONFIG_GATEWAY_LEAST_PRIVILEGE_REQUIRE_CHANGE_TICKET: "false",
     # warn = audit + system guard framing; block = deny inference. Residual risk remains accepted.
     RUNTIME_CONFIG_GATEWAY_PROMPT_INJECTION_DEFAULT_MODE: "warn",
+    # Runtime risk policy default: disabled (observe metadata only until operators enable).
+    RUNTIME_CONFIG_GATEWAY_RUNTIME_RISK_JSON: (
+        '{"enabled":false,"mode":"observe","high_action":"block","medium_action":"warn",'
+        '"low_action":"allow","enforce_environments":["prod","production"]}'
+    ),
     RUNTIME_CONFIG_GATEWAY_CACHE_DEFAULT_MODE: "exact",
     RUNTIME_CONFIG_GATEWAY_CACHE_DEFAULT_SIMILARITY_THRESHOLD: "0.9",
     RUNTIME_CONFIG_GATEWAY_CACHE_DEFAULT_TTL_SECONDS: "300",
@@ -139,11 +158,30 @@ RUNTIME_CONFIG_DEFAULTS: dict[str, str] = {
     RUNTIME_CONFIG_GATEWAY_NOTIFICATION_MAX_RETRIES: "2",
     RUNTIME_CONFIG_GATEWAY_NOTIFICATION_RETRY_BACKOFF_MS: "200",
     RUNTIME_CONFIG_GATEWAY_JIT_DECISION_NOTIFY_JSON: (
-        '{"enabled":false,"notify_on_create":true,"email_channel_id":"",'
-        '"reviewer_emails":[],"public_base_url":"","external_callback_ids":[],'
-        '"external_rest_url":"","external_rest_credential_binding_id":"",'
-        '"action_token_ttl_minutes":1440,"allow_prod_email_approve":false}'
+        '{"enabled":false,"notify_on_create":true,"notify_on_decide":true,"email_channel_id":"",'
+        '"reviewer_emails":[],"decision_recipient_emails":[],"public_base_url":"",'
+        '"external_callback_ids":[],"external_rest_url":"","external_rest_credential_binding_id":"",'
+        '"action_token_ttl_minutes":1440,"allow_prod_email_approve":false,'
+        '"expose_virtual_key_on_email_action":false,"email_virtual_key_to_recipients":true,'
+        '"webhook_sign_requests":true,"include_action_links_in_webhooks":false,'
+        '"min_notify_interval_minutes":15,"webhook_payload_style":"standard",'
+        '"auto_reminder_after_minutes":0,"escalate_after_minutes":0,"escalation_reviewer_emails":[],'
+        '"max_auto_reminders":3,"auto_retry_failed_webhooks_on_tick":false}'
     ),
+    RUNTIME_CONFIG_GATEWAY_JIT_ACTION_JTI_JSON: '{"items":[]}',
+    RUNTIME_CONFIG_GATEWAY_JIT_CONFIRM_NONCE_JSON: '{"nonces":{}}',
+    RUNTIME_CONFIG_GATEWAY_NHI_IGA_EXPORT_JSON: (
+        '{"enabled":false,"target_system":"generic","webhook_url":"","hmac_secret":"",'
+        '"sign_requests":true,"include_hygiene_summary":true,"default_profile":"iga_correlation",'
+        '"max_records":500}'
+    ),
+    RUNTIME_CONFIG_GATEWAY_NHI_IGA_DENY_JSON: (
+        '{"enabled":false,"mode":"off","ingest_hmac_secret":"","require_ingest_hmac":true,'
+        '"default_ttl_seconds":86400,"max_active_denies":200,'
+        '"allowed_source_systems":["generic","external_iga","astrix","oasis","aembit"],'
+        '"active_denies":[]}'
+    ),
+    RUNTIME_CONFIG_GATEWAY_NHI_GOVERNANCE_JSON: '{"intent_mode":"off","records":{}}',
     RUNTIME_CONFIG_COST_MODEL_TOKEN_RATES_JSON: '{"default":{"input_cents_per_1k":1.0,"output_cents_per_1k":2.0}}',
     RUNTIME_CONFIG_COST_CLOUD_COMPONENT_MULTIPLIERS_JSON: '{"provider_type":{"aws":1.0,"azure":1.0,"gcp":1.0,"openai":1.0,"anthropic":1.0},"endpoint_family":{"responses":1.0}}',
     RUNTIME_CONFIG_COST_PROVIDER_DISCOUNTS_JSON: '{"provider_type":{"aws":0.0,"azure":0.0,"gcp":0.0,"openai":0.0,"anthropic":0.0},"models":{}}',
@@ -165,6 +203,8 @@ RUNTIME_CONFIG_DEFAULTS: dict[str, str] = {
     RUNTIME_CONFIG_PLATFORM_SLOW_RESPONSE_THRESHOLD_MS: "2000",
     RUNTIME_CONFIG_PLATFORM_FEEDBACK_ENABLED: "true",
     RUNTIME_CONFIG_PLANE_POLICY_GENERATION_JSON: "",
+    RUNTIME_CONFIG_PLANE_FAIL_CLOSED_MODE: "",
+    RUNTIME_CONFIG_PLANE_ISOLATION_CONTRACT_JSON: "",
     RUNTIME_CONFIG_PLATFORM_UI_MODELS_CATALOG_STATUSES: '["active","beta"]',
     RUNTIME_CONFIG_PLATFORM_UI_MODELS_REQUIRE_APPROVAL: "false",
     RUNTIME_CONFIG_PLATFORM_UI_MODELS_ENFORCE_TENANT_ENTITLEMENTS: "false",
@@ -183,6 +223,7 @@ RUNTIME_CONFIG_DEFAULTS: dict[str, str] = {
     RUNTIME_CONFIG_GATEWAY_FINE_TUNING_LIVE_ENABLED: "false",
     RUNTIME_CONFIG_GATEWAY_FILES_CONTENT_STORE_ENABLED: "false",
     RUNTIME_CONFIG_GATEWAY_FILES_CONTENT_MAX_BYTES: "262144",
+    RUNTIME_CONFIG_GATEWAY_LEADERSHIP_LRS_ATTESTATION_JSON: "",
     RUNTIME_CONFIG_GATEWAY_PASSTHROUGH_ALLOWED_PATHS_JSON: '["/v1/chat/completions","/v1/embeddings"]',
     RUNTIME_CONFIG_GATEWAY_PASSTHROUGH_PROVIDER_BASE_URLS_JSON: '{"default":"https://api.openai.com"}',
 }

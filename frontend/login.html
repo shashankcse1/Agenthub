@@ -3,62 +3,93 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AgentHub Login</title>
-    <link rel="stylesheet" href="./login.css" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <title>AgentHub — Governance Plane Sign-in</title>
+    <meta name="theme-color" content="#0a0e14" />
+    <meta name="description" content="Sign in to the AgentHub institutional AI governance control plane." />
+    <link rel="icon" href="./logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./fonts.css?v=20260804-ui17" />
+    <link rel="stylesheet" href="./login.css?v=20260804-ui17" />
+    <link rel="stylesheet" href="./styles/signature.css?v=20260804-ui17" />
+    <link rel="stylesheet" href="./styles/type-system.css?v=20260804-ui17" />
   </head>
   <body>
     <main class="login-shell">
-      <section class="login-card" aria-labelledby="loginTitle">
-        <div class="brand-row">
-          <img src="./logo.svg" alt="AgentHub logo" class="brand-logo" />
-          <div>
-            <p class="eyebrow">AgentHub Control Center</p>
-            <h1 id="loginTitle">Operator Login</h1>
+      <section class="login-hero" aria-hidden="true">
+        <div class="login-hero-veil"></div>
+        <div class="login-hero-instrument" aria-hidden="true">
+          <div class="sig-instrument sig-instrument-login">
+            <div class="sig-instrument-ticks"></div>
+            <div class="sig-instrument-ring sig-instrument-ring-a"></div>
+            <div class="sig-instrument-ring sig-instrument-ring-b"></div>
+            <div class="sig-instrument-cross" aria-hidden="true"></div>
+            <div class="sig-instrument-core"></div>
           </div>
         </div>
+        <p class="login-hero-kicker">Institutional AI control</p>
+        <p class="login-hero-brand">AgentHub</p>
+        <p class="login-hero-line">Flow Studio at the core of governed AI</p>
+        <p class="login-hero-seal"><span class="sig-seal">Core · Flow Studio</span></p>
+      </section>
 
-        <p class="subtitle">Sign in to continue to the production-grade operations console.</p>
+      <section class="login-panel" aria-labelledby="loginTitle">
+        <header class="login-panel-head">
+          <img src="./logo.svg" alt="" class="brand-logo" aria-hidden="true" />
+          <div>
+            <p class="brand-wordmark">AgentHub</p>
+            <p class="eyebrow">Governance Plane</p>
+          </div>
+        </header>
 
-        <form id="loginForm" class="login-form">
-          <label>
-            Environment
-            <select id="environmentProfile" required>
-              <option value="local">Local</option>
-              <option value="stage">Stage</option>
-              <option value="prod">Prod</option>
-            </select>
-          </label>
+        <h1 id="loginTitle">Sign in</h1>
+        <p class="subtitle">Design flows in Flow Studio, then operate inference and trust from one governed plane.</p>
+        <p class="login-trust-line" aria-hidden="true">
+          <span>Attestable</span><span>Ledgered</span><span>Approved</span>
+        </p>
 
-          <label>
-            API Base URL
-            <input id="apiBase" type="url" required value="http://127.0.0.1:8000" />
-          </label>
-
+        <form id="loginForm" class="login-form" autocomplete="on">
           <label>
             Username
-            <input id="username" type="text" required placeholder="prod-operator" />
+            <input id="username" type="text" required value="admin" placeholder="admin" autocomplete="username" />
           </label>
 
           <label>
             Password
-            <input id="password" type="password" required placeholder="Enter password" />
+            <input id="password" type="password" required placeholder="Password" autocomplete="current-password" />
           </label>
 
-          <label>
-            MFA Verified
-            <select id="mfaVerified">
-              <option value="true" selected>true</option>
-              <option value="false">false</option>
-            </select>
-          </label>
+          <details class="login-advanced">
+            <summary>Connection options</summary>
+            <div class="login-advanced-body">
+              <label>
+                Environment
+                <select id="environmentProfile" required>
+                  <option value="local" selected>Local</option>
+                  <option value="stage">Stage</option>
+                  <option value="prod">Prod</option>
+                </select>
+              </label>
+              <label>
+                API Base URL
+                <input id="apiBase" type="url" required value="" placeholder="same-origin (recommended)" />
+              </label>
+              <label>
+                MFA Verified
+                <select id="mfaVerified">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+            </div>
+          </details>
 
-          <button type="submit" class="primary">Sign In</button>
+          <button type="submit" class="primary">Enter plane</button>
         </form>
 
-        <p id="loginStatus" class="status" aria-live="polite">Enter credentials to sign in.</p>
+        <p id="loginStatus" class="status" role="status" aria-live="polite">Checking backend…</p>
       </section>
     </main>
-
-    <script src="./login.js"></script>
+    <script src="./login.js?v=20260808-session7"></script>
   </body>
 </html>

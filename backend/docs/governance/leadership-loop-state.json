@@ -1,0 +1,93 @@
+{
+  "plan": "leadership-completion-master-plan.md",
+  "program_execution": "program-leader-readiness-execution.md",
+  "product_completion": "product-completion-status.md",
+  "started_at": "2026-08-02T15:27:00Z",
+  "active_loop": null,
+  "interval_minutes": 12,
+  "loops": {
+    "L1": { "status": "done" },
+    "L2": { "status": "done" },
+    "L3": { "status": "done" },
+    "L4": { "status": "done" },
+    "L5": { "status": "done" },
+    "L6": {
+      "status": "done",
+      "note": "Program Owner consolidated sign-off PROG-LRS-2026-08-06; AR-001/002 Retired"
+    },
+    "L7": { "status": "done" },
+    "L8": { "status": "done" },
+    "L9": {
+      "status": "done",
+      "note": "break-glass auto-disable; transport health; evidence owner; live-readiness chip; SDK on-plane"
+    },
+    "L10": {
+      "status": "done",
+      "note": "QBR snapshot + drill-run registry + board resolution; LRS closed 2026-08-06"
+    },
+    "LRS_PROGRAM": {
+      "status": "done",
+      "note": "LRS 40/40 Governed velocity; attestation PROG-LRS-2026-08-06; sustain 2026-08-08"
+    },
+    "PRODUCT_COMPLETE": {
+      "status": "done",
+      "note": "In-repo product lane closed 2026-08-08; plane-split verify + sdk-publish workflow + auth Full + roster template"
+    }
+  },
+  "completed_wps": [
+    "L1", "L2", "L3", "L4", "L5", "L6", "L6_eng", "L7", "L8",
+    "L9.exception_auto_disable",
+    "L9.transport_posture",
+    "L9.evidence_owner",
+    "L9.live_readiness_chip",
+    "L9.sdk_on_plane",
+    "L10.qbr_snapshot",
+    "L10.drill_run_registry",
+    "L10.board_resolution_template",
+    "L10.browser_schema_upgrade_fix",
+    "LRS.phase0_prep",
+    "LRS.phase1_authority",
+    "LRS.phase2_drills",
+    "LRS.phase3_signoff",
+    "LRS.phase4_recompute",
+    "LRS.phase5_sustain",
+    "LRS.phase5_sustain_2026-08-08",
+    "PRODUCT.plane_split_verify",
+    "PRODUCT.sdk_publish_workflow",
+    "PRODUCT.auth_coverage_full",
+    "PRODUCT.role_roster_template",
+    "PRODUCT.completion_status"
+  ],
+  "blocked_wps": [
+    {
+      "id": "ORG.distinct_role_holders",
+      "status": "blocked_human",
+      "note": "Fill role-holder-roster.md with real people; do not invent"
+    },
+    {
+      "id": "OPS.live_sdk_publish",
+      "status": "blocked_secrets",
+      "note": "sdk-publish.yml ready; needs NPM_TOKEN / Twine secrets"
+    },
+    {
+      "id": "DESIGN.saas_crawler_full_iara",
+      "status": "out_of_scope",
+      "note": "No enterprise SaaS OAuth crawler / full IARA by product design"
+    }
+  ],
+  "last_tick_at": "2026-08-08T00:45:00Z",
+  "exit_criteria": {
+    "E1": "met",
+    "E2": "met",
+    "E3": "met",
+    "E6": "met_40",
+    "E7": "met",
+    "PRODUCT_LANE": "met"
+  },
+  "next_actions": [
+    "Ops only: live plane-split deploy when ready (plane-split-runbook.md)",
+    "Ops only: add npm/PyPI secrets then sdk-publish.yml",
+    "Org only: fill role-holder-roster.md with real people",
+    "Sustain: quarterly drills on/after 2026-09-06"
+  ]
+}

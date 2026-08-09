@@ -1,10 +1,15 @@
 <section id="runtime-config" class="view runtime-config-view">
   <article class="card runtime-config-hero">
     <div class="card-head">
-      <h3>Runtime Configuration</h3>
+      <div>
+        <p class="sig-kicker">Plane defaults</p>
+        <h3>Runtime configuration</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Defaults governed</span></p>
+      </div>
       <button id="resetRuntimeConfigForm" class="ghost" type="button">Reset Form</button>
     </div>
-    <p class="card-lead">Store operator-tunable defaults in the database (gateway timeouts, cost JSON, rate limits, UI flags). You edit <strong>config values</strong> here. <strong>Validation rules</strong> are enforced by the backend and shown read-only in the Rule Catalog.</p>
+    <p class="card-lead">Operator-tunable defaults and validation rules.</p>
+    <p class="help-copy" data-help-label="About runtime config">Edit operator-tunable defaults (timeouts, cost JSON, rate limits, UI flags). Validation rules are in the Rule Catalog.</p>
     <p id="runtimeConfigConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Browse presets or saved configs to begin.</p>
     <div class="view-page-search-toolbar" data-view-search-toolbar>
       <div class="view-page-search-row">
@@ -19,6 +24,24 @@
       </div>
       <p class="view-page-search-status mono" aria-live="polite"></p>
     </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Config</span>
+        <strong>Validated</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Rules</span>
+        <strong>Catalogued</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Profiles</span>
+        <strong>Environment-aware</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Drift</span>
+        <strong>Detectable</strong>
+      </div>
+    </section>
     <div class="runtime-console-tabs" role="tablist" aria-label="Runtime configuration sections">
       <button class="ghost active" type="button" role="tab" aria-selected="true" data-runtime-console-tab="editor">Editor</button>
       <button class="ghost" type="button" role="tab" aria-selected="false" data-runtime-console-tab="presets">Presets</button>
@@ -89,7 +112,7 @@
       <div class="card-head">
         <h4>Recommended Presets</h4>
       </div>
-      <p class="card-lead">Select a preset to load its key, value, and description into the editor. Long JSON values open in the value textarea for review.</p>
+      <p class="help-copy" data-help-label="About presets">Select a preset to load key, value, and description into the editor.</p>
       <div id="runtimeConfigPresets" class="runtime-preset-grid" role="list"></div>
     </article>
   </div>
@@ -110,7 +133,7 @@
           <button id="clearRuntimeValidationStatus" class="ghost" type="button">Clear Test Status</button>
         </div>
       </div>
-      <p id="runtimeValidationCatalogLead" class="card-lead">Backend-defined constraints for supported runtime keys. Platform Admins can browse and test rules; Super Admins can add or update catalog entries. Expand any Example row to view the full JSON or value, then use actions to load or test it.</p>
+      <p id="runtimeValidationCatalogLead" class="help-copy" data-help-label="About rule catalog">Backend constraints for runtime keys. Admins browse/test; Super Admins can update catalog entries.</p>
       <details class="help-details runtime-help-details">
         <summary>How do I add or change a validation rule?</summary>
         <p id="runtimeValidationCatalogHelp" class="profile-note">Super Admins can use Add Rule or Edit in the catalog table. Built-in rules can be updated but not deleted. Custom rules can be removed when no longer needed. Changes apply immediately to validate and save flows.</p>

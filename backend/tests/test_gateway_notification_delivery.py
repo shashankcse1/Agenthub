@@ -9,8 +9,64 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import ProviderCredentialBinding, RuntimeConfig
-from app.services.gateway_notification_delivery import deliver_email, deliver_sms
+from app.services.gateway_notification_delivery import (
+    deliver_email,
+    deliver_sms,
+    http_post_with_retry,
+)
 from app.services.runtime_config import invalidate_runtime_config_cache
+
+
+def test_http_post_with_retry_retries_transient_then_succeeds():
+    failing = Mock(spec=httpx.Response)
+    failing.status_code = 503
+    failing.text = "busy"
+    ok = Mock(spec=httpx.Response)
+    ok.status_code = 202
+    ok.text = ""
+    ok.headers = {"X-Message-Id": "sg-retry-1"}
+    queue = [failing, ok]
+    sleeps: list[float] = []
+
+    def _post(*_args, **_kwargs):
+        return queue.pop(0)
+
+    response, attempts = http_post_with_retry(
+        url="https://api.sendgrid.com/v3/mail/send",
+        headers={"Authorization": "Bearer x"},
+        json_body={"ok": True},
+        max_retries=2,
+        backoff_seconds=0.01,
+        sleep_fn=lambda s: sleeps.append(s),
+        post_fn=_post,
+    )
+    assert response.status_code == 202
+    assert attempts == 2
+    assert len(sleeps) == 1
+
+
+def test_http_post_with_retry_does_not_retry_client_errors():
+    bad = Mock(spec=httpx.Response)
+    bad.status_code = 400
+    bad.text = "bad request"
+    calls = {"n": 0}
+
+    def _post(*_args, **_kwargs):
+        calls["n"] += 1
+        return bad
+
+    response, attempts = http_post_with_retry(
+        url="https://api.sendgrid.com/v3/mail/send",
+        headers={},
+        json_body={},
+        max_retries=3,
+        backoff_seconds=0.01,
+        sleep_fn=lambda _s: None,
+        post_fn=_post,
+    )
+    assert response.status_code == 400
+    assert attempts == 1
+    assert calls["n"] == 1
 
 
 def _seed_channel_and_binding(*, binding_id: str, channel_id: str, provider_type: str) -> None:

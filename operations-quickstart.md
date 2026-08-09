@@ -471,3 +471,44 @@ curl -s 'http://127.0.0.1:8000/platform/feedback/analytics?since_hours=168' \
 Interactive API docs (Swagger UI): `http://127.0.0.1:8000/docs` — **Platform** and **Governance** tags include feedback persistence, audit notes, and error contracts. OpenAPI JSON: `GET /openapi.json`.
 
 Full runbook: `backend/docs/governance/operational-guide.md`. UI/API map: `backend/docs/governance/api-inventory-and-ui-map.md`.
+
+## 8) Gateway enhancement agent (optional)
+
+Sibling repo **gateway-enhancement-agent** runs competitor-gap SDLC cycles against this checkout as **TARGET_REPO**. It does not live inside this repo.
+
+| Doc | Purpose |
+|-----|---------|
+| [`../gateway-enhancement-agent/README.md`](../gateway-enhancement-agent/README.md) | Agent overview |
+| [`../gateway-enhancement-agent/docs/USAGE.md`](../gateway-enhancement-agent/docs/USAGE.md) | Commands, LaunchAgent, env vars |
+| [`AGENTS.md`](AGENTS.md) | TARGET_REPO agent delivery + gap types |
+
+### One-time agent setup
+
+```bash
+cd "../gateway-enhancement-agent"
+cp .env.example .env
+# TARGET_REPO="/absolute/path/to/this/repo"
+make install
+make login-install   # optional: hourly background cycles
+```
+
+### Operator routine
+
+1. Background agent writes work orders to `~/Library/Application Support/gateway-enhancement-agent/artifacts/cycle-XXXX/` (or `gateway-enhancement-agent/artifacts/` when foreground).
+2. Implement `agent_work_order.md` in Cursor with this repo as workspace — follow [`.cursor/skills/gateway-competitor-sdlc/SKILL.md`](.cursor/skills/gateway-competitor-sdlc/SKILL.md).
+3. After governance edits here: `cd ../gateway-enhancement-agent && make sync-mirror`.
+4. Validate:
+
+```bash
+cd "../gateway-enhancement-agent"
+TARGET_REPO="$(pwd)/../new design" gateway-agent validate
+```
+
+Foreground full cycle (Ollama implement + validate):
+
+```bash
+unset AGENT_BACKGROUND_MODE
+gateway-agent preflight && gateway-agent sync-mirror && gateway-agent run
+```
+
+Gap sources: `inv-*` (inventory), `cmp-*` (competitor research), `opt-*` (disabled by default), `sec-*` (security audit — abuse-case tests + residual register; review never skipped). See root `AGENTS.md`.

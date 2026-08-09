@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -372,6 +372,7 @@ class ActorContext:
     approver_id: Optional[str]
     approver_role: Optional[str]
     mfa_verified: bool
+    approver_session_authenticated: bool = False
 
 
 def resolve_user_login_for_actor(db: Session, actor_id: str) -> Optional[str]:
@@ -423,25 +424,38 @@ def resolve_actor_role_for_actor(db: Session, actor_id: str) -> str:
     return "unknown"
 
 
+def _bearer_token_from_authorization(authorization: Optional[str]) -> Optional[str]:
+    auth_header = _normalize_header_value(authorization)
+    if not auth_header:
+        return None
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
 def resolve_request_actor_identity(request, db: Session) -> tuple[str, Optional[str], Optional[str]]:
-    auth_header = _normalize_header_value(request.headers.get("Authorization"))
-    if auth_header:
-        scheme, _, token = auth_header.partition(" ")
-        if scheme.lower() == "bearer" and token.strip():
-            try:
-                session_id = resolve_session_id_from_bearer_token(token.strip())
-                session = db.query(SessionRecord).filter_by(session_id=session_id).first()
-                if session:
-                    user_login = resolve_user_login_for_actor(db, session.actor_id)
-                    actor_role = _canonicalize_role(session.actor_role)
-                    directory_user = db.query(DirectoryUser).filter_by(user_id=session.actor_id).first()
-                    if directory_user and str(directory_user.role_name or "").strip():
-                        directory_role = _canonicalize_role(directory_user.role_name)
-                        if directory_role:
-                            actor_role = directory_role
-                    return session.actor_id, user_login, actor_role
-            except HTTPException:
-                pass
+    from app.services.session_cookies import SESSION_COOKIE_NAME, read_session_cookie
+
+    token = _bearer_token_from_authorization(request.headers.get("Authorization"))
+    if not token:
+        token = read_session_cookie(getattr(request, "cookies", {}) or {}, cookie_name=SESSION_COOKIE_NAME)
+
+    if token:
+        try:
+            session_id = resolve_session_id_from_bearer_token(token)
+            session = db.query(SessionRecord).filter_by(session_id=session_id).first()
+            if session:
+                user_login = resolve_user_login_for_actor(db, session.actor_id)
+                actor_role = _canonicalize_role(session.actor_role)
+                directory_user = db.query(DirectoryUser).filter_by(user_id=session.actor_id).first()
+                if directory_user and str(directory_user.role_name or "").strip():
+                    directory_role = _canonicalize_role(directory_user.role_name)
+                    if directory_role:
+                        actor_role = directory_role
+                return session.actor_id, user_login, actor_role
+        except HTTPException:
+            pass
 
     if _ALLOW_HEADER_ACTOR_AUTH:
         header_actor = _normalize_header_value(request.headers.get("X-Actor-Id"))
@@ -544,20 +558,131 @@ def resolve_session_id_from_bearer_token(token: str) -> str:
     )
 
 
+def _resolve_session_record_from_token(db: Session, bearer_token: str) -> Optional[SessionRecord]:
+    try:
+        session_id = resolve_session_id_from_bearer_token(bearer_token)
+    except HTTPException:
+        return None
+    return db.query(SessionRecord).filter_by(session_id=session_id).first()
+
+
+def _apply_session_identity(
+    db: Session,
+    session: SessionRecord,
+    auth_policy,
+    *,
+    token_for_logs: str,
+) -> tuple[str, Optional[str], bool]:
+    if session.expires_at < datetime.utcnow():
+        logger.error(
+            "auth_session_expired %s",
+            sanitize_fields({"session_id": token_for_logs}),
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error_code": "AUTHN_SESSION_EXPIRED",
+                "message": "Session token has expired.",
+                "remediation_hint": "Issue a new session and retry.",
+            },
+        )
+
+    if session.last_activity_at < datetime.utcnow() - timedelta(minutes=session.idle_timeout_minutes):
+        logger.error(
+            "auth_session_idle_timeout %s",
+            sanitize_fields({"session_id": token_for_logs}),
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error_code": "AUTHN_SESSION_IDLE_TIMEOUT",
+                "message": "Session is idle and requires re-authentication.",
+                "remediation_hint": "Issue a new session token and retry.",
+            },
+        )
+
+    actor_id = session.actor_id
+    actor_role = _canonicalize_role(session.actor_role)
+    directory_user = db.query(DirectoryUser).filter_by(user_id=actor_id).first()
+    if directory_user and str(directory_user.role_name or "").strip():
+        directory_role = _canonicalize_role(directory_user.role_name)
+        if directory_role and directory_role != actor_role:
+            session.actor_role = directory_role
+            actor_role = directory_role
+    session.last_activity_at = datetime.utcnow()
+    mfa_verified = bool(
+        session.mfa_verified_at
+        and session.mfa_verified_at
+        >= datetime.utcnow() - timedelta(minutes=auth_policy.privileged_mfa_reauth_minutes)
+    )
+    db.commit()
+    logger.info(
+        "auth_session_validated %s",
+        sanitize_fields(
+            {
+                "actor_id": actor_id,
+                "actor_role": actor_role,
+                "user_login": resolve_user_login_for_actor(db, actor_id),
+            }
+        ),
+    )
+    return actor_id, actor_role, mfa_verified
+
+
+def _resolve_approver_from_second_session(
+    db: Session,
+    *,
+    request: Request,
+    x_approver_authorization: Optional[str],
+    auth_policy,
+) -> tuple[Optional[str], Optional[str], bool]:
+    """Resolve co-signer from X-Approver-Authorization Bearer or gb_approver_session cookie."""
+    from app.services.session_cookies import APPROVER_SESSION_COOKIE_NAME, read_session_cookie
+
+    token = _bearer_token_from_authorization(x_approver_authorization)
+    if not token:
+        token = read_session_cookie(
+            getattr(request, "cookies", {}) or {},
+            cookie_name=APPROVER_SESSION_COOKIE_NAME,
+        )
+    if not token:
+        return None, None, False
+
+    session = _resolve_session_record_from_token(db, token)
+    if session is None:
+        logger.warning("auth_approver_session_invalid_ignored")
+        return None, None, False
+    try:
+        approver_id, approver_role, _ = _apply_session_identity(
+            db,
+            session,
+            auth_policy,
+            token_for_logs="approver-session",
+        )
+    except HTTPException:
+        # Expired/idle approver cookie must not break non-co-sign requests.
+        logger.warning("auth_approver_session_expired_ignored")
+        return None, None, False
+    return approver_id, approver_role, True
+
 def get_actor_context(
+    request: Request,
     x_actor_id: Optional[str] = Header(default=None),
     x_actor_role: Optional[str] = Header(default=None),
     x_approver_id: Optional[str] = Header(default=None),
     x_approver_role: Optional[str] = Header(default=None),
+    x_approver_authorization: Optional[str] = Header(default=None, alias="X-Approver-Authorization"),
     x_mfa_verified: Optional[str] = Header(default=None),
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ActorContext:
+    from app.services.session_cookies import SESSION_COOKIE_NAME, read_session_cookie
+
     logger.trace("auth_context_start")
     actor_id = _normalize_header_value(x_actor_id)
     actor_role = _canonicalize_role(x_actor_role)
-    approver_id = _normalize_header_value(x_approver_id)
-    approver_role = _canonicalize_role(x_approver_role)
+    header_approver_id = _normalize_header_value(x_approver_id)
+    header_approver_role = _canonicalize_role(x_approver_role)
 
     mfa_verified = (_normalize_header_value(x_mfa_verified) or "false").lower() in {
         "1",
@@ -566,18 +691,12 @@ def get_actor_context(
     }
 
     auth_header = _normalize_header_value(authorization)
-    auth_policy = get_auth_policy(db)
-    if not auth_header and (not actor_id or not actor_role):
-        logger.error("auth_missing_identity")
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "error_code": "AUTHN_REQUIRED",
-                "message": "Provide Authorization bearer token or explicit actor identity headers.",
-                "remediation_hint": "Use Bearer session token or provide X-Actor-Id and X-Actor-Role.",
-            },
-        )
-
+    cookie_token = read_session_cookie(
+        getattr(request, "cookies", {}) or {},
+        cookie_name=SESSION_COOKIE_NAME,
+    )
+    # Prefer explicit Bearer; fall back to httpOnly session cookie for browser consoles.
+    bearer_token: Optional[str] = None
     if auth_header:
         scheme, _, token = auth_header.partition(" ")
         if scheme.lower() != "bearer" or not token.strip():
@@ -590,18 +709,40 @@ def get_actor_context(
                     "remediation_hint": "Provide a valid bearer session token.",
                 },
             )
-
         bearer_token = token.strip()
-        session: Optional[SessionRecord] = None
-        try:
-            session_id = resolve_session_id_from_bearer_token(bearer_token)
-            session = db.query(SessionRecord).filter_by(session_id=session_id).first()
-        except HTTPException:
-            session = None
+    elif cookie_token:
+        bearer_token = cookie_token
+
+    auth_policy = get_auth_policy(db)
+    if not bearer_token and (not actor_id or not actor_role):
+        logger.error("auth_missing_identity")
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error_code": "AUTHN_REQUIRED",
+                "message": "Provide Authorization bearer token, session cookie, or explicit actor identity headers.",
+                "remediation_hint": "Sign in via /auth/login or provide a Bearer session token.",
+            },
+        )
+
+    if bearer_token:
+        session: Optional[SessionRecord] = _resolve_session_record_from_token(db, bearer_token)
 
         if session is None:
-            # Portkey-style virtual key bearer: allow inference with the minted key hash.
-            virtual_key = db.query(VirtualKey).filter_by(key_hash=bearer_token).first()
+            # Cookie path is session-only (never treat cookie as virtual-key bearer).
+            if not auth_header:
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error_code": "AUTHN_INVALID_TOKEN",
+                        "message": "Session cookie is invalid or expired.",
+                        "remediation_hint": "Sign in again via /auth/login.",
+                    },
+                )
+            # Portkey-style virtual key bearer (hashed at rest; legacy plaintext migrated).
+            from app.services.virtual_key_secrets import lookup_virtual_key_by_bearer
+
+            virtual_key = lookup_virtual_key_by_bearer(db, bearer_token)
             if virtual_key is None:
                 raise HTTPException(
                     status_code=401,
@@ -656,53 +797,11 @@ def get_actor_context(
                 ),
             )
         else:
-            if session.expires_at < datetime.utcnow():
-                logger.error(
-                    "auth_session_expired %s",
-                    sanitize_fields({"session_id": bearer_token, "actor_id": actor_id}),
-                )
-                raise HTTPException(
-                    status_code=401,
-                    detail={
-                        "error_code": "AUTHN_SESSION_EXPIRED",
-                        "message": "Session token has expired.",
-                        "remediation_hint": "Issue a new session and retry.",
-                    },
-                )
-
-            if session.last_activity_at < datetime.utcnow() - timedelta(minutes=session.idle_timeout_minutes):
-                logger.error(
-                    "auth_session_idle_timeout %s",
-                    sanitize_fields({"session_id": bearer_token, "actor_id": actor_id}),
-                )
-                raise HTTPException(
-                    status_code=401,
-                    detail={
-                        "error_code": "AUTHN_SESSION_IDLE_TIMEOUT",
-                        "message": "Session is idle and requires re-authentication.",
-                        "remediation_hint": "Issue a new session token and retry.",
-                    },
-                )
-
-            actor_id = session.actor_id
-            actor_role = _canonicalize_role(session.actor_role)
-            directory_user = db.query(DirectoryUser).filter_by(user_id=actor_id).first()
-            if directory_user and str(directory_user.role_name or "").strip():
-                directory_role = _canonicalize_role(directory_user.role_name)
-                if directory_role and directory_role != actor_role:
-                    session.actor_role = directory_role
-                    actor_role = directory_role
-            session.last_activity_at = datetime.utcnow()
-
-            mfa_verified = bool(
-                session.mfa_verified_at
-                and session.mfa_verified_at
-                >= datetime.utcnow() - timedelta(minutes=auth_policy.privileged_mfa_reauth_minutes)
-            )
-            db.commit()
-            logger.info(
-                "auth_session_validated %s",
-                sanitize_fields({"actor_id": actor_id, "actor_role": actor_role, "user_login": resolve_user_login_for_actor(db, actor_id)}),
+            actor_id, actor_role, mfa_verified = _apply_session_identity(
+                db,
+                session,
+                auth_policy,
+                token_for_logs="session",
             )
     else:
         if not _ALLOW_HEADER_ACTOR_AUTH:
@@ -718,12 +817,33 @@ def get_actor_context(
         actor_id = actor_id or "system-user"
         actor_role = _canonicalize_role(actor_role) or "unknown"
 
+    session_approver_id, session_approver_role, approver_session_authenticated = _resolve_approver_from_second_session(
+        db,
+        request=request,
+        x_approver_authorization=x_approver_authorization,
+        auth_policy=auth_policy,
+    )
+    if approver_session_authenticated:
+        approver_id = session_approver_id
+        approver_role = session_approver_role
+    else:
+        approver_id = header_approver_id
+        approver_role = header_approver_role
+
     user_login = resolve_user_login_for_actor(db, actor_id)
     set_request_actor(actor_id, user_login, actor_role)
 
     logger.trace(
         "auth_context_ready %s",
-        sanitize_fields({"actor_id": actor_id, "actor_role": actor_role, "user_login": user_login, "mfa_verified": mfa_verified}),
+        sanitize_fields(
+            {
+                "actor_id": actor_id,
+                "actor_role": actor_role,
+                "user_login": user_login,
+                "mfa_verified": mfa_verified,
+                "approver_session_authenticated": approver_session_authenticated,
+            }
+        ),
     )
     return ActorContext(
         actor_id=actor_id,
@@ -732,6 +852,7 @@ def get_actor_context(
         approver_id=approver_id,
         approver_role=approver_role,
         mfa_verified=mfa_verified,
+        approver_session_authenticated=approver_session_authenticated,
     )
 
 
@@ -778,6 +899,33 @@ def require_dual_approval(
 ) -> None:
     if ctx.actor_role in {ROLE_MASTER_ADMIN, ROLE_SUPER_ADMIN}:
         return
+
+    from app.services.runtime_env import is_production_runtime
+
+    # Production: co-sign must be a second authenticated session (cookie or
+    # X-Approver-Authorization), not client-asserted X-Approver-* headers alone.
+    if is_production_runtime() and not _ALLOW_HEADER_ACTOR_AUTH:
+        if not ctx.approver_session_authenticated or not ctx.approver_id:
+            logger.error(
+                "authz_dual_approval_session_missing %s",
+                sanitize_fields({"actor_id": ctx.actor_id, "approver_id": ctx.approver_id}),
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error_code": "AUTHZ_DUAL_APPROVAL_SESSION_REQUIRED",
+                    "message": "Production co-sign requires a second authenticated approver session.",
+                    "actor_role": ctx.actor_role,
+                    "required_role": required_approver_role,
+                    "policy_version": "v1",
+                    "decision_trace_id": "authz-dual-approval-session",
+                    "remediation_hint": (
+                        "Authenticate the co-signer via POST /auth/approver-session "
+                        "(httpOnly cookie) or send X-Approver-Authorization: Bearer <token>."
+                    ),
+                },
+            )
+
     if not approver_role_satisfies(required_approver_role, ctx.approver_role) or not ctx.approver_id:
         logger.error(
             "authz_dual_approval_missing %s",
@@ -811,6 +959,49 @@ def require_dual_approval(
                 "remediation_hint": "Use a different approver identity header.",
             },
         )
+
+    # Production harden: approver must be a real directory user whose stored role
+    # satisfies the required co-sign role.
+    # Local/dev/test keep header-only co-sign for operator tooling and pytest.
+    if is_production_runtime() and not _ALLOW_HEADER_ACTOR_AUTH:
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            directory_user = db.query(DirectoryUser).filter_by(user_id=str(ctx.approver_id)).first()
+            if directory_user is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "AUTHZ_DUAL_APPROVAL_APPROVER_UNKNOWN",
+                        "message": "Approver identity is not a registered directory user.",
+                        "remediation_hint": "Co-sign with a Security Approver directory user_id.",
+                    },
+                )
+            status = str(directory_user.status or "").strip().lower()
+            if status and status not in {"active", "enabled", "ok"}:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "AUTHZ_DUAL_APPROVAL_APPROVER_INACTIVE",
+                        "message": "Approver directory user is not active.",
+                    },
+                )
+            directory_role = _canonicalize_role(directory_user.role_name)
+            if not approver_role_satisfies(required_approver_role, directory_role):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error_code": "AUTHZ_DUAL_APPROVAL_APPROVER_ROLE_MISMATCH",
+                        "message": "Approver directory role does not satisfy co-sign requirements.",
+                        "required_role": required_approver_role,
+                        "approver_directory_role": directory_role,
+                    },
+                )
+            # Prefer directory role over client-asserted approver role in prod.
+            ctx.approver_role = directory_role or ctx.approver_role
+        finally:
+            db.close()
 
 
 def require_mfa(ctx: ActorContext) -> None:

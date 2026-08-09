@@ -4,6 +4,14 @@
 
 This guide explains how to configure, sync, validate, and audit Cursor integration for module records in the platform.
 
+**Related agent workflows:** Competitor-gap SDLC work orders from **gateway-enhancement-agent** are implemented in this repo (TARGET_REPO). Read [AGENTS.md](../AGENTS.md) and [`.cursor/skills/gateway-competitor-sdlc/SKILL.md`](../.cursor/skills/gateway-competitor-sdlc/SKILL.md) before closing `inv-*` or `cmp-*` gaps. Module Cursor sync (below) is a separate, inventory-backed workflow.
+
+| Workflow | Doc |
+|----------|-----|
+| Module register + integration sync | This guide |
+| Enhancement agent work orders | [`.cursor/skills/gateway-competitor-sdlc/SKILL.md`](../.cursor/skills/gateway-competitor-sdlc/SKILL.md) |
+| Agent commands / LaunchAgent | [`../gateway-enhancement-agent/docs/USAGE.md`](../gateway-enhancement-agent/docs/USAGE.md) |
+
 ## Design-Aligned Adoption Scope
 
 Only adopt patterns that are already supported by current APIs, UI surfaces, and governance controls.
@@ -320,10 +328,21 @@ Use Audit view or API query to confirm:
 
 ## Validation Commands
 
+Module integration slice:
+
 ```bash
 cd backend && python3 -m pytest tests/test_phase0_phase1.py -k "modules_register_persists_integration_metadata_and_sync_updates_status or modules_integration_sync_requires_configured_provider or modules_read_endpoints_enforce_read_roles"
 cd .. && node --check frontend/app.js
 ```
+
+Enhancement agent cycle (after implementing `agent_work_order.md`):
+
+```bash
+cd "../gateway-enhancement-agent"
+TARGET_REPO="$(pwd)/../new design" gateway-agent validate
+```
+
+Governance-only changes in TARGET_REPO skip agent `gateway_pytest` and `control_coverage` gates when all touched paths are under `backend/docs/governance/`.
 
 ## Operational Notes
 

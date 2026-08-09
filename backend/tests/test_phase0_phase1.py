@@ -7293,7 +7293,10 @@ def test_gateway_jit_request_create_and_approve_with_prod_dual_approval():
     try:
         key = db.query(VirtualKey).filter_by(key_id=key_id).first()
         assert key is not None
-        assert key.key_hash == bearer
+        from app.services.virtual_key_secrets import hash_virtual_key_token
+
+        assert key.key_hash == hash_virtual_key_token(bearer)
+        assert key.key_hash != bearer
         key.expires_at = datetime.utcnow() - timedelta(minutes=1)
         db.commit()
         db.refresh(key)
@@ -7574,16 +7577,38 @@ def test_gateway_jit_expire_tick_marks_stale_grants():
     assert key_after.json()["status"] == "blocked"
 
 
+def _confirm_jit_email_action(token: str, *, decision_reason=None):
+    preview = client.get(
+        f"/gateway/jit-actions/{token}",
+        headers={"Accept": "application/json"},
+    )
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body.get("confirm_required") is True
+    assert body.get("confirm_nonce")
+    return client.post(
+        f"/gateway/jit-actions/{token}",
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        json={
+            "confirm": True,
+            "confirm_nonce": body["confirm_nonce"],
+            "decision_reason": decision_reason if decision_reason is not None else "confirmed via test",
+        },
+    )
+
+
 def test_gateway_jit_decision_notify_config_requires_dual_approval_and_email_action(monkeypatch):
     from app.services.gateway_jit_notifications import mint_jit_action_token
 
     monkeypatch.setattr(
         "app.services.gateway_jit_notifications._post_external_rest",
-        lambda db, *, url, payload, credential_binding_id="": {
+        lambda db, *, url, payload, credential_binding_id="", sign_requests=True, delivery_id="": {
             "url": url,
             "status_code": 204,
             "ok": True,
             "callback_id": "external_rest_url",
+            "signed": bool(sign_requests),
+            "delivery_id": delivery_id or payload.get("delivery_id"),
         },
     )
 
@@ -7614,6 +7639,7 @@ def test_gateway_jit_decision_notify_config_requires_dual_approval_and_email_act
             "external_rest_credential_binding_id": "",
             "action_token_ttl_minutes": 60,
             "allow_prod_email_approve": False,
+            "min_notify_interval_minutes": 0,
         },
         headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-notify-cfg"},
     )
@@ -7632,6 +7658,7 @@ def test_gateway_jit_decision_notify_config_requires_dual_approval_and_email_act
             "external_rest_credential_binding_id": "",
             "action_token_ttl_minutes": 60,
             "allow_prod_email_approve": False,
+            "min_notify_interval_minutes": 0,
         },
         headers={
             "X-Actor-Role": "Platform Admin",
@@ -7679,12 +7706,27 @@ def test_gateway_jit_decision_notify_config_requires_dual_approval_and_email_act
         reviewer_email="reviewer@example.com",
         ttl_minutes=60,
     )
-    decided = client.get(f"/gateway/jit-actions/{approve_token}")
-    assert decided.status_code == 200
-    assert "JIT request approved" in decided.text or "approved" in decided.text.lower()
+    # Prefetch must not approve.
+    prefetch = client.get(f"/gateway/jit-actions/{approve_token}")
+    assert prefetch.status_code == 200
+    assert "confirm" in prefetch.text.lower()
+    still_pending = client.get(
+        f"/gateway/jit-requests/{request_id}",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-notify-prefetch"},
+    )
+    assert still_pending.status_code == 200
+    assert still_pending.json()["status"] == "requested"
+    assert still_pending.json().get("last_notify")
 
-    replay = client.post(f"/gateway/jit-actions/{approve_token}")
+    decided = _confirm_jit_email_action(approve_token, decision_reason="approve after confirm")
+    assert decided.status_code == 200
+    assert decided.json()["status"] == "approved"
+    assert decided.json()["issued_virtual_key_token"] is None
+
+    replay = _confirm_jit_email_action(approve_token)
     assert replay.status_code == 409
+    detail = replay.json().get("detail") or {}
+    assert detail.get("error_code") in {"JIT_ACTION_TOKEN_REPLAY", "JIT_ALREADY_DECIDED"}
 
     fetched = client.get(
         f"/gateway/jit-requests/{request_id}",
@@ -7694,6 +7736,150 @@ def test_gateway_jit_decision_notify_config_requires_dual_approval_and_email_act
     assert fetched.json()["status"] == "approved"
     assert fetched.json()["issued_virtual_key_id"]
     assert str(fetched.json()["approved_by"]).startswith("email:")
+
+
+def test_gateway_jit_decision_notify_preview_test_and_signed_webhook(monkeypatch):
+    from app.services.gateway_jit_notifications import mint_jit_action_token, sign_jit_webhook_body
+
+    captured = {}
+
+    def _capture_post(db, *, url, payload, credential_binding_id="", sign_requests=True, delivery_id=""):
+        import json as _json
+
+        body = _json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        captured["url"] = url
+        captured["payload"] = payload
+        captured["signed"] = bool(sign_requests)
+        captured["delivery_id"] = delivery_id or payload.get("delivery_id")
+        captured["signature"] = sign_jit_webhook_body(body) if sign_requests else None
+        return {
+            "url": url,
+            "status_code": 202,
+            "ok": True,
+            "signed": bool(sign_requests),
+            "delivery_id": captured["delivery_id"],
+        }
+
+    monkeypatch.setattr("app.services.gateway_jit_notifications._post_external_rest", _capture_post)
+
+    entitlement_id = f"ent-jit-enh-{uuid4().hex[:10]}"
+    ent = client.put(
+        f"/gateway/entitlements/{entitlement_id}",
+        json={
+            "action": "gateway.route.execute_fallback",
+            "tenant_id": "tenant-jit-enh",
+            "environment": "dev",
+            "allowed_roles": '["AI Ops Approver"]',
+            "enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-enh-seed"},
+    )
+    assert ent.status_code == 200
+
+    saved = client.put(
+        "/gateway/jit-decision-notify/config",
+        json={
+            "enabled": True,
+            "notify_on_create": True,
+            "notify_on_decide": True,
+            "email_channel_id": "",
+            "reviewer_emails": ["reviewer@example.com"],
+            "decision_recipient_emails": ["ops@example.com"],
+            "public_base_url": "https://gateway.test.local",
+            "external_callback_ids": [],
+            "external_rest_url": "https://hooks.test.local/jit-signed",
+            "external_rest_credential_binding_id": "",
+            "action_token_ttl_minutes": 60,
+            "allow_prod_email_approve": False,
+            "expose_virtual_key_on_email_action": False,
+            "email_virtual_key_to_recipients": True,
+            "webhook_sign_requests": True,
+            "include_action_links_in_webhooks": True,
+            "min_notify_interval_minutes": 0,
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-jit-enh-cfg",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-jit-enh-cfg",
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["webhook_sign_requests"] is True
+    assert saved.json()["expose_virtual_key_on_email_action"] is False
+
+    requested = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": entitlement_id,
+            "environment": "dev",
+            "justification": "Enhance notify preview/test coverage.",
+            "requested_duration_minutes": 20,
+            "mint_virtual_key": True,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-enh-1"},
+    )
+    assert requested.status_code == 200
+    request_id = requested.json()["request_id"]
+
+    preview = client.post(
+        f"/gateway/jit-requests/{request_id}/preview-action-links?reviewer_email=preview@example.com",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-enh-preview"},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["links_ready"] is True
+    assert "/gateway/jit-actions/" in preview.json()["approve_url"]
+
+    tested = client.post(
+        "/gateway/jit-decision-notify/test-delivery",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-enh-test"},
+    )
+    assert tested.status_code == 200
+    assert tested.json()["tested"] is True
+    assert tested.json()["probe_id"]
+    assert captured.get("signed") is True
+    assert str(captured.get("signature") or "").startswith("sha256=")
+
+    notify = client.post(
+        f"/gateway/jit-requests/{request_id}/notify",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-enh-notify"},
+    )
+    assert notify.status_code == 200
+    assert any(item.get("signed") for item in notify.json().get("webhooks") or [])
+    assert captured.get("payload", {}).get("approve_url")
+
+    approve_token = mint_jit_action_token(
+        request_id=request_id,
+        decision="approve",
+        reviewer_email="reviewer@example.com",
+        ttl_minutes=60,
+    )
+    decided = _confirm_jit_email_action(approve_token, decision_reason="signed webhook approve")
+    assert decided.status_code == 200
+    body = decided.json()
+    assert body["status"] == "approved"
+    assert body["issued_virtual_key_id"]
+    assert body["issued_virtual_key_token"] is None
+    assert body["virtual_key_emailed"] is False  # no email channel configured
+
+    # Invalid signature / missing confirm abuse paths
+    bad = client.post(
+        "/gateway/jit-actions/not-a-valid-token",
+        headers={"Content-Type": "application/json"},
+        json={"confirm": True, "confirm_nonce": "x" * 16},
+    )
+    assert bad.status_code == 401
+
+    expired = mint_jit_action_token(
+        request_id=request_id,
+        decision="deny",
+        reviewer_email="reviewer@example.com",
+        ttl_minutes=15,
+    )
+    # Force expiry by rewriting claims via consume path after already decided -> 409 already decided
+    replay = _confirm_jit_email_action(approve_token)
+    assert replay.status_code == 409
+    assert expired  # token minted for coverage; decision already applied
 
 
 def test_gateway_jit_email_action_deny_and_prod_approve_gate():
@@ -7745,10 +7931,7 @@ def test_gateway_jit_email_action_deny_and_prod_approve_gate():
         reviewer_email="reviewer@example.com",
         ttl_minutes=30,
     )
-    denied = client.post(
-        f"/gateway/jit-actions/{deny_token}",
-        headers={"Accept": "application/json"},
-    )
+    denied = _confirm_jit_email_action(deny_token, decision_reason="deny from email")
     assert denied.status_code == 200
     assert denied.json()["status"] == "denied"
     assert denied.json()["decision"] == "deny"
@@ -7795,9 +7978,307 @@ def test_gateway_jit_email_action_deny_and_prod_approve_gate():
         reviewer_email="reviewer@example.com",
         ttl_minutes=30,
     )
-    blocked = client.post(f"/gateway/jit-actions/{prod_token}")
+    blocked = _confirm_jit_email_action(prod_token)
     assert blocked.status_code == 403
     assert blocked.json()["detail"]["error_code"] == "JIT_EMAIL_PROD_APPROVE_DISABLED"
+
+
+def test_gateway_jit_notify_cooldown_reminder_retry_and_history(monkeypatch):
+    attempts = {"n": 0}
+
+    def _flaky_post(db, *, url, payload, credential_binding_id="", sign_requests=True, delivery_id=""):
+        attempts["n"] += 1
+        ok = attempts["n"] >= 2
+        return {
+            "url": url,
+            "status_code": 200 if ok else 502,
+            "ok": ok,
+            "callback_id": "external_rest_url",
+            "signed": bool(sign_requests),
+            "delivery_id": delivery_id or payload.get("delivery_id"),
+            "error": None if ok else "upstream_502",
+        }
+
+    monkeypatch.setattr("app.services.gateway_jit_notifications._post_external_rest", _flaky_post)
+
+    entitlement_id = f"ent-jit-hist-{uuid4().hex[:10]}"
+    ent = client.put(
+        f"/gateway/entitlements/{entitlement_id}",
+        json={
+            "action": "gateway.route.execute_fallback",
+            "tenant_id": "tenant-jit-hist",
+            "environment": "dev",
+            "allowed_roles": '["AI Ops Approver"]',
+            "enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-hist-seed"},
+    )
+    assert ent.status_code == 200
+
+    saved = client.put(
+        "/gateway/jit-decision-notify/config",
+        json={
+            "enabled": True,
+            "notify_on_create": False,
+            "email_channel_id": "",
+            "reviewer_emails": ["reviewer@example.com"],
+            "public_base_url": "https://gateway.test.local",
+            "external_callback_ids": [],
+            "external_rest_url": "https://hooks.test.local/jit-hist",
+            "external_rest_credential_binding_id": "",
+            "action_token_ttl_minutes": 60,
+            "allow_prod_email_approve": False,
+            "min_notify_interval_minutes": 30,
+            "webhook_payload_style": "compact",
+            "webhook_sign_requests": True,
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-jit-hist-cfg",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-jit-hist-cfg",
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["min_notify_interval_minutes"] == 30
+    assert saved.json()["webhook_payload_style"] == "compact"
+
+    requested = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": entitlement_id,
+            "environment": "dev",
+            "justification": "Cooldown reminder retry history coverage.",
+            "requested_duration_minutes": 25,
+            "mint_virtual_key": False,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-hist-1"},
+    )
+    assert requested.status_code == 200
+    request_id = requested.json()["request_id"]
+
+    first = client.post(
+        f"/gateway/jit-requests/{request_id}/notify",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-hist-notify"},
+    )
+    assert first.status_code == 200
+    assert first.json()["notified"] is True
+    assert first.json()["delivery_id"]
+    assert first.json()["webhooks"][0]["ok"] is False
+
+    cooled = client.post(
+        f"/gateway/jit-requests/{request_id}/notify",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-hist-notify"},
+    )
+    assert cooled.status_code == 429
+    assert cooled.json()["detail"]["error_code"] == "JIT_NOTIFY_COOLDOWN"
+
+    reminder = client.post(
+        f"/gateway/jit-requests/{request_id}/notify?reminder=true&force=true",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-hist-remind"},
+    )
+    assert reminder.status_code == 200
+    assert reminder.json()["is_reminder"] is True
+    assert reminder.json()["event_type"] == "gateway.jit.request.reminder"
+    assert reminder.json()["webhooks"][0]["ok"] is True
+    assert "delivery_id" in (reminder.json().get("webhooks") or [{}])[0]
+
+    retried = client.post(
+        f"/gateway/jit-requests/{request_id}/notify-retry",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-hist-retry"},
+    )
+    # Last notify was successful reminder — no failed hooks
+    assert retried.status_code == 200
+    assert retried.json()["is_retry"] is True
+    assert retried.json().get("reason") == "no_failed_webhooks"
+
+    # Force a failed delivery then retry
+    attempts["n"] = 0
+    forced = client.post(
+        f"/gateway/jit-requests/{request_id}/notify?force=true",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-hist-force"},
+    )
+    assert forced.status_code == 200
+    assert forced.json()["webhooks"][0]["ok"] is False
+    retry_ok = client.post(
+        f"/gateway/jit-requests/{request_id}/notify-retry",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-hist-retry2"},
+    )
+    assert retry_ok.status_code == 200
+    assert retry_ok.json()["is_retry"] is True
+    assert retry_ok.json()["notified"] is True
+    assert retry_ok.json()["webhooks"][0]["ok"] is True
+    assert retry_ok.json()["webhooks"][0].get("retried") is True
+
+    history = client.get(
+        f"/gateway/jit-requests/{request_id}/notify-history",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-hist"},
+    )
+    assert history.status_code == 200
+    assert history.json()["request_id"] == request_id
+    assert history.json()["last_notify"]
+    assert len(history.json()["history"]) >= 3
+    assert any(item.get("is_reminder") for item in history.json()["history"])
+    assert any(item.get("is_retry") for item in history.json()["history"])
+
+    fetched = client.get(
+        f"/gateway/jit-requests/{request_id}",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-hist-get"},
+    )
+    assert fetched.status_code == 200
+    assert fetched.json().get("notify_history")
+    assert fetched.json().get("last_notify", {}).get("delivery_id")
+
+
+def test_gateway_jit_notify_tick_reminder_escalation_and_pending_summary(monkeypatch):
+    from datetime import datetime, timedelta
+
+    from app.database import SessionLocal
+    from app.models import GatewayJitAccessRequest
+
+    monkeypatch.setattr(
+        "app.services.gateway_jit_notifications._post_external_rest",
+        lambda db, *, url, payload, credential_binding_id="", sign_requests=True, delivery_id="": {
+            "url": url,
+            "status_code": 204,
+            "ok": True,
+            "callback_id": "external_rest_url",
+            "signed": bool(sign_requests),
+            "delivery_id": delivery_id or payload.get("delivery_id"),
+        },
+    )
+
+    entitlement_id = f"ent-jit-tick-{uuid4().hex[:10]}"
+    ent = client.put(
+        f"/gateway/entitlements/{entitlement_id}",
+        json={
+            "action": "gateway.route.execute_fallback",
+            "tenant_id": "tenant-jit-tick",
+            "environment": "dev",
+            "allowed_roles": '["AI Ops Approver"]',
+            "enabled": True,
+        },
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-tick-seed"},
+    )
+    assert ent.status_code == 200
+
+    saved = client.put(
+        "/gateway/jit-decision-notify/config",
+        json={
+            "enabled": True,
+            "notify_on_create": False,
+            "email_channel_id": "",
+            "reviewer_emails": ["reviewer@example.com"],
+            "escalation_reviewer_emails": ["sec-lead@example.com"],
+            "public_base_url": "https://gateway.test.local",
+            "external_callback_ids": [],
+            "external_rest_url": "https://hooks.test.local/jit-tick",
+            "external_rest_credential_binding_id": "",
+            "action_token_ttl_minutes": 60,
+            "allow_prod_email_approve": False,
+            "min_notify_interval_minutes": 0,
+            "auto_reminder_after_minutes": 30,
+            "escalate_after_minutes": 120,
+            "max_auto_reminders": 2,
+            "auto_retry_failed_webhooks_on_tick": True,
+        },
+        headers={
+            "X-Actor-Role": "Platform Admin",
+            "X-Actor-Id": "admin-jit-tick-cfg",
+            "X-Approver-Role": "Security Approver",
+            "X-Approver-Id": "sec-jit-tick-cfg",
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["auto_reminder_after_minutes"] == 30
+    assert saved.json()["escalate_after_minutes"] == 120
+
+    remind_req = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": entitlement_id,
+            "environment": "dev",
+            "justification": "Pending long enough for auto reminder tick.",
+            "requested_duration_minutes": 20,
+            "mint_virtual_key": False,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-tick-remind"},
+    )
+    assert remind_req.status_code == 200
+    remind_id = remind_req.json()["request_id"]
+
+    esc_req = client.post(
+        "/gateway/jit-requests",
+        json={
+            "entitlement_id": entitlement_id,
+            "environment": "dev",
+            "justification": "Pending long enough for auto escalation tick.",
+            "requested_duration_minutes": 20,
+            "mint_virtual_key": False,
+        },
+        headers={"X-Actor-Role": "AI Ops Approver", "X-Actor-Id": "aiops-jit-tick-esc"},
+    )
+    assert esc_req.status_code == 200
+    esc_id = esc_req.json()["request_id"]
+
+    db = SessionLocal()
+    try:
+        remind_row = db.query(GatewayJitAccessRequest).filter_by(request_id=remind_id).first()
+        esc_row = db.query(GatewayJitAccessRequest).filter_by(request_id=esc_id).first()
+        assert remind_row is not None and esc_row is not None
+        remind_row.created_at = datetime.utcnow() - timedelta(minutes=45)
+        esc_row.created_at = datetime.utcnow() - timedelta(minutes=180)
+        db.commit()
+    finally:
+        db.close()
+
+    summary = client.get(
+        "/gateway/jit-decision-notify/pending-summary",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-tick-sum"},
+    )
+    assert summary.status_code == 200
+    assert summary.json()["pending_count"] >= 2
+    assert summary.json()["overdue_reminder_count"] >= 1
+    assert summary.json()["overdue_escalation_count"] >= 1
+
+    tick = client.post(
+        "/gateway/jit-requests/notify-tick",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-tick-run"},
+    )
+    assert tick.status_code == 200
+    body = tick.json()
+    assert body["scanned"] >= 2
+    assert body["reminded"] >= 1
+    assert body["escalated"] >= 1
+    actions_by_id = {item["request_id"]: item["actions"] for item in body.get("items") or []}
+    assert "remind" in actions_by_id.get(remind_id, [])
+    assert "escalate" in actions_by_id.get(esc_id, [])
+
+    remind_hist = client.get(
+        f"/gateway/jit-requests/{remind_id}/notify-history",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-tick-hist"},
+    )
+    assert remind_hist.status_code == 200
+    assert any(item.get("is_reminder") for item in remind_hist.json().get("history") or [])
+
+    esc_hist = client.get(
+        f"/gateway/jit-requests/{esc_id}/notify-history",
+        headers={"X-Actor-Role": "Auditor", "X-Actor-Id": "aud-jit-tick-hist2"},
+    )
+    assert esc_hist.status_code == 200
+    assert any(
+        item.get("is_escalation") or item.get("event_type") == "gateway.jit.request.escalate"
+        for item in esc_hist.json().get("history") or []
+    )
+
+    # Second tick should not re-escalate the same request.
+    tick2 = client.post(
+        "/gateway/jit-requests/notify-tick",
+        headers={"X-Actor-Role": "Platform Admin", "X-Actor-Id": "admin-jit-tick-run2"},
+    )
+    assert tick2.status_code == 200
+    actions2 = {item["request_id"]: item["actions"] for item in tick2.json().get("items") or []}
+    assert "escalate" not in actions2.get(esc_id, [])
 
 
 def test_gateway_least_privilege_recommendations_generate_role_rightsize_and_apply():

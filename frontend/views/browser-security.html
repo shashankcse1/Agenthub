@@ -10,14 +10,15 @@
                - All fields are optional at ingestion; missing fields default to empty string -->
           <article class="card runtime-config-hero">
             <div class="card-head">
-              <h3>GuardBridge — Browser Extension Governance</h3>
+              <div>
+                <p class="sig-kicker">Browser governance</p>
+                <h3>GuardBridge</h3>
+        <p class="console-hero-seal"><span class="sig-seal">Minimized telemetry</span></p>
+              </div>
               <button id="refreshBrowserSecurityConsole" class="ghost" type="button">Refresh All</button>
             </div>
-            <p class="card-lead">
-              GuardBridge is the browser extension component of AgentHub. It governs <strong>AI interactions at the browser layer</strong>,
-              operates independently under its own extension identity, and reports minimal, privacy-safe telemetry back to this control plane.
-              No raw prompt text, raw IP addresses, or raw user-agent strings are ever transmitted or stored.
-            </p>
+            <p class="card-lead">Browser extension governance with minimal telemetry.</p>
+            <p class="help-copy" data-help-label="About GuardBridge">GuardBridge governs AI interactions at the browser layer, reports privacy-safe telemetry to this control plane, and never transmits raw prompt text, raw IPs, or raw user-agent strings.</p>
             <p id="browserSecurityConsoleSummary" class="runtime-rule-count mono" aria-live="polite">Loading GuardBridge telemetry…</p>
             <div id="browserSecurityAlertBanner" class="console-alert-banner" hidden aria-live="polite"></div>
             <div class="browser-security-search-bar view-page-search-toolbar" data-view-search-toolbar>
@@ -67,6 +68,24 @@
                 <option value="120">Every 2m</option>
               </select>
             </div>
+    <section class="sig-trust-ledger sig-trust-ledger-console" aria-label="Module trust posture">
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Events</span>
+        <strong>Minimized</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Policies</span>
+        <strong>Enforced</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Shadow AI</span>
+        <strong>Inventoried</strong>
+      </div>
+      <div class="sig-trust-item">
+        <span class="sig-trust-label">Incidents</span>
+        <strong>Exportable</strong>
+      </div>
+    </section>
             <div class="runtime-console-tabs" role="tablist" aria-label="GuardBridge console sections">
               <button class="ghost active" type="button" role="tab" aria-selected="true" data-browser-security-console-tab="events">Events <span id="bsecEventsTabBadge" class="console-tab-badge" hidden></span></button>
               <button class="ghost" type="button" role="tab" aria-selected="false" data-browser-security-console-tab="sessions">Sessions</button>
