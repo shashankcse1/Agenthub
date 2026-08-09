@@ -39,6 +39,9 @@ Look for labels:
 - `help wanted`
 - `docs`
 
+Seed ideas (copy into GitHub Issues): [docs/GOOD_FIRST_ISSUES.md](./docs/GOOD_FIRST_ISSUES.md).  
+Newcomer tour: [docs/EXPLORING.md](./docs/EXPLORING.md) · Glossary: [docs/GLOSSARY.md](./docs/GLOSSARY.md).
+
 You can also propose a small task with the **Good first issue suggestion** issue template.
 
 ## Development setup
