@@ -1,0 +1,61 @@
+name: Bug report
+description: Something is broken in AgentHub (API, UI, or docs).
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping mature AgentHub. Please include enough detail to reproduce locally.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong in one or two sentences?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact clicks/commands. Note API Base URL and role if UI-related.
+      placeholder: |
+        1. ./scripts/startlocal_detached.sh
+        2. Open http://127.0.0.1:4173/login.html
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Frontend / console
+        - Backend / API
+        - Auth / session
+        - Flow Studio
+        - Routing & Gateway
+        - SDK
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, browser (if UI), commit SHA if known
+    validations:
+      required: false

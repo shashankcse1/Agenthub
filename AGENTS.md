@@ -1,6 +1,6 @@
 # Agent Delivery Guide
 
-This repository uses an agent-first delivery model. Use this file as the workspace-wide entry point for agent work. The backend-specific role and security contract lives in [backend/AGENTS.md](backend/AGENTS.md) and remains mandatory.
+Human visitors and new contributors should start at the root [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md). This file remains the workspace-wide entry point for **agent** delivery work. The backend-specific role and security contract lives in [backend/AGENTS.md](backend/AGENTS.md) and remains mandatory.
 
 When implementing work orders from **gateway-enhancement-agent** (autonomous cycles or manual SDLC), read and follow **[.cursor/skills/gateway-competitor-sdlc/SKILL.md](.cursor/skills/gateway-competitor-sdlc/SKILL.md)**.
 

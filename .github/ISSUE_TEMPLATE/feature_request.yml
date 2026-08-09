@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a scoped improvement aligned with the AgentHub product lane.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please keep proposals inside the designed lane (governed inference / gateway control plane).
+        Out of scope: SaaS OAuth crawlers, full enterprise IARA into arbitrary apps, competitor UI branding.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What operator or integrator pain does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Desired behavior, API/UI surface if known, and non-goals.
+    validations:
+      required: true
+  - type: dropdown
+    id: size
+    attributes:
+      label: Estimated size
+      options:
+        - Small (docs/tests/UI polish)
+        - Medium (single console or endpoint family)
+        - Large (needs design discussion first)
+    validations:
+      required: true
+  - type: checkboxes
+    id: inventory
+    attributes:
+      label: Governance awareness
+      options:
+        - label: I checked api-inventory / coverage map (or this is docs-only)
+          required: false
+        - label: I am willing to help implement or test
+          required: false

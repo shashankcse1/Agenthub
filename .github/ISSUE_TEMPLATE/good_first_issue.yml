@@ -1,0 +1,32 @@
+name: Good first issue suggestion
+description: Suggest a small, well-scoped task suitable for new contributors.
+title: "good-first: "
+labels: ["good first issue", "help wanted"]
+body:
+  - type: textarea
+    id: task
+    attributes:
+      label: Task
+      description: Concrete, finishable in roughly one sitting.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - Docs link fixed in README
+        - Manual smoke path described
+    validations:
+      required: true
+  - type: dropdown
+    id: skills
+    attributes:
+      label: Skills needed
+      options:
+        - Markdown / docs
+        - Frontend HTML/CSS/JS
+        - Python / pytest
+        - SDK TypeScript or Python
+    validations:
+      required: true
