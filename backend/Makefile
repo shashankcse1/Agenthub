@@ -136,6 +136,12 @@ checkall-port:
 smokee2e:
 	bash ./scripts/smokee2e.sh
 
+coverage-critical:
+	bash ./scripts/check_critical_coverage.sh
+
+test-functional-e2e:
+	python3 -m pytest -q tests/test_functional_e2e_console.py --tb=short
+
 test-repeat:
 	@RUNS=$${RUNS:-5}; \
 	echo "Running pytest $$RUNS time(s)"; \

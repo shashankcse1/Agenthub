@@ -1,0 +1,21 @@
+# Critical-path line coverage (console auth / CSRF / runtime env).
+# Full monorepo 99% is tracked separately; this gate enforces 99% on the operator session spine.
+
+[run]
+branch = False
+source =
+    app/services/session_cookies.py
+    app/services/csrf_protection.py
+    app/services/runtime_env.py
+omit =
+    */tests/*
+    */alembic/*
+
+[report]
+precision = 1
+show_missing = True
+skip_covered = False
+fail_under = 99.0
+
+[html]
+directory = coverage_html_critical

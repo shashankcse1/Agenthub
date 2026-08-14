@@ -88,7 +88,7 @@ curl -sS http://127.0.0.1:4173/health | head -c 200
 curl -sS http://127.0.0.1:8000/health | head -c 200
 ```
 
-**Next:** take the [30-minute Exploring tour](./docs/EXPLORING.md).
+**Next:** take the [30-minute Exploring tour](./docs/EXPLORING.md). Coverage gates: [docs/COVERAGE.md](./docs/COVERAGE.md) (`make coverage-critical` ≥99% on auth spine).
 
 More runbooks: [operations-quickstart.md](./operations-quickstart.md) · [frontend/README.md](./frontend/README.md) · [DEPLOYMENT.md](./DEPLOYMENT.md)
 

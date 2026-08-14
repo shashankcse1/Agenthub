@@ -4,6 +4,9 @@
 .runtime/local-dev.env
 backend/.runtime/*.log
 backend/.runtime/*.pid
+backend/coverage-critical.xml
+backend/coverage_html_critical/
+backend/.coverage
 **/.env
 artifacts/extensions/
 private-exports/

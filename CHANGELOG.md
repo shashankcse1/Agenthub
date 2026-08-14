@@ -2,6 +2,14 @@
 
 Notable changes for operators and contributors. Dates are UTC-oriented delivery days. For full history see `git log`.
 
+## 2026-08-14 — Functional E2E + critical-path 99% coverage gate
+
+- `tests/test_functional_e2e_console.py` — login → cookie Overview APIs → CSRF mutation → logout + idle re-auth
+- Unit packs for `session_cookies`, `csrf_protection`, `runtime_env` (critical spine **100%** lines)
+- `scripts/check_critical_coverage.sh` + CI step (`fail_under=99`)
+- `frontend/scripts/functional_console_e2e_smoke.sh`
+- Strategy doc: [docs/COVERAGE.md](./docs/COVERAGE.md)
+
 ## 2026-08-09 — Community explorer pack
 
 - Added [docs/EXPLORING.md](./docs/EXPLORING.md) 30-minute guided tour

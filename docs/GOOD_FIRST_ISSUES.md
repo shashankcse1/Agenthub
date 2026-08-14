@@ -10,6 +10,18 @@ Maintainers can also run (requires `gh auth login`):
 
 ---
 
+### 8. Raise critical-path coverage pack N+1 to ≥99%
+
+**Labels:** `help wanted`, `backend`  
+**Acceptance:**
+
+- Pick next service module (see [COVERAGE.md](./COVERAGE.md))  
+- Add tests until `pytest --cov=… --cov-fail-under=99` passes  
+- Add module to `.coveragerc.critical` only when ready  
+- Do not lower the global fail_under  
+
+---
+
 ### 1. Add Overview screenshot to README
 
 **Labels:** `good first issue`, `docs`, `frontend`  

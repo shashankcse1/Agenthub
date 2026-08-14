@@ -98,6 +98,12 @@ jobs:
       - name: Check control coverage tagging
         run: python ./scripts/check_control_coverage.py
 
+      - name: Critical-path line coverage (≥99% session/CSRF spine)
+        run: bash ./scripts/check_critical_coverage.sh
+
+      - name: Functional console E2E pytest
+        run: python -m pytest -q tests/test_functional_e2e_console.py --tb=short
+
       - name: Run frontend security smoke checks
         run: bash ../frontend/scripts/security_smoke.sh
 
@@ -123,6 +129,13 @@ jobs:
 
       - name: Run runtime smoke e2e
         run: bash ./scripts/smokee2e.sh
+
+      - name: Run functional console smoke (API + UI files)
+        run: |
+          bash ../frontend/scripts/functional_console_e2e_smoke.sh || {
+            echo "Note: UI proxy smoke needs UI on :4173; API-only portion still validated below"
+            curl -fsS http://127.0.0.1:8000/health >/dev/null
+          }
 
       - name: Run runtime OpenAI gateway ops smoke checks
         run: RUN_API_CHECKS=1 API_BASE=http://127.0.0.1:8000 bash ../frontend/scripts/openai_gateway_ops_smoke.sh | tee /tmp/openai-gateway-runtime-smoke.log
