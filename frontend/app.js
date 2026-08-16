@@ -17557,6 +17557,118 @@ function renderScanTrendSummary(rows) {
   target.textContent = `Scan trend: ${totalRuns} runs, findings ${totalFindings}, high severity ${totalHigh}.`;
 }
 
+function readBenchmarkScanAnalyticsFilters() {
+  const form = qs("#benchmarkScanAnalyticsFilters");
+  const history = readBenchmarkScanHistoryFilters();
+  const windowHours = Math.max(24, Math.min(2160, Number(form?.elements?.window_hours?.value || 168)));
+  const bucketHours = Math.max(1, Math.min(168, Number(form?.elements?.bucket_hours?.value || 24)));
+  return {
+    window_hours: String(windowHours),
+    bucket_hours: String(bucketHours),
+    benchmark_segment_by: String(form?.elements?.benchmark_segment_by?.value || "environment"),
+    scan_segment_by: String(form?.elements?.scan_segment_by?.value || "environment"),
+    agent_id: history.agent_id || "",
+    environment: history.environment || "",
+    benchmark_suite: history.benchmark_suite || "",
+    scan_type: history.scan_type || "",
+  };
+}
+
+function renderBenchmarkScanAnalyticsTable(kind, payload) {
+  const tbody = qs("#benchmarkScanAnalyticsTable");
+  if (!tbody) return;
+  const segments = Array.isArray(payload?.segments) ? payload.segments : [];
+  tbody.replaceChildren();
+  if (!segments.length) {
+    setTableMessage(tbody, 8, `No ${kind} trend segments for the current window.`);
+    return;
+  }
+  segments.forEach((row) => {
+    const metric =
+      kind === "benchmark"
+        ? `avg ${row.average_score} (min ${row.min_score} / max ${row.max_score})`
+        : `findings ${row.total_findings}`;
+    appendTableRow(tbody, [
+      kind,
+      row.segment_by,
+      row.segment_key,
+      row.run_count,
+      metric,
+      row.completed_count,
+      row.failed_count,
+      row.total_high_severity || 0,
+    ]);
+  });
+}
+
+async function loadBenchmarkAnalyticsTrends() {
+  const result = qs("#benchmarkScanAnalyticsResult");
+  const summary = qs("#benchmarkAnalyticsSummary");
+  const tbody = qs("#benchmarkScanAnalyticsTable");
+  const filters = readBenchmarkScanAnalyticsFilters();
+  if (tbody) setTableMessage(tbody, 8, "Loading benchmark trend analytics…");
+  const params = new URLSearchParams({
+    window_hours: filters.window_hours,
+    bucket_hours: filters.bucket_hours,
+    segment_by: filters.benchmark_segment_by,
+  });
+  if (filters.agent_id) params.set("agent_id", filters.agent_id);
+  if (filters.environment) params.set("environment", filters.environment);
+  if (filters.benchmark_suite) params.set("benchmark_suite", filters.benchmark_suite);
+  try {
+    const payload = await api(`/benchmarks/analytics/trends?${params.toString()}`);
+    renderBenchmarkScanAnalyticsTable("benchmark", payload);
+    const segmentCount = Array.isArray(payload?.segments) ? payload.segments.length : 0;
+    const bucketCount = Array.isArray(payload?.buckets) ? payload.buckets.length : 0;
+    if (summary) {
+      summary.textContent = `Benchmark analytics: ${payload?.total_runs || 0} runs in ${filters.window_hours}h, ${segmentCount} segment(s), ${bucketCount} time bucket(s), segment_by=${filters.benchmark_segment_by}.`;
+    }
+    if (result) {
+      result.textContent = segmentCount
+        ? `Loaded benchmark trend analytics (${segmentCount} segment${segmentCount === 1 ? "" : "s"}).`
+        : "No benchmark trend segments matched the current filters.";
+    }
+  } catch (err) {
+    if (tbody) setTableMessage(tbody, 8, `Error: ${safeText(err.message)}`);
+    if (summary) summary.textContent = "";
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
+async function loadScanAnalyticsTrends() {
+  const result = qs("#benchmarkScanAnalyticsResult");
+  const summary = qs("#benchmarkAnalyticsSummary");
+  const tbody = qs("#benchmarkScanAnalyticsTable");
+  const filters = readBenchmarkScanAnalyticsFilters();
+  if (tbody) setTableMessage(tbody, 8, "Loading scan trend analytics…");
+  const params = new URLSearchParams({
+    window_hours: filters.window_hours,
+    bucket_hours: filters.bucket_hours,
+    segment_by: filters.scan_segment_by,
+  });
+  if (filters.agent_id) params.set("agent_id", filters.agent_id);
+  if (filters.environment) params.set("environment", filters.environment);
+  if (filters.scan_type) params.set("scan_type", filters.scan_type);
+  try {
+    const payload = await api(`/scans/analytics/trends?${params.toString()}`);
+    renderBenchmarkScanAnalyticsTable("scan", payload);
+    const segmentCount = Array.isArray(payload?.segments) ? payload.segments.length : 0;
+    const bucketCount = Array.isArray(payload?.buckets) ? payload.buckets.length : 0;
+    if (summary) {
+      summary.textContent = `Scan analytics: ${payload?.total_runs || 0} runs in ${filters.window_hours}h, ${segmentCount} segment(s), ${bucketCount} time bucket(s), segment_by=${filters.scan_segment_by}.`;
+    }
+    if (result) {
+      result.textContent = segmentCount
+        ? `Loaded scan trend analytics (${segmentCount} segment${segmentCount === 1 ? "" : "s"}).`
+        : "No scan trend segments matched the current filters.";
+    }
+  } catch (err) {
+    if (tbody) setTableMessage(tbody, 8, `Error: ${safeText(err.message)}`);
+    if (summary) summary.textContent = "";
+    if (result) result.textContent = `Error: ${safeText(err.message)}`;
+  }
+}
+
 function runtimePresetShortLabel(preset) {
   const key = String(preset?.config_key || "").trim();
   if (!key) return "Preset";
@@ -47070,6 +47182,8 @@ function bindEvents() {
   bindBenchmarkScanCostPanel();
   qs("#loadBenchmarkHistory").addEventListener("click", loadBenchmarkHistory);
   qs("#loadScanHistory").addEventListener("click", loadScanHistory);
+  qs("#loadBenchmarkAnalytics")?.addEventListener("click", () => void loadBenchmarkAnalyticsTrends());
+  qs("#loadScanAnalytics")?.addEventListener("click", () => void loadScanAnalyticsTrends());
   qs("#agentQualityForm").addEventListener("submit", (evt) => evt.preventDefault());
   qs("#routePolicyForm").addEventListener("submit", saveRoutePolicy);
   qs("#loadRoutePolicies").addEventListener("click", loadRoutePolicies);

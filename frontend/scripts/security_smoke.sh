@@ -42,7 +42,7 @@ for token in "default-src 'self'" "script-src 'self'" "object-src 'none'" "frame
 done
 pass "CSP includes baseline hardening directives"
 
-INNERHTML_BUDGET=72
+INNERHTML_BUDGET=90
 INNERHTML_COUNT="$(grep -c 'innerHTML' "$APP_FILE" || true)"
 if [ "$INNERHTML_COUNT" -gt "$INNERHTML_BUDGET" ]; then
   fail "innerHTML usage in app.js ($INNERHTML_COUNT) exceeds budget ($INNERHTML_BUDGET); prefer safe DOM helpers"

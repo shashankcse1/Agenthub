@@ -8246,6 +8246,45 @@ class ScanCostEstimateResponse(BaseModel):
     currency: str = "USD"
 
 
+class BenchmarkScanAnalyticsBucketResponse(BaseModel):
+    bucket_start: datetime
+    bucket_end: datetime
+    segment_by: str
+    segment_key: str
+    run_count: int
+    average_score: float = 0.0
+    completed_count: int = 0
+    failed_count: int = 0
+    min_score: int = 0
+    max_score: int = 0
+    total_findings: int = 0
+    total_high_severity: int = 0
+    average_findings: float = 0.0
+
+
+class BenchmarkScanAnalyticsSegmentResponse(BaseModel):
+    segment_by: str
+    segment_key: str
+    run_count: int
+    average_score: float = 0.0
+    completed_count: int = 0
+    failed_count: int = 0
+    min_score: int = 0
+    max_score: int = 0
+    total_findings: int = 0
+    total_high_severity: int = 0
+
+
+class BenchmarkScanAnalyticsTrendsResponse(BaseModel):
+    kind: str
+    window_hours: int
+    bucket_hours: int
+    segment_by: str
+    total_runs: int
+    buckets: list[BenchmarkScanAnalyticsBucketResponse]
+    segments: list[BenchmarkScanAnalyticsSegmentResponse]
+
+
 class BenchmarkScanCancelResponse(BaseModel):
     run_id: str
     status: str

@@ -202,6 +202,61 @@
       </form>
     </article>
 
+    <article class="card benchmark-scan-history-filters-card" id="benchmarkScanAnalyticsCard">
+      <div class="card-head">
+        <h4>Trend Analytics</h4>
+        <div class="inline-actions">
+          <button id="loadBenchmarkAnalytics" class="primary" type="button">Load Benchmark Trends</button>
+          <button id="loadScanAnalytics" class="ghost" type="button">Load Scan Trends</button>
+        </div>
+      </div>
+      <p class="card-lead">Segment historical runs by environment, suite/type, agent, or status for drill-down beyond the flat history table.</p>
+      <form id="benchmarkScanAnalyticsFilters" class="form-grid">
+        <label>Window (hours)
+          <input name="window_hours" type="number" min="24" max="2160" step="1" value="168" />
+        </label>
+        <label>Bucket (hours)
+          <input name="bucket_hours" type="number" min="1" max="168" step="1" value="24" />
+        </label>
+        <label>Benchmark segment
+          <select name="benchmark_segment_by">
+            <option value="environment" selected>environment</option>
+            <option value="suite">suite</option>
+            <option value="agent_id">agent_id</option>
+            <option value="status">status</option>
+          </select>
+        </label>
+        <label>Scan segment
+          <select name="scan_segment_by">
+            <option value="environment" selected>environment</option>
+            <option value="scan_type">scan_type</option>
+            <option value="agent_id">agent_id</option>
+            <option value="status">status</option>
+          </select>
+        </label>
+      </form>
+      <p id="benchmarkScanAnalyticsResult" class="runtime-feedback mono" aria-live="polite"></p>
+      <p id="benchmarkAnalyticsSummary" class="mono benchmark-trend-summary"></p>
+      <div class="table-wrap benchmark-table-wrap">
+        <table>
+          <caption class="sr-only">Benchmark and scan trend segments</caption>
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Segment</th>
+              <th>Key</th>
+              <th>Runs</th>
+              <th>Avg score / findings</th>
+              <th>Completed</th>
+              <th>Failed</th>
+              <th>High sev</th>
+            </tr>
+          </thead>
+          <tbody id="benchmarkScanAnalyticsTable"></tbody>
+        </table>
+      </div>
+    </article>
+
     <article class="card benchmark-scan-section-card benchmark-scan-section-benchmark">
       <div class="card-head">
         <div class="benchmark-scan-section-title">

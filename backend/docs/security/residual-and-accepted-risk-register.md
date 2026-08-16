@@ -5,7 +5,7 @@ This register captures current security residual risks, accepted risks, and comp
 
 - Service: Enterprise Multi-Agent Platform API
 - Repository area: backend/app
-- Last updated: 2026-08-08 (CC-043…047 security harden waves; no new residual acceptance)
+- Last updated: 2026-08-15 (CC-049 directory list authz tests; GOV-BENCH-ANALYTICS-001; no new residual acceptance)
 - Prepared by: Engineering Security Review (Architecture, SecOps, Security Engineering, Vulnerability, CISO lenses)
 
 ## Risk Rating Model
@@ -97,6 +97,7 @@ This register captures current security residual risks, accepted risks, and comp
 | CC-046 | HttpOnly session cookies (`gb_session`) + Bearer fallback; console stops persisting accessToken in localStorage; `POST /auth/logout` clears cookies; production dual-approval requires second authenticated session via `gb_approver_session` or `X-Approver-Authorization` (`POST /auth/approver-session`); directory role checks retained. Local deepen: UI same-origin API proxy so cookies are not cross-origin to `:8000`; idle/expired console redirects clear markers. CSRF + DNS-pin residuals closed by CC-047. | RSK-001, RSK-010, RSK-014 | Preventive | `session_cookies.py`, `security.py`, `auth.py`, `frontend/scripts/serve_static.py`, frontend `api()`/`login.js`, `test_security_hardening_wave4.py` |
 | CC-047 | CSRF double-submit (`gb_csrf` + `X-CSRF-Token`) for cookie-authenticated mutations; `GET /auth/csrf`; IP-pinned outbound HTTP (`pinned_outbound_http`) for JIT webhooks, NHI export, escalation notify, vector HEAD probes (resolve-once, connect to public IP, TLS SNI to original host, no redirects). Residual: not every generic `httpx` call site in the monorepo is pinned (inference upstreams / provider discovery remain allowlisted/trusted destinations); legacy API scripts may still hold bearer tokens in memory. | RSK-010, RSK-014 | Preventive | `csrf_protection.py`, `pinned_outbound_http.py`, `main.py` middleware, frontend `ApiClient.readCsrfToken`, `test_security_hardening_wave5.py` |
 | CC-048 | Gateway runtime risk policy: heuristic `risk_tier` scoring with observe/enforce allow\|warn\|block before upstream on chat/responses/embeddings/audio/images/rerank/messages/a2a/realtime; config dual-approval + MFA; rate limits; prod fail-closed on corrupt policy; dry-run evaluate; Policies UI. Default disabled. Residual: heuristic score only (not ML); score weights are static and may under/over-block until tuned per tenant. | RSK-013, RSK-021 | Preventive/Detective | `gateway_runtime_risk.py`, `/gateway/runtime-risk/*`, `test_gateway_runtime_risk.py` |
+| CC-049 | Directory user list (`GET /auth/directory/users`) remains admin/security-role gated; responses omit password hashes; dedicated abuse-case pytest covers Agent Owner/Auditor deny and Security Approver/Platform Admin allow paths (sec-000). Residual: list remains sensitive directory metadata — keep least-privilege role assignment. | RSK-001, RSK-007 | Preventive/Detective | `auth.py` `list_directory_users`, `test_directory_users_list_security.py` |
 
 ## CISO Review — Gateway Memory Store (2026-06-12)
 
@@ -345,6 +346,7 @@ This register captures current security residual risks, accepted risks, and comp
 | 2026-08-08 | Security wave-5 (CC-047): CSRF double-submit for cookie mutations; IP-pinned outbound webhook/probe HTTP (DNS-rebinding TOCTOU). | Security Architecture + IAM + Platform Engineering | CC-047; `test_security_hardening_wave5.py` |
 | 2026-08-08 | Gateway runtime risk policy (CC-048 / GOV-GW-RISK-001): observe/enforce allow\|warn\|block before chat/responses; evaluate API + Policies UI; default disabled. | Security Architecture + AI Security + Platform Engineering | CC-048; `test_gateway_runtime_risk.py` |
 | 2026-08-08 | CC-048 deepen: pre-call enforce on embeddings/audio/images/rerank/messages/a2a/realtime; MFA + rate limits on config/evaluate; enriched scoring; prod fail-closed corrupt config. | Security Architecture + AI Security + Platform Engineering | CC-048; `test_gateway_runtime_risk.py` |
+| 2026-08-15 | Directory list authz coverage (sec-000 / CC-049) + Benchmark/Scan trend analytics endpoints and History UI drill-down. | Security Architecture + Platform Engineering + Frontend | CC-049; GOV-BENCH-ANALYTICS-001; `test_directory_users_list_security.py`; `test_benchmark_scan_analytics.py` |
 
 ## Sign-off
 

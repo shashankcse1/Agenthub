@@ -98,7 +98,7 @@ The frontend currently exposes these primary workspaces:
 | POST   | `/auth/basic/config/{config_id}/disable`                             | Full        | Security break-glass panel supports disable action.                                                                               |
 | POST   | `/auth/login`                                                        | Partial     | UI sign-in panel covers primary login; domain Auth & Session Governance is **Full** in coverage map (authz explain + session/SSO). |
 | POST   | `/auth/directory/users`                                              | Partial     | Security view directory CRUD (optional depth; not a designed-lane Auth blocker).                                                  |
-| GET    | `/auth/directory/users`                                              | Partial     | Supported by Security view.                                                                                                       |
+| GET    | `/auth/directory/users`                                              | Partial     | Supported by Security view. Dedicated abuse-case coverage in `test_directory_users_list_security.py` (sec-000 / CC-049).          |
 | PUT    | `/auth/directory/users/{user_id}`                                    | Partial     | Supported by Security view.                                                                                                       |
 | DELETE | `/auth/directory/users/{user_id}`                                    | Partial     | Supported by Security view.                                                                                                       |
 | POST   | `/auth/directory/users/{user_id}/unlock`                             | Partial     | Supported by the Security view unlock action.                                                                                     |
@@ -720,10 +720,12 @@ The frontend currently exposes these primary workspaces:
 | GET    | `/benchmarks/cost-estimate`        | Full        | Covered by Benchmark & Scan cost panel and pre-run confirmation dialog.                                                                   |
 | GET    | `/scans/cost-estimate`             | Full        | Covered by Benchmark & Scan scan cost panel and pre-run confirmation dialog.                                                              |
 | GET    | `/benchmarks/runs`                 | Full        | Covered by Benchmark & Scan historical browser and trend summary workflow.                                                                |
+| GET    | `/benchmarks/analytics/trends`     | Full        | History tab Trend Analytics: segment by environment/suite/agent/status with time buckets; owner-scoped.                                   |
 | POST   | `/scans/run`                       | Full        | Starts async security/compliance scan execution; operator confirms estimated cost; progress polled via GET run; stop via cancel endpoint. |
 | GET    | `/scans/runs/{run_id}`             | Full        | Covered by Benchmark & Scan live progress polling while a scan is active.                                                                 |
 | POST   | `/scans/runs/{run_id}/cancel`      | Full        | Covered by Stop Scan control during active runs.                                                                                          |
 | GET    | `/scans/runs`                      | Full        | Covered by Benchmark & Scan historical browser and trend summary workflow.                                                                |
+| GET    | `/scans/analytics/trends`          | Full        | History tab Trend Analytics: segment by environment/scan_type/agent/status with time buckets; owner-scoped.                               |
 
 
 ### `app/routers/route_drafts.py`

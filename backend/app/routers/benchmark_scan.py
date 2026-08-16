@@ -1,7 +1,7 @@
 from uuid import uuid4
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -13,6 +13,7 @@ from app.schemas import (
     BenchmarkCostEstimateResponse,
     BenchmarkRunRequest,
     BenchmarkRunResponse,
+    BenchmarkScanAnalyticsTrendsResponse,
     BenchmarkScanCancelResponse,
     ScanCostEstimateResponse,
     ScanRunRequest,
@@ -21,6 +22,7 @@ from app.schemas import (
 from app.api_errors import authz_scope_forbidden, conflict_error, not_found_error, validation_error
 from app.security import ActorContext, get_actor_context, require_role
 from app.services.audit import create_audit_event
+from app.services.benchmark_scan_analytics import build_benchmark_analytics, build_scan_analytics
 from app.services.benchmark_scan_execution import (
     get_progress,
     is_active,
@@ -312,6 +314,55 @@ def list_benchmark_runs(
     return query.order_by(BenchmarkRun.created_at.desc()).offset(offset).limit(limit).all()
 
 
+@router.get("/benchmarks/analytics/trends", response_model=BenchmarkScanAnalyticsTrendsResponse)
+def get_benchmark_analytics_trends(
+    window_hours: int = Query(default=168, ge=24, le=2160),
+    bucket_hours: int = Query(default=24, ge=1, le=168),
+    segment_by: str = Query(default="environment"),
+    agent_id: Optional[str] = None,
+    environment: Optional[str] = None,
+    benchmark_suite: Optional[str] = None,
+    limit: int = Query(default=2000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, ROLES_BENCHMARK_SCAN_READ)
+    normalized_agent_id = str(agent_id or "").strip()
+    if normalized_agent_id and not _agent_owner_can_access(normalized_agent_id, ctx, db):
+        raise authz_scope_forbidden(
+            message="Agent Owner can only read benchmark analytics for owned agents.",
+            actor_role=ctx.actor_role,
+            required_scope="agent.owner_id == requester actor_id",
+            decision_trace_id="authz-benchmark-analytics-scope-check",
+            remediation_hint="Use Platform Admin, Release Manager, Auditor, Security Approver, or AI Ops Approver for cross-owner analytics.",
+        )
+    try:
+        payload = build_benchmark_analytics(
+            db,
+            ctx=ctx,
+            window_hours=window_hours,
+            bucket_hours=bucket_hours,
+            segment_by=segment_by,
+            agent_id=normalized_agent_id or None,
+            environment=environment,
+            benchmark_suite=benchmark_suite,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise validation_error(str(exc), decision_trace_id="benchmark-analytics-segment-invalid", status_code=422)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="benchmark.analytics.trends.read",
+        resource_type="benchmark_analytics",
+        resource_id=str(payload.get("segment_by") or "environment"),
+        trace_id=f"trace-benchmark-analytics-{ctx.actor_id}",
+        decision_outcome="allow",
+    )
+    db.commit()
+    return BenchmarkScanAnalyticsTrendsResponse.model_validate(payload)
+
+
 @router.get("/benchmarks/runs/{run_id}", response_model=BenchmarkRunResponse)
 def get_benchmark_run(
     run_id: str,
@@ -490,6 +541,55 @@ def list_scan_runs(
         response.headers["X-Total-Count"] = str(total)
 
     return query.order_by(ScanRun.created_at.desc()).offset(offset).limit(limit).all()
+
+
+@router.get("/scans/analytics/trends", response_model=BenchmarkScanAnalyticsTrendsResponse)
+def get_scan_analytics_trends(
+    window_hours: int = Query(default=168, ge=24, le=2160),
+    bucket_hours: int = Query(default=24, ge=1, le=168),
+    segment_by: str = Query(default="environment"),
+    agent_id: Optional[str] = None,
+    environment: Optional[str] = None,
+    scan_type: Optional[str] = None,
+    limit: int = Query(default=2000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    ctx: ActorContext = Depends(get_actor_context),
+):
+    require_role(ctx, ROLES_BENCHMARK_SCAN_READ)
+    normalized_agent_id = str(agent_id or "").strip()
+    if normalized_agent_id and not _agent_owner_can_access(normalized_agent_id, ctx, db):
+        raise authz_scope_forbidden(
+            message="Agent Owner can only read scan analytics for owned agents.",
+            actor_role=ctx.actor_role,
+            required_scope="agent.owner_id == requester actor_id",
+            decision_trace_id="authz-scan-analytics-scope-check",
+            remediation_hint="Use Platform Admin, Release Manager, Auditor, Security Approver, or AI Ops Approver for cross-owner analytics.",
+        )
+    try:
+        payload = build_scan_analytics(
+            db,
+            ctx=ctx,
+            window_hours=window_hours,
+            bucket_hours=bucket_hours,
+            segment_by=segment_by,
+            agent_id=normalized_agent_id or None,
+            environment=environment,
+            scan_type=scan_type,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise validation_error(str(exc), decision_trace_id="scan-analytics-segment-invalid", status_code=422)
+    create_audit_event(
+        db,
+        actor_id=ctx.actor_id,
+        action_type="scan.analytics.trends.read",
+        resource_type="scan_analytics",
+        resource_id=str(payload.get("segment_by") or "environment"),
+        trace_id=f"trace-scan-analytics-{ctx.actor_id}",
+        decision_outcome="allow",
+    )
+    db.commit()
+    return BenchmarkScanAnalyticsTrendsResponse.model_validate(payload)
 
 
 @router.get("/scans/runs/{run_id}", response_model=ScanRunResponse)

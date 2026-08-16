@@ -77,6 +77,8 @@ Agent docs: [`../../../../gateway-enhancement-agent/docs/USAGE.md`](../../../../
 
 Implemented in current state:
 
+- Benchmark & Scan trend analytics (2026-08-15, GOV-BENCH-ANALYTICS-001): `GET /benchmarks/analytics/trends` + `GET /scans/analytics/trends` with segment_by + time buckets, Agent Owner scope, audit read events; History tab Trend Analytics UI; tests `test_benchmark_scan_analytics.py`.
+- Directory users list security coverage (2026-08-15, sec-000 / CC-049): dedicated deny/allow + no-password-hash tests in `test_directory_users_list_security.py` for `GET /auth/directory/users`.
 - Enterprise AI identity competitive positioning (GOV-AI-IDSEC-NHI-001): governance analysis in `enterprise-ai-identity-competitive-positioning.md` — IGA/ISPM as identity/NHI plane (not LLM gateway); matrix vs Astrix/Oasis/Aembit/this platform; PoC checklist; complementary stance (no `cmp-*` full-parity chase).
 - NHI IGA export coexistence (GOV-AI-IDSEC-NHI-002): `POST /gateway/nhi/export` + `/gateway/nhi/iga-export/config|test-delivery`; `iga_correlation` SCIM-shaped bundle + HMAC webhook; Routing & Gateway UI; Python/JS SDK helpers; dual-approval on config/live deliver; tests `test_gateway_nhi_iga_export.py`.
 - NHI IGA inbound deny gate (GOV-AI-IDSEC-NHI-003): `POST /gateway/nhi/iga-deny/ingest` (HMAC) + manual ingest/revoke/evaluate/config; modes `off|warn|block` enforced on `/v1/chat/completions` and `/v1/responses`; VK rows in NHI sync; UI + SDK; tests `test_gateway_nhi_iga_deny.py`.
